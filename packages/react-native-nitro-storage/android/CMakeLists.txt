@@ -1,33 +1,39 @@
-cmake_minimum_required(VERSION 3.22.1)
+cmake_minimum_required(VERSION 3.18.0)
+
 project(NitroStorage)
 
+set(CMAKE_VERBOSE_MAKEFILE ON)
 set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_C_STANDARD 11)
-set(CMAKE_C_STANDARD_REQUIRED ON)
 
-# Define the path to our C++ sources
-set(CPP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../cpp")
-
-# Collect source files
-file(GLOB CORE_SOURCES "${CPP_ROOT}/core/*.cpp")
-file(GLOB BINDING_SOURCES "${CPP_ROOT}/bindings/*.cpp")
-
-# Create the shared library with our sources
-add_library(${PROJECT_NAME} SHARED
-    ${CORE_SOURCES}
-    ${BINDING_SOURCES}
-    # JNI adapter
-    src/main/cpp/cpp-adapter.cpp
-    src/main/cpp/AndroidStorageAdapterCpp.cpp
+# 1. Define source files (Manual implementation)
+file(GLOB SOURCES
+  "../cpp/bindings/*.cpp"
+  "../cpp/core/*.cpp"
+  "./src/main/cpp/*.cpp"
 )
 
-# Include directories
-target_include_directories(${PROJECT_NAME} PRIVATE
-    "${CPP_ROOT}/core"
-    "${CPP_ROOT}/bindings"
-    "src/main/cpp"
+# 2. Create the library target
+add_library(
+  NitroStorage
+  SHARED
+  ${SOURCES}
 )
 
-# Include Nitro autolinking (adds nitrogen sources, definitions, and links)
-include(${CMAKE_CURRENT_SOURCE_DIR}/../nitrogen/generated/android/NitroStorage+autolinking.cmake)
+# 3. Include directories for manual sources
+target_include_directories(
+  NitroStorage
+  PRIVATE
+  "../cpp/core"
+  "../cpp/bindings"
+  "./src/main/cpp"
+)
+
+# 4. Include Nitrogen Autolinking (adds generated sources, finding packages, linking libs)
+include("../nitrogen/generated/android/NitroStorage+autolinking.cmake")
+
+# 5. Link standard Android libraries
+target_link_libraries(
+  NitroStorage
+  android
+  log
+)

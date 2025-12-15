@@ -1,5 +1,6 @@
 import { ScrollView, View, Text } from "react-native";
 import { useState } from "react";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { createStorageItem, StorageScope } from "react-native-nitro-storage";
 import { Button, styles } from "../components/shared";
 
@@ -35,14 +36,17 @@ export default function BenchmarkScreen() {
   const [secureResult, setSecureResult] = useState<BenchmarkResult | null>(
     null
   );
-  const [running, setRunning] = useState(false);
+  const [runningMemory, setRunningMemory] = useState(false);
+  const [runningDisk, setRunningDisk] = useState(false);
+  const [runningSecure, setRunningSecure] = useState(false);
 
   const runBenchmark = (
     item: typeof memoryItem,
-    name: string,
-    setResult: (result: BenchmarkResult) => void
+    setResult: (result: BenchmarkResult) => void,
+    setRunning: (running: boolean) => void
   ) => {
-    const ops = 1000;
+    setRunning(true);
+    const ops = 1_000;
     const data = JSON.stringify({ test: "data", timestamp: Date.now() });
 
     const writeStart = performance.now();
@@ -64,23 +68,6 @@ export default function BenchmarkScreen() {
       read: readTime,
       ops,
     });
-  };
-
-  const runAllBenchmarks = async () => {
-    setRunning(true);
-    setMemoryResult(null);
-    setDiskResult(null);
-    setSecureResult(null);
-
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    runBenchmark(memoryItem, "Memory", setMemoryResult);
-
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    runBenchmark(diskItem, "Disk", setDiskResult);
-
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    runBenchmark(secureItem, "Secure", setSecureResult);
-
     setRunning(false);
   };
 
@@ -88,98 +75,106 @@ export default function BenchmarkScreen() {
     title,
     result,
     color,
+    onRun,
+    running,
   }: {
     title: string;
     result: BenchmarkResult | null;
     color: string;
+    onRun: () => void;
+    running: boolean;
   }) => (
-    <View style={[styles.card, { opacity: result ? 1 : 0.5 }]}>
+    <View style={styles.card}>
       <View style={styles.cardHeader}>
         <View style={[styles.indicator, { backgroundColor: color }]} />
         <Text style={styles.cardTitle}>{title}</Text>
       </View>
       {result ? (
-        <>
-          <View style={{ marginTop: 12, gap: 8 }}>
-            <View
-              style={{ flexDirection: "row", justifyContent: "space-between" }}
-            >
-              <Text style={styles.description}>Write {result.ops} ops:</Text>
-              <Text style={[styles.description, { fontWeight: "600" }]}>
-                {result.write.toFixed(2)}ms
-              </Text>
-            </View>
-            <View
-              style={{ flexDirection: "row", justifyContent: "space-between" }}
-            >
-              <Text style={styles.description}>Read {result.ops} ops:</Text>
-              <Text style={[styles.description, { fontWeight: "600" }]}>
-                {result.read.toFixed(2)}ms
-              </Text>
-            </View>
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                marginTop: 4,
-                paddingTop: 8,
-                borderTopWidth: 1,
-                borderTopColor: "#E5E7EB",
-              }}
-            >
-              <Text style={[styles.description, { fontWeight: "600" }]}>
-                Avg per op:
-              </Text>
-              <Text style={[styles.description, { fontWeight: "600", color }]}>
-                {((result.write + result.read) / (result.ops * 2)).toFixed(3)}ms
-              </Text>
-            </View>
+        <View style={{ marginTop: 8, gap: 4 }}>
+          <View
+            style={{ flexDirection: "row", justifyContent: "space-between" }}
+          >
+            <Text style={styles.description}>Write {result.ops} ops:</Text>
+            <Text style={[styles.description, { fontWeight: "600" }]}>
+              {result.write.toFixed(2)}ms
+            </Text>
           </View>
-        </>
+          <View
+            style={{ flexDirection: "row", justifyContent: "space-between" }}
+          >
+            <Text style={styles.description}>Read {result.ops} ops:</Text>
+            <Text style={[styles.description, { fontWeight: "600" }]}>
+              {result.read.toFixed(2)}ms
+            </Text>
+          </View>
+          <View
+            style={{
+              flexDirection: "row",
+              justifyContent: "space-between",
+              marginTop: 2,
+              paddingTop: 4,
+              borderTopWidth: 1,
+              borderTopColor: "#E5E7EB",
+            }}
+          >
+            <Text style={[styles.description, { fontWeight: "600" }]}>
+              Avg per op:
+            </Text>
+            <Text style={[styles.description, { fontWeight: "600", color }]}>
+              {((result.write + result.read) / (result.ops * 2)).toFixed(4)}ms
+            </Text>
+          </View>
+        </View>
       ) : (
-        <Text style={[styles.description, { marginTop: 8 }]}>
+        <Text style={[styles.description, { marginTop: 6 }]}>
           Run benchmark to see results
         </Text>
       )}
+      <Button
+        title={running ? "Running..." : "Run"}
+        onPress={onRun}
+        variant="primary"
+        disabled={running}
+        style={{ marginTop: 8 }}
+      />
     </View>
   );
 
   return (
-    <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={{ gap: 4 }}>
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Performance Benchmark</Text>
-            <Text style={styles.description}>
-              Measures read/write performance for 1,000 operations per storage
-              type.
-            </Text>
-            <Button
-              title={running ? "Running..." : "Run Benchmark"}
-              onPress={runAllBenchmarks}
-              variant="primary"
-              disabled={running}
-              style={{ marginTop: 16 }}
-            />
-          </View>
-
+    <SafeAreaView style={styles.container}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        bounces={false}
+        overScrollMode="never"
+      >
+        <View style={{ gap: 8 }}>
           <ResultCard
             title="Memory Storage"
             result={memoryResult}
             color="#EAB308"
+            onRun={() =>
+              runBenchmark(memoryItem, setMemoryResult, setRunningMemory)
+            }
+            running={runningMemory}
           />
           <ResultCard
             title="Disk Storage"
             result={diskResult}
             color="#3B82F6"
+            onRun={() => runBenchmark(diskItem, setDiskResult, setRunningDisk)}
+            running={runningDisk}
           />
           <ResultCard
             title="Secure Storage"
             result={secureResult}
             color="#10B981"
+            onRun={() =>
+              runBenchmark(secureItem, setSecureResult, setRunningSecure)
+            }
+            running={runningSecure}
           />
         </View>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }

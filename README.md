@@ -139,17 +139,25 @@ const value = counterAtom.get(); // 42, instantly
 
 _Replaces: Zustand, Jotai, Redux_
 
-Fast, in-memory state. Perfect for global app state that doesn't need persistence.
+Fast, in-memory state. **Now Pure JS** - can store complex objects, functions, and React nodes!
 
 ```typescript
-const userAtom = createStorageItem<User | null>({
-  key: "current-user",
+// Store a function
+const callbackAtom = createStorageItem({
+  key: "on-click",
   scope: StorageScope.Memory,
-  defaultValue: null,
+  defaultValue: () => console.log("Clicked!"),
+});
+
+// Store a React Component
+const modalAtom = createStorageItem({
+  key: "active-modal",
+  scope: StorageScope.Memory,
+  defaultValue: <View />,
 });
 ```
 
-**Performance:** < 0.001ms per operation
+**Performance:** < 0.001ms per operation (Zero JSI overhead)
 
 ### **Disk Storage**
 
@@ -299,6 +307,53 @@ const unsubscribe = counterAtom.subscribe(() => {
 unsubscribe();
 ```
 
+### Functional Updates
+
+Update state based on the previous value, just like `useState`.
+
+```typescript
+// Increment counter
+counterAtom.set((prev) => prev + 1);
+```
+
+### Optimized Writes
+
+Use `useSetStorage` to set values without subscribing to updates (avoids re-renders).
+
+```typescript
+import { useSetStorage } from "react-native-nitro-storage";
+
+function IncrementButton() {
+  const setCount = useSetStorage(counterAtom);
+  return <Button onPress={() => setCount((c) => c + 1)} title="+" />;
+}
+```
+
+### Clearing Data
+
+Clear all data in `Memory` scope (Native scopes coming soon).
+
+```typescript
+import { storage } from "react-native-nitro-storage";
+
+// Clear all memory state (e.g. on logout)
+storage.clearAll();
+
+// Or specific scope
+storage.clear(StorageScope.Memory);
+```
+
+### Migration from MMKV
+
+Easily migrate data from `react-native-mmkv` to Nitro Storage.
+
+```typescript
+import { migrateFromMMKV } from "react-native-nitro-storage/src/migration";
+
+// Migrate 'user-settings' and delete from MMKV
+migrateFromMMKV(mmkvInstance, settingsAtom, true);
+```
+
 ---
 
 ## 📊 Performance Benchmarks
@@ -344,7 +399,7 @@ Creates a storage atom.
 **Methods:**
 
 - `get(): T` - Get current value (synchronous)
-- `set(value: T): void` - Set new value (synchronous)
+- `set(value: T | ((prev: T) => T)): void` - Set new value (synchronous)
 - `delete(): void` - Remove value (synchronous)
 - `subscribe(callback: () => void): () => void` - Subscribe to changes
 
@@ -352,7 +407,18 @@ Creates a storage atom.
 
 React hook using `useSyncExternalStore` for automatic re-renders.
 
-**Returns:** `[value: T, setValue: (value: T) => void]`
+**Returns:** `[value: T, setValue: (value: T | ((prev: T) => T)) => void]`
+
+### `useSetStorage<T>(item: StorageItem<T>)`
+
+Returns the setter function only. Does not subscribe to updates.
+
+**Returns:** `(value: T | ((prev: T) => T)) => void`
+
+### `storage` Object
+
+- `clearAll()`: Clears all `Memory` storage.
+- `clear(scope: StorageScope.Memory)`: Clears specific scope.
 
 ---
 

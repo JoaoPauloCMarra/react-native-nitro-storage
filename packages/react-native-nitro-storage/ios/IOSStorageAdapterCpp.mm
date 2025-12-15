@@ -4,124 +4,75 @@
 
 namespace NitroStorage {
 
-IOSStorageAdapterCpp::IOSStorageAdapterCpp() {}
+static NSString* const kKeychainService = @"com.nitrostorage.keychain";
 
+IOSStorageAdapterCpp::IOSStorageAdapterCpp() {}
 IOSStorageAdapterCpp::~IOSStorageAdapterCpp() {}
 
 void IOSStorageAdapterCpp::setDisk(const std::string& key, const std::string& value) {
-    NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
-    NSString* nsValue = [NSString stringWithUTF8String:value.c_str()];
-    [[NSUserDefaults standardUserDefaults] setObject:nsValue forKey:nsKey];
+    [[NSUserDefaults standardUserDefaults] setObject:[NSString stringWithUTF8String:value.c_str()]
+                                              forKey:[NSString stringWithUTF8String:key.c_str()]];
 }
 
 std::optional<std::string> IOSStorageAdapterCpp::getDisk(const std::string& key) {
-    NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
-    NSString* result = [[NSUserDefaults standardUserDefaults] stringForKey:nsKey];
-    
-    if (result) {
-        const char* utf8String = [result UTF8String];
-        if (utf8String) {
-            std::string value;
-            value.reserve([result lengthOfBytesUsingEncoding:NSUTF8StringEncoding]);
-            value.assign(utf8String);
-            return value;
-        }
-    }
-    return std::nullopt;
+    NSString* result = [[NSUserDefaults standardUserDefaults] stringForKey:[NSString stringWithUTF8String:key.c_str()]];
+    if (!result) return std::nullopt;
+    return std::string([result UTF8String]);
 }
 
 void IOSStorageAdapterCpp::deleteDisk(const std::string& key) {
-    NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
-    [[NSUserDefaults standardUserDefaults] removeObjectForKey:nsKey];
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:[NSString stringWithUTF8String:key.c_str()]];
 }
 
 void IOSStorageAdapterCpp::setSecure(const std::string& key, const std::string& value) {
     NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
-    NSString* nsValue = [NSString stringWithUTF8String:value.c_str()];
-    NSData* data = [nsValue dataUsingEncoding:NSUTF8StringEncoding];
-    
-    NSString* service = @"com.nitrostorage.keychain";
-    
+    NSData* data = [[NSString stringWithUTF8String:value.c_str()] dataUsingEncoding:NSUTF8StringEncoding];
+
     NSDictionary* query = @{
         (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
-        (__bridge id)kSecAttrService: service,
+        (__bridge id)kSecAttrService: kKeychainService,
         (__bridge id)kSecAttrAccount: nsKey
     };
-    
+
     NSDictionary* updateAttributes = @{
         (__bridge id)kSecValueData: data
     };
+
+    OSStatus status = SecItemUpdate((__bridge CFDictionaryRef)query, (__bridge CFDictionaryRef)updateAttributes);
     
-    // Try to update first (atomic operation)
-    OSStatus updateStatus = SecItemUpdate((__bridge CFDictionaryRef)query, (__bridge CFDictionaryRef)updateAttributes);
-    
-    if (updateStatus == errSecItemNotFound) {
-        // Item doesn't exist, add it
-        NSDictionary* addQuery = @{
-            (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
-            (__bridge id)kSecAttrService: service,
-            (__bridge id)kSecAttrAccount: nsKey,
-            (__bridge id)kSecValueData: data,
-            (__bridge id)kSecAttrAccessible: (__bridge id)kSecAttrAccessibleWhenUnlocked
-        };
-        
-        OSStatus addStatus = SecItemAdd((__bridge CFDictionaryRef)addQuery, NULL);
-        if (addStatus != errSecSuccess) {
-            NSLog(@"NitroStorage: Failed to add to Keychain for key '%@'. Error: %d", nsKey, (int)addStatus);
-        }
-    } else if (updateStatus != errSecSuccess) {
-        NSLog(@"NitroStorage: Failed to update Keychain item '%@'. Error: %d", nsKey, (int)updateStatus);
+    if (status == errSecItemNotFound) {
+        NSMutableDictionary* addQuery = [query mutableCopy];
+        addQuery[(__bridge id)kSecValueData] = data;
+        addQuery[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleWhenUnlocked;
+        SecItemAdd((__bridge CFDictionaryRef)addQuery, NULL);
     }
 }
 
 std::optional<std::string> IOSStorageAdapterCpp::getSecure(const std::string& key) {
-    NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
-    NSString* service = @"com.nitrostorage.keychain";
-    
     NSDictionary* query = @{
         (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
-        (__bridge id)kSecAttrService: service,
-        (__bridge id)kSecAttrAccount: nsKey,
+        (__bridge id)kSecAttrService: kKeychainService,
+        (__bridge id)kSecAttrAccount: [NSString stringWithUTF8String:key.c_str()],
         (__bridge id)kSecReturnData: @YES,
         (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne
     };
-    
+
     CFTypeRef result = NULL;
-    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
-    
-    if (status == errSecSuccess && result) {
+    if (SecItemCopyMatching((__bridge CFDictionaryRef)query, &result) == errSecSuccess && result) {
         NSData* data = (__bridge_transfer NSData*)result;
-        NSString* nsValue = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-        if (nsValue) {
-            const char* utf8String = [nsValue UTF8String];
-            if (utf8String) {
-                std::string value;
-                value.reserve([nsValue lengthOfBytesUsingEncoding:NSUTF8StringEncoding]);
-                value.assign(utf8String);
-                return value;
-            }
-        }
-    } else if (status != errSecItemNotFound) {
-        NSLog(@"NitroStorage: Failed to read from Keychain for key '%@'. Error: %d", nsKey, (int)status);
+        NSString* str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+        if (str) return std::string([str UTF8String]);
     }
-    
     return std::nullopt;
 }
 
 void IOSStorageAdapterCpp::deleteSecure(const std::string& key) {
-    NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
-    NSString* service = @"com.nitrostorage.keychain";
-    
     NSDictionary* query = @{
         (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
-        (__bridge id)kSecAttrService: service,
-        (__bridge id)kSecAttrAccount: nsKey
+        (__bridge id)kSecAttrService: kKeychainService,
+        (__bridge id)kSecAttrAccount: [NSString stringWithUTF8String:key.c_str()]
     };
-    
-    OSStatus status = SecItemDelete((__bridge CFDictionaryRef)query);
-    if (status != errSecSuccess && status != errSecItemNotFound) {
-        NSLog(@"NitroStorage: Failed to delete from Keychain for key '%@'. Error: %d", nsKey, (int)status);
-    }
+    SecItemDelete((__bridge CFDictionaryRef)query);
 }
 
 } // namespace NitroStorage

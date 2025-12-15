@@ -130,7 +130,6 @@ export const styles = StyleSheet.create({
   description: {
     fontSize: 14,
     color: "#71717A", // Zinc 500
-    marginBottom: 20,
     lineHeight: 20,
   },
   counterWrapper: {

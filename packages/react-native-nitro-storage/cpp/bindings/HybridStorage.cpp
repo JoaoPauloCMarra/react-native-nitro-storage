@@ -24,14 +24,7 @@ HybridStorage::HybridStorage(std::shared_ptr<::NitroStorage::NativeStorageAdapte
     : HybridObject(TAG), HybridStorageSpec(), nativeAdapter_(std::move(adapter)) {}
 
 HybridStorage::Scope HybridStorage::toScope(double scopeValue) {
-    int intScope = static_cast<int>(scopeValue);
-    if (intScope < 0 || intScope > 2) {
-        throw std::invalid_argument(
-            "Invalid storage scope: " + std::to_string(intScope) + 
-            ". Must be 0 (Memory), 1 (Disk), or 2 (Secure)"
-        );
-    }
-    return static_cast<Scope>(intScope);
+    return static_cast<Scope>(static_cast<int>(scopeValue));
 }
 
 void HybridStorage::set(const std::string& key, const std::string& value, double scope) {
@@ -100,8 +93,8 @@ std::function<void()> HybridStorage::addOnChange(
     const std::function<void(const std::string&, const std::optional<std::string>&)>& callback
 ) {
     int intScope = static_cast<int>(scope);
-    
     size_t listenerId;
+
     {
         std::lock_guard<std::mutex> lock(listenersMutex_);
         listenerId = nextListenerId_++;
@@ -111,14 +104,12 @@ std::function<void()> HybridStorage::addOnChange(
     return [this, intScope, listenerId]() {
         std::lock_guard<std::mutex> lock(listenersMutex_);
         auto& scopeListeners = listeners_[intScope];
-        scopeListeners.erase(
-            std::remove_if(
-                scopeListeners.begin(),
-                scopeListeners.end(),
-                [listenerId](const Listener& l) { return l.id == listenerId; }
-            ),
-            scopeListeners.end()
-        );
+        for (auto it = scopeListeners.begin(); it != scopeListeners.end(); ++it) {
+            if (it->id == listenerId) {
+                scopeListeners.erase(it);
+                break;
+            }
+        }
     };
 }
 
@@ -132,6 +123,7 @@ void HybridStorage::notifyListeners(
         std::lock_guard<std::mutex> lock(listenersMutex_);
         auto it = listeners_.find(scope);
         if (it != listeners_.end()) {
+            listenersCopy.reserve(it->second.size());
             listenersCopy = it->second;
         }
     }
