@@ -19,6 +19,9 @@
       "expo-router",
       "expo-build-properties",
       "react-native-nitro-storage"
-    ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
   }
 }

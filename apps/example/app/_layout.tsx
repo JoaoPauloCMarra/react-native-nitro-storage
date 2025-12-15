@@ -60,6 +60,7 @@ export default function RootLayout() {
           name="benchmark"
           options={{
             title: "Benchmark",
+            headerShown: false,
             tabBarIcon: () => <Text style={{ fontSize: 20 }}>📊</Text>,
             tabBarLabel: "Benchmark",
           }}

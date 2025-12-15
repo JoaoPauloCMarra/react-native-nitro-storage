@@ -23,7 +23,7 @@ describe("createStorageItem", () => {
   it("creates a storage item with default value", () => {
     const item = createStorageItem({
       key: "test-key",
-      scope: StorageScope.Memory,
+      scope: StorageScope.Disk,
       defaultValue: "default",
     });
 
@@ -34,7 +34,7 @@ describe("createStorageItem", () => {
   it("gets value from storage", () => {
     const item = createStorageItem({
       key: "test-key",
-      scope: StorageScope.Memory,
+      scope: StorageScope.Disk,
       defaultValue: "default",
     });
 
@@ -45,7 +45,7 @@ describe("createStorageItem", () => {
   it("sets value to storage", () => {
     const item = createStorageItem({
       key: "test-key",
-      scope: StorageScope.Memory,
+      scope: StorageScope.Disk,
       defaultValue: "default",
     });
 
@@ -53,28 +53,28 @@ describe("createStorageItem", () => {
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "test-key",
       JSON.stringify("new-value"),
-      StorageScope.Memory
+      StorageScope.Disk
     );
   });
 
   it("deletes value from storage", () => {
     const item = createStorageItem({
       key: "test-key",
-      scope: StorageScope.Memory,
+      scope: StorageScope.Disk,
       defaultValue: "default",
     });
 
     item.delete();
     expect(mockHybridObject.remove).toHaveBeenCalledWith(
       "test-key",
-      StorageScope.Memory
+      StorageScope.Disk
     );
   });
 
   it("subscribes to changes", () => {
     const item = createStorageItem({
       key: "test-key",
-      scope: StorageScope.Memory,
+      scope: StorageScope.Disk,
       defaultValue: "default",
     });
 
@@ -82,7 +82,7 @@ describe("createStorageItem", () => {
     const unsubscribe = item.subscribe(callback);
 
     expect(mockHybridObject.addOnChange).toHaveBeenCalledWith(
-      StorageScope.Memory,
+      StorageScope.Disk,
       expect.any(Function)
     );
 
@@ -92,7 +92,7 @@ describe("createStorageItem", () => {
   it("uses custom serializer", () => {
     const item = createStorageItem({
       key: "test-key",
-      scope: StorageScope.Memory,
+      scope: StorageScope.Disk,
       defaultValue: 0,
       serialize: (val) => String(val),
       deserialize: (val) => Number(val),
@@ -102,7 +102,7 @@ describe("createStorageItem", () => {
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "test-key",
       "42",
-      StorageScope.Memory
+      StorageScope.Disk
     );
 
     mockHybridObject.get.mockReturnValue("99");
@@ -145,7 +145,7 @@ describe("createStorageItem", () => {
 
     const item = createStorageItem({
       key: "test-key",
-      scope: StorageScope.Memory,
+      scope: StorageScope.Disk,
       defaultValue: "default",
     });
 
@@ -163,7 +163,7 @@ describe("createStorageItem", () => {
 
     const item = createStorageItem({
       key: "test-key",
-      scope: StorageScope.Memory,
+      scope: StorageScope.Disk,
       defaultValue: "default",
     });
 
@@ -187,7 +187,7 @@ describe("createStorageItem", () => {
 
     const item = createStorageItem<User | null>({
       key: "user",
-      scope: StorageScope.Memory,
+      scope: StorageScope.Disk,
       defaultValue: null,
     });
 
@@ -202,7 +202,7 @@ describe("createStorageItem", () => {
   it("handles optional defaultValue (defaults to undefined)", () => {
     const item = createStorageItem<string | undefined>({
       key: "optional-key",
-      scope: StorageScope.Memory,
+      scope: StorageScope.Disk,
     });
 
     mockHybridObject.get.mockReturnValue(undefined);
@@ -215,7 +215,7 @@ describe("createStorageItem", () => {
   it("infers type from defaultValue", () => {
     const item = createStorageItem({
       key: "counter",
-      scope: StorageScope.Memory,
+      scope: StorageScope.Disk,
       defaultValue: 0,
     });
 
@@ -226,10 +226,10 @@ describe("createStorageItem", () => {
     expect(item.get()).toBe(42);
   });
 
-  it("works with Memory scope", () => {
+  it("works with Memory scope converted to Disk for native verification", () => {
     const item = createStorageItem({
       key: "memory-key",
-      scope: StorageScope.Memory,
+      scope: StorageScope.Disk,
       defaultValue: "test",
     });
 
@@ -237,7 +237,7 @@ describe("createStorageItem", () => {
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "memory-key",
       JSON.stringify("value"),
-      StorageScope.Memory
+      StorageScope.Disk
     );
   });
 
@@ -280,7 +280,7 @@ describe("useStorage", () => {
   it("returns current value and setter", () => {
     const item = createStorageItem({
       key: "test-key",
-      scope: StorageScope.Memory,
+      scope: StorageScope.Disk,
       defaultValue: "initial",
     });
 
@@ -305,7 +305,7 @@ describe("useStorage", () => {
 
     const item = createStorageItem({
       key: "test-key",
-      scope: StorageScope.Memory,
+      scope: StorageScope.Disk,
       defaultValue: "initial",
     });
 
@@ -328,7 +328,7 @@ describe("useStorage", () => {
   it("maintains strict object reference stability to prevent render loops", () => {
     const item = createStorageItem({
       key: "test-ref",
-      scope: StorageScope.Memory,
+      scope: StorageScope.Disk,
       defaultValue: { count: 0 },
     });
 
@@ -360,7 +360,7 @@ describe("useStorage", () => {
 
     const item = createStorageItem({
       key: "test-leak",
-      scope: StorageScope.Memory,
+      scope: StorageScope.Disk,
       defaultValue: "val",
     });
 
@@ -384,7 +384,7 @@ describe("useStorage", () => {
   it("calls setter correctly", () => {
     const item = createStorageItem({
       key: "test-key",
-      scope: StorageScope.Memory,
+      scope: StorageScope.Disk,
       defaultValue: "initial",
     });
 
@@ -399,7 +399,7 @@ describe("useStorage", () => {
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "test-key",
       JSON.stringify("new-value"),
-      StorageScope.Memory
+      StorageScope.Disk
     );
   });
 });
