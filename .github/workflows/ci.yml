@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    name: Quality Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            node_modules
+            packages/*/node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Run type checking
+        run: bun run typecheck
+
+      - name: Run JavaScript tests
+        run: bun run test
+
+      - name: Run JavaScript tests with coverage
+        run: |
+          cd packages/react-native-nitro-storage
+          bun run test:coverage
+
+      - name: Setup CMake (for C++ tests)
+        run: |
+          cmake --version
+          gcc --version || clang --version || echo "C++ compiler available"
+
+      - name: Run C++ tests
+        run: bun run test:cpp
+
+      - name: Build packages
+        run: bun run build
+
+      - name: Verify build artifacts
+        run: |
+          # Check that lib directories were created
+          [ -d "packages/react-native-nitro-storage/lib" ] || exit 1
+          # Check that TypeScript definitions exist
+          [ -f "packages/react-native-nitro-storage/lib/typescript/index.d.ts" ] || exit 1
+          # Check that all build targets exist
+          [ -d "packages/react-native-nitro-storage/lib/commonjs" ] || exit 1
+          [ -d "packages/react-native-nitro-storage/lib/module" ] || exit 1
+          echo "✅ Build artifacts verified"
+
+      - name: Test package packaging
+        run: |
+          cd packages/react-native-nitro-storage
+          # Test that npm pack works (dry run)
+          npm pack --dry-run > /dev/null 2>&1 || exit 1
+          echo "✅ Package can be packed for publishing"

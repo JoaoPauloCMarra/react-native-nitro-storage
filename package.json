@@ -1,0 +1,30 @@
+{
+  "name": "react-native-nitro-storage-monorepo",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "setup": "node scripts/setup.js",
+    "publish-package": "node scripts/publish.js",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "clean": "turbo run clean",
+    "codegen": "turbo run codegen",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:coverage": "turbo run test -- --coverage",
+    "test:cpp": "turbo run test:cpp --filter=react-native-nitro-storage",
+    "start": "turbo run start --filter=example --",
+    "example:ios": "turbo run ios --filter=example",
+    "example:android": "turbo run android --filter=example",
+    "example:prebuild": "turbo run prebuild --filter=example",
+    "example:prebuild:clean": "turbo run prebuild:clean --filter=example"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "typescript": "^5.6.3"
+  },
+  "packageManager": "bun@1.1.38"
+}

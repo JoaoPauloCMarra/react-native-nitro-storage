@@ -1,0 +1,15 @@
+{
+  "cxxNamespace": ["NitroStorage"],
+  "ios": {
+    "iosModuleName": "NitroStorage"
+  },
+  "android": {
+    "androidNamespace": ["com", "nitrostorage"],
+    "androidCxxLibName": "NitroStorage"
+  },
+  "autolinking": {
+    "Storage": {
+      "cpp": "HybridStorage"
+    }
+  }
+}
