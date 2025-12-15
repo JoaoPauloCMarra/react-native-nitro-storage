@@ -157,4 +157,22 @@ describe("Pure JS Memory Storage", () => {
 
     expect(item.get()).toBe(100);
   });
+
+  it("deletes memory items and notifies subscribers", () => {
+    const item = createStorageItem({
+      key: "delete-test",
+      scope: StorageScope.Memory,
+      defaultValue: "default",
+    });
+
+    item.set("value");
+    expect(item.get()).toBe("value");
+
+    const listener = jest.fn();
+    item.subscribe(listener);
+
+    item.delete();
+    expect(item.get()).toBe("default");
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
 });

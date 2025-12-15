@@ -491,22 +491,7 @@ Built on [Nitro Modules](https://nitro.margelo.com) for maximum performance:
 
 ## 📄 License
 
-MIT © [Your Name]
-
----
-
-## 🙏 Acknowledgments
-
-Built with ❤️ using [Nitro Modules](https://nitro.margelo.com) by [Marc Rousavy](https://github.com/mrousavy)
-
----
-
-## 📚 Learn More
-
-- [Nitro Modules Documentation](https://nitro.margelo.com)
-- [Example App](./apps/example)
-- [API Reference](#-api-reference)
-- [Performance Benchmarks](#-performance-benchmarks)
+MIT
 
 ---
 
