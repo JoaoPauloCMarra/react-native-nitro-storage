@@ -40,12 +40,17 @@ export default function BenchmarkScreen() {
   const [runningDisk, setRunningDisk] = useState(false);
   const [runningSecure, setRunningSecure] = useState(false);
 
-  const runBenchmark = (
+  const delay = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+
+  const runBenchmark = async (
     item: typeof memoryItem,
     setResult: (result: BenchmarkResult) => void,
     setRunning: (running: boolean) => void
   ) => {
     setRunning(true);
+    await delay(100);
+
     const ops = 1_000;
     const data = JSON.stringify({ test: "data", timestamp: Date.now() });
 
@@ -69,6 +74,14 @@ export default function BenchmarkScreen() {
       ops,
     });
     setRunning(false);
+  };
+
+  const runAll = async () => {
+    await runBenchmark(memoryItem, setMemoryResult, setRunningMemory);
+    await delay(100);
+    await runBenchmark(diskItem, setDiskResult, setRunningDisk);
+    await delay(100);
+    await runBenchmark(secureItem, setSecureResult, setRunningSecure);
   };
 
   const ResultCard = ({
@@ -134,11 +147,13 @@ export default function BenchmarkScreen() {
         title={running ? "Running..." : "Run"}
         onPress={onRun}
         variant="primary"
-        disabled={running}
+        disabled={running || runningMemory || runningDisk || runningSecure}
         style={{ marginTop: 8 }}
       />
     </View>
   );
+
+  const isAnyRunning = runningMemory || runningDisk || runningSecure;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -147,6 +162,13 @@ export default function BenchmarkScreen() {
         bounces={false}
         overScrollMode="never"
       >
+        <Button
+          title={isAnyRunning ? "Benchmarking..." : "Run All Benchmarks"}
+          onPress={runAll}
+          variant="primary"
+          disabled={isAnyRunning}
+          style={{ marginBottom: 16 }}
+        />
         <View style={{ gap: 8 }}>
           <ResultCard
             title="Memory Storage"
