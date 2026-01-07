@@ -1,11 +1,18 @@
 import { useState } from "react";
-import { ScrollView, View, Text, TextInput } from "react-native";
+import { View, Text } from "react-native";
 import {
   createStorageItem,
   useStorage,
   StorageScope,
 } from "react-native-nitro-storage";
-import { Button, styles } from "../components/shared";
+import {
+  Button,
+  Page,
+  Card,
+  Colors,
+  Input,
+  styles,
+} from "../components/shared";
 
 const secureToken = createStorageItem({
   key: "auth-token",
@@ -18,47 +25,87 @@ export default function SecureDemo() {
   const [tempToken, setTempToken] = useState("");
 
   return (
-    <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <View style={[styles.indicator, { backgroundColor: "#10B981" }]} />
-            <Text style={styles.cardTitle}>Secure Storage</Text>
-          </View>
-          <Text style={styles.description}>
-            Encrypted Keychain/Keystore storage.
-          </Text>
+    <Page title="Secure" subtitle="Hardware Encrypted">
+      <Card
+        title="Security Vault"
+        subtitle="Scope: Secure"
+        indicatorColor={Colors.secure}
+      >
+        <Text style={{ fontSize: 14, color: Colors.muted }}>
+          Encrypted with AES-256 GCM. Stored in iOS Keychain or Android
+          EncryptedSharedPreferences.
+        </Text>
 
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Auth Token</Text>
-            <TextInput
-              style={styles.input}
-              value={tempToken}
-              onChangeText={setTempToken}
-              placeholder="secret_token_123"
-              placeholderTextColor="#52525B"
-              secureTextEntry
-            />
-            <Button
-              title="Save Securely"
-              onPress={() => {
-                setToken(tempToken);
-                setTempToken("");
-              }}
-            />
-            {token ? (
-              <View style={[styles.resultBadge, { borderColor: "#10B981" }]}>
-                <Text style={[styles.resultLabel, { color: "#10B981" }]}>
-                  Stored Encrypted
-                </Text>
-                <Text style={styles.resultText}>
-                  {token.substring(0, 8)}••••••••
-                </Text>
-              </View>
-            ) : null}
-          </View>
+        <Input
+          label="Secret Token"
+          value={tempToken}
+          onChangeText={setTempToken}
+          placeholder="Paste sensitive data..."
+          secureTextEntry
+        />
+
+        <View style={styles.row}>
+          <Button
+            title="Lock in Vault"
+            onPress={() => {
+              setToken(tempToken);
+              setTempToken("");
+            }}
+            variant="success"
+            style={styles.flex1}
+          />
+          <Button
+            title="Wipe"
+            variant="danger"
+            onPress={() => {
+              secureToken.delete();
+            }}
+          />
         </View>
-      </ScrollView>
-    </View>
+
+        {token ? (
+          <View
+            style={{
+              marginTop: 10,
+              padding: 16,
+              backgroundColor: Colors.secure + "15",
+              borderRadius: 16,
+              borderWidth: 1,
+              borderColor: Colors.secure + "30",
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 12,
+                color: Colors.secure,
+                fontWeight: "800",
+                textTransform: "uppercase",
+                marginBottom: 4,
+              }}
+            >
+              Encrypted Value
+            </Text>
+            <Text
+              style={{ fontSize: 18, color: Colors.text, fontWeight: "600" }}
+            >
+              ••••••••••••••••
+            </Text>
+            <Text style={{ fontSize: 12, color: Colors.muted, marginTop: 4 }}>
+              Raw: {token.substring(0, 4)}...
+            </Text>
+          </View>
+        ) : null}
+      </Card>
+
+      <Card title="Security Info">
+        <Text style={{ color: Colors.muted }}>
+          • Hardware-backed encryption
+        </Text>
+        <Text style={{ color: Colors.muted }}>
+          • Biometric-ready (Coming soon)
+        </Text>
+        <Text style={{ color: Colors.muted }}>• No plain text on disk</Text>
+      </Card>
+    </Page>
   );
 }

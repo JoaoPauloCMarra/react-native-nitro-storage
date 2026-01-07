@@ -113,6 +113,56 @@ std::function<void()> HybridStorage::addOnChange(
     };
 }
 
+void HybridStorage::clear(double scope) {
+    Scope s = toScope(scope);
+    
+    switch (s) {
+        case Scope::Memory: {
+            std::lock_guard<std::mutex> lock(memoryMutex_);
+            memoryStore_.clear();
+            break;
+        }
+        case Scope::Disk:
+            nativeAdapter_->clearDisk();
+            break;
+        case Scope::Secure:
+            nativeAdapter_->clearSecure();
+            break;
+    }
+    
+    notifyListeners(static_cast<int>(s), "", std::nullopt);
+}
+
+void HybridStorage::setBatch(const std::vector<std::string>& keys, const std::vector<std::string>& values, double scope) {
+    if (keys.size() != values.size()) {
+        throw std::runtime_error("NitroStorage: Keys and values size mismatch in setBatch");
+    }
+    
+    for (size_t i = 0; i < keys.size(); ++i) {
+        set(keys[i], values[i], scope);
+    }
+}
+
+
+std::vector<std::string> HybridStorage::getBatch(const std::vector<std::string>& keys, double scope) {
+    std::vector<std::string> results;
+    results.reserve(keys.size());
+    
+    for (const auto& key : keys) {
+        auto val = get(key, scope);
+        results.push_back(val.value_or(""));
+    }
+    
+    return results;
+}
+
+
+void HybridStorage::removeBatch(const std::vector<std::string>& keys, double scope) {
+    for (const auto& key : keys) {
+        remove(key, scope);
+    }
+}
+
 void HybridStorage::notifyListeners(
     int scope,
     const std::string& key,

@@ -49,6 +49,16 @@ struct AndroidStorageAdapterJava : facebook::jni::JavaClass<AndroidStorageAdapte
       static auto method = javaClassStatic()->getMethod<void(std::string)>("deleteSecure");
       method(self(), key);
   }
+
+  void clearDisk() {
+      static auto method = javaClassStatic()->getStaticMethod<void()>("clearDisk");
+      method(javaClassStatic());
+  }
+
+  void clearSecure() {
+      static auto method = javaClassStatic()->getStaticMethod<void()>("clearSecure");
+      method(javaClassStatic());
+  }
 };
 
 class AndroidStorageAdapterCpp : public NativeStorageAdapter {
@@ -63,6 +73,9 @@ public:
     void setSecure(const std::string& key, const std::string& value) override;
     std::optional<std::string> getSecure(const std::string& key) override;
     void deleteSecure(const std::string& key) override;
+    
+    void clearDisk() override;
+    void clearSecure() override;
 };
 
 } // namespace NitroStorage

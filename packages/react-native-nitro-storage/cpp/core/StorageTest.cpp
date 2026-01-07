@@ -54,11 +54,19 @@ public:
         std::lock_guard<std::mutex> lock(secureMutex_);
         secureStore_.erase(key);
     }
+
+    void clearDisk() override {
+        std::lock_guard<std::mutex> lock(diskMutex_);
+        diskStore_.clear();
+    }
+
+    void clearSecure() override {
+        std::lock_guard<std::mutex> lock(secureMutex_);
+        secureStore_.clear();
+    }
 };
 
 void testDiskStorage() {
-    std::cout << "Testing Disk Storage..." << std::endl;
-    
     auto adapter = std::make_shared<MockNativeAdapter>();
 
     adapter->setDisk("disk-key", "disk-value");
@@ -73,12 +81,9 @@ void testDiskStorage() {
     result = adapter->getDisk("disk-key");
     assert(!result.has_value());
 
-    std::cout << "✓ Disk Storage tests passed" << std::endl;
 }
 
 void testSecureStorage() {
-    std::cout << "Testing Secure Storage..." << std::endl;
-    
     auto adapter = std::make_shared<MockNativeAdapter>();
 
     adapter->setSecure("secure-key", "secure-value");
@@ -89,27 +94,21 @@ void testSecureStorage() {
     result = adapter->getSecure("secure-key");
     assert(!result.has_value());
 
-    std::cout << "✓ Secure Storage tests passed" << std::endl;
 }
 
 void testThreadSafety() {
-    std::cout << "Testing Thread Safety..." << std::endl;
-    
     auto adapter = std::make_shared<MockNativeAdapter>();
-
     const int numThreads = 10;
     const int opsPerThread = 100;
     std::vector<std::thread> threads;
 
     for (int t = 0; t < numThreads; ++t) {
-        threads.emplace_back([&adapter, t, opsPerThread]() {
-            for (int i = 0; i < opsPerThread; ++i) {
+        threads.emplace_back([&adapter, t]() {
+            for (int i = 0; i < 100; ++i) {
                 std::string key = "key-" + std::to_string(t) + "-" + std::to_string(i);
                 std::string value = "value-" + std::to_string(i);
-                
                 adapter->setDisk(key, value);
-                auto result = adapter->getDisk(key);
-                assert(result.has_value());
+                assert(adapter->getDisk(key).has_value());
                 adapter->deleteDisk(key);
             }
         });
@@ -118,13 +117,9 @@ void testThreadSafety() {
     for (auto& thread : threads) {
         thread.join();
     }
-
-    std::cout << "✓ Thread Safety tests passed" << std::endl;
 }
 
 void testMultipleKeys() {
-    std::cout << "Testing Multiple Keys..." << std::endl;
-    
     auto adapter = std::make_shared<MockNativeAdapter>();
 
     adapter->setDisk("key1", "value1");
@@ -140,7 +135,6 @@ void testMultipleKeys() {
     assert(!adapter->getDisk("key2").has_value());
     assert(adapter->getDisk("key3").has_value());
 
-    std::cout << "✓ Multiple Keys tests passed" << std::endl;
 }
 
 int main() {

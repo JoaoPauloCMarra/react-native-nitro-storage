@@ -90,5 +90,15 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         fun deleteSecure(key: String) {
             instance?.encryptedPreferences?.edit()?.remove(key)?.apply()
         }
+
+        @JvmStatic
+        fun clearDisk() {
+            instance?.sharedPreferences?.edit()?.clear()?.apply()
+        }
+
+        @JvmStatic
+        fun clearSecure() {
+            instance?.encryptedPreferences?.edit()?.clear()?.apply()
+        }
     }
 }

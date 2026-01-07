@@ -46,4 +46,14 @@ void AndroidStorageAdapterCpp::deleteSecure(const std::string& key) {
     method(AndroidStorageAdapterJava::javaClassStatic(), key);
 }
 
+void AndroidStorageAdapterCpp::clearDisk() {
+    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<void()>("clearDisk");
+    method(AndroidStorageAdapterJava::javaClassStatic());
+}
+
+void AndroidStorageAdapterCpp::clearSecure() {
+    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<void()>("clearSecure");
+    method(AndroidStorageAdapterJava::javaClassStatic());
+}
+
 } // namespace NitroStorage

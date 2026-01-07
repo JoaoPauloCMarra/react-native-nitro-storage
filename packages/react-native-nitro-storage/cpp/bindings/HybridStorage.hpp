@@ -19,6 +19,10 @@ public:
     void set(const std::string& key, const std::string& value, double scope) override;
     std::optional<std::string> get(const std::string& key, double scope) override;
     void remove(const std::string& key, double scope) override;
+    void clear(double scope) override;
+    void setBatch(const std::vector<std::string>& keys, const std::vector<std::string>& values, double scope) override;
+    std::vector<std::string> getBatch(const std::vector<std::string>& keys, double scope) override;
+    void removeBatch(const std::vector<std::string>& keys, double scope) override;
     std::function<void()> addOnChange(
         double scope,
         const std::function<void(const std::string&, const std::optional<std::string>&)>& callback

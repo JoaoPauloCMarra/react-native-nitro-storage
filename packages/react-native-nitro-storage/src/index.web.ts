@@ -1,19 +1,100 @@
 import { useSyncExternalStore } from "react";
-import { NitroModules } from "react-native-nitro-modules";
-import type { Storage } from "./Storage.nitro";
-import { StorageScope } from "./Storage.types";
 
-export { StorageScope } from "./Storage.types";
-export type { Storage } from "./Storage.nitro";
-
-let _storageModule: Storage | null = null;
-
-function getStorageModule(): Storage {
-  if (!_storageModule) {
-    _storageModule = NitroModules.createHybridObject<Storage>("Storage");
-  }
-  return _storageModule!;
+export enum StorageScope {
+  Memory = 0,
+  Disk = 1,
+  Secure = 2,
 }
+
+export interface Storage {
+  name: string;
+  equals: (other: any) => boolean;
+  dispose: () => void;
+  set(key: string, value: string, scope: number): void;
+  get(key: string, scope: number): string | undefined;
+  remove(key: string, scope: number): void;
+  clear(scope: number): void;
+  setBatch(keys: string[], values: string[], scope: number): void;
+  getBatch(keys: string[], scope: number): (string | undefined)[];
+  removeBatch(keys: string[], scope: number): void;
+  addOnChange(
+    scope: number,
+    callback: (key: string, value: string | undefined) => void
+  ): () => void;
+}
+
+const diskListeners = new Map<string, Set<() => void>>();
+const secureListeners = new Map<string, Set<() => void>>();
+
+function notifyDiskListeners(key: string) {
+  diskListeners.get(key)?.forEach((cb) => cb());
+}
+
+function notifySecureListeners(key: string) {
+  secureListeners.get(key)?.forEach((cb) => cb());
+}
+
+const WebStorage: Storage = {
+  name: "Storage",
+  equals: (other) => other === WebStorage,
+  dispose: () => {},
+  set: (key: string, value: string, scope: number) => {
+    if (scope === StorageScope.Disk) {
+      localStorage?.setItem(key, value);
+      notifyDiskListeners(key);
+    } else if (scope === StorageScope.Secure) {
+      sessionStorage?.setItem(key, value);
+      notifySecureListeners(key);
+    }
+  },
+
+  get: (key: string, scope: number) => {
+    if (scope === StorageScope.Disk) {
+      return localStorage?.getItem(key) ?? undefined;
+    } else if (scope === StorageScope.Secure) {
+      return sessionStorage?.getItem(key) ?? undefined;
+    }
+    return undefined;
+  },
+  remove: (key: string, scope: number) => {
+    if (scope === StorageScope.Disk) {
+      localStorage?.removeItem(key);
+      notifyDiskListeners(key);
+    } else if (scope === StorageScope.Secure) {
+      sessionStorage?.removeItem(key);
+      notifySecureListeners(key);
+    }
+  },
+
+  clear: (scope: number) => {
+    if (scope === StorageScope.Disk) {
+      localStorage?.clear();
+      diskListeners.forEach((listeners) => {
+        listeners.forEach((cb) => cb());
+      });
+    } else if (scope === StorageScope.Secure) {
+      sessionStorage?.clear();
+      secureListeners.forEach((listeners) => {
+        listeners.forEach((cb) => cb());
+      });
+    }
+  },
+  setBatch: (keys: string[], values: string[], scope: number) => {
+    keys.forEach((key, i) => WebStorage.set(key, values[i], scope));
+  },
+  getBatch: (keys: string[], scope: number) => {
+    return keys.map((key) => WebStorage.get(key, scope));
+  },
+  removeBatch: (keys: string[], scope: number) => {
+    keys.forEach((key) => WebStorage.remove(key, scope));
+  },
+  addOnChange: (
+    _scope: number,
+    _callback: (key: string, value: string | undefined) => void
+  ) => {
+    return () => {};
+  },
+};
 
 const memoryStore = new Map<string, any>();
 const memoryListeners = new Set<(key: string, value: any) => void>();
@@ -28,7 +109,7 @@ export const storage = {
       memoryStore.clear();
       notifyMemoryListeners("", undefined);
     } else {
-      getStorageModule().clear(scope);
+      WebStorage.clear(scope);
     }
   },
   clearAll: () => {
@@ -75,12 +156,14 @@ export function createStorageItem<T = undefined>(
 
   const listeners = new Set<() => void>();
   let unsubscribe: (() => void) | null = null;
+  let lastRaw: string | undefined;
+  let lastValue: T | undefined;
 
   const ensureSubscription = () => {
     if (!unsubscribe) {
       if (isMemory) {
         const listener = (key: string) => {
-          if (key === "" || key === config.key) {
+          if (key === config.key) {
             lastRaw = undefined;
             lastValue = undefined;
             listeners.forEach((l) => l());
@@ -88,28 +171,38 @@ export function createStorageItem<T = undefined>(
         };
         memoryListeners.add(listener);
         unsubscribe = () => memoryListeners.delete(listener);
-      } else {
-        unsubscribe = getStorageModule().addOnChange(config.scope, (key) => {
-          if (key === "" || key === config.key) {
-            lastRaw = undefined;
-            lastValue = undefined;
-            listeners.forEach((listener) => listener());
-          }
-        });
+      } else if (config.scope === StorageScope.Disk) {
+        const listener = () => {
+          lastRaw = undefined;
+          lastValue = undefined;
+          listeners.forEach((l) => l());
+        };
+        if (!diskListeners.has(config.key)) {
+          diskListeners.set(config.key, new Set());
+        }
+        diskListeners.get(config.key)!.add(listener);
+        unsubscribe = () => diskListeners.get(config.key)?.delete(listener);
+      } else if (config.scope === StorageScope.Secure) {
+        const listener = () => {
+          lastRaw = undefined;
+          lastValue = undefined;
+          listeners.forEach((l) => l());
+        };
+        if (!secureListeners.has(config.key)) {
+          secureListeners.set(config.key, new Set());
+        }
+        secureListeners.get(config.key)!.add(listener);
+        unsubscribe = () => secureListeners.get(config.key)?.delete(listener);
       }
     }
   };
 
-  let lastRaw: string | undefined;
-  let lastValue: T | undefined;
-
   const get = (): T => {
     let raw: string | undefined;
-
     if (isMemory) {
       raw = memoryStore.get(config.key);
     } else {
-      raw = getStorageModule().get(config.key, config.scope);
+      raw = WebStorage.get(config.key, config.scope);
     }
 
     if (raw === lastRaw && lastValue !== undefined) {
@@ -121,11 +214,7 @@ export function createStorageItem<T = undefined>(
     if (raw === undefined) {
       lastValue = config.defaultValue as T;
     } else {
-      if (isMemory) {
-        lastValue = raw as T;
-      } else {
-        lastValue = deserialize(raw);
-      }
+      lastValue = isMemory ? (raw as T) : deserialize(raw);
     }
 
     return lastValue;
@@ -138,21 +227,24 @@ export function createStorageItem<T = undefined>(
         ? (valueOrFn as (prev: T) => T)(currentValue)
         : valueOrFn;
 
+    lastRaw = undefined;
+
     if (isMemory) {
       memoryStore.set(config.key, newValue);
       notifyMemoryListeners(config.key, newValue);
     } else {
-      const serialized = serialize(newValue);
-      getStorageModule().set(config.key, serialized, config.scope);
+      WebStorage.set(config.key, serialize(newValue), config.scope);
     }
   };
 
   const deleteItem = (): void => {
+    lastRaw = undefined;
+
     if (isMemory) {
       memoryStore.delete(config.key);
       notifyMemoryListeners(config.key, undefined);
     } else {
-      getStorageModule().remove(config.key, config.scope);
+      WebStorage.remove(config.key, config.scope);
     }
   };
 
@@ -205,7 +297,7 @@ export function getBatch(
   }
 
   const keys = items.map((item) => item.key);
-  const rawValues = getStorageModule().getBatch(keys, scope);
+  const rawValues = WebStorage.getBatch(keys, scope);
 
   return items.map((item, idx) => {
     const raw = rawValues[idx];
@@ -227,8 +319,7 @@ export function setBatch(
 
   const keys = items.map((i) => i.item.key);
   const values = items.map((i) => i.item.serialize(i.value));
-
-  getStorageModule().setBatch(keys, values, scope);
+  WebStorage.setBatch(keys, values, scope);
 
   items.forEach(({ item }) => {
     item._triggerListeners();
@@ -245,6 +336,6 @@ export function removeBatch(
   }
 
   const keys = items.map((item) => item.key);
-  getStorageModule().removeBatch(keys, scope);
+  WebStorage.removeBatch(keys, scope);
   items.forEach((item) => item.delete());
 }

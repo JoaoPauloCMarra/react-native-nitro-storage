@@ -4,6 +4,10 @@ const mockHybridObject = {
   set: jest.fn(),
   get: jest.fn(),
   remove: jest.fn(),
+  clear: jest.fn(),
+  setBatch: jest.fn(),
+  getBatch: jest.fn(),
+  removeBatch: jest.fn(),
   addOnChange: jest.fn(),
 };
 
@@ -13,7 +17,14 @@ jest.mock("react-native-nitro-modules", () => ({
   },
 }));
 
-import { createStorageItem, useStorage, StorageScope } from "../index";
+import {
+  createStorageItem,
+  useStorage,
+  StorageScope,
+  getBatch,
+  setBatch,
+  removeBatch,
+} from "../index";
 
 describe("createStorageItem", () => {
   beforeEach(() => {
@@ -401,5 +412,129 @@ describe("useStorage", () => {
       JSON.stringify("new-value"),
       StorageScope.Disk
     );
+  });
+});
+
+describe("Batch Operations", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    // Memory scope is handled via Map in the mock for consistency if needed,
+    // but here we just test Disk/Secure which use mockHybridObject.
+  });
+
+  const item1 = createStorageItem({
+    key: "batch-1",
+    scope: StorageScope.Disk,
+    defaultValue: "d1",
+  });
+  const item2 = createStorageItem({
+    key: "batch-2",
+    scope: StorageScope.Disk,
+    defaultValue: "d2",
+  });
+
+  it("sets multiple items at once", () => {
+    setBatch(
+      [
+        { item: item1, value: "v1" },
+        { item: item2, value: "v2" },
+      ],
+      StorageScope.Disk
+    );
+
+    expect(mockHybridObject.setBatch).toHaveBeenCalledWith(
+      ["batch-1", "batch-2"],
+      [JSON.stringify("v1"), JSON.stringify("v2")],
+      StorageScope.Disk
+    );
+  });
+
+  it("gets multiple items at once", () => {
+    mockHybridObject.getBatch.mockReturnValue([
+      JSON.stringify("v1"),
+      JSON.stringify("v2"),
+    ]);
+
+    // We also need to mock individual get calls because currently getBatch implementation in JS
+    // calls item.get() which checks the native side individually if cache is empty.
+    mockHybridObject.get.mockImplementation((key) => {
+      if (key === "batch-1") return JSON.stringify("v1");
+      if (key === "batch-2") return JSON.stringify("v2");
+      return undefined;
+    });
+
+    const values = getBatch([item1, item2], StorageScope.Disk);
+
+    expect(mockHybridObject.getBatch).toHaveBeenCalledWith(
+      ["batch-1", "batch-2"],
+      StorageScope.Disk
+    );
+    expect(values).toEqual(["v1", "v2"]);
+  });
+
+  it("removes multiple items at once", () => {
+    removeBatch([item1, item2], StorageScope.Disk);
+
+    expect(mockHybridObject.removeBatch).toHaveBeenCalledWith(
+      ["batch-1", "batch-2"],
+      StorageScope.Disk
+    );
+  });
+
+  describe("Memory Scope", () => {
+    const mem1 = createStorageItem({
+      key: "mem-1",
+      scope: StorageScope.Memory,
+      defaultValue: "m1",
+    });
+    const mem2 = createStorageItem({
+      key: "mem-2",
+      scope: StorageScope.Memory,
+      defaultValue: "m2",
+    });
+
+    it("sets multiple items in memory", () => {
+      setBatch(
+        [
+          { item: mem1, value: "mv1" },
+          { item: mem2, value: "mv2" },
+        ],
+        StorageScope.Memory
+      );
+
+      expect(mem1.get()).toBe("mv1");
+      expect(mem2.get()).toBe("mv2");
+    });
+
+    it("gets multiple items from memory", () => {
+      mem1.set("mv1-new");
+      mem2.set("mv2-new");
+
+      const values = getBatch([mem1, mem2], StorageScope.Memory);
+      expect(values).toEqual(["mv1-new", "mv2-new"]);
+    });
+
+    it("removes multiple items from memory", () => {
+      mem1.set("to-be-deleted");
+      removeBatch([mem1, mem2], StorageScope.Memory);
+      expect(mem1.get()).toBe("m1"); // Default value
+    });
+  });
+
+  it("falls back to item.get() in getBatch if native returns undefined", () => {
+    mockHybridObject.getBatch.mockReturnValue([
+      undefined,
+      JSON.stringify("v2"),
+    ]);
+    mockHybridObject.get.mockReturnValue(JSON.stringify("v1-fallback"));
+
+    const item1WithFallback = createStorageItem({
+      key: "fallback-1",
+      scope: StorageScope.Disk,
+      defaultValue: "d1",
+    });
+
+    const values = getBatch([item1WithFallback, item2], StorageScope.Disk);
+    expect(values).toEqual(["v1-fallback", "v2"]);
   });
 });
