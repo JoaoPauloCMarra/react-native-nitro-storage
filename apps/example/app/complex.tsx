@@ -1,107 +1,140 @@
-import { useState } from "react";
-import { ScrollView, View, Text, TextInput, Platform } from "react-native";
+import { View, Text } from "react-native";
 import {
   createStorageItem,
   useStorage,
   StorageScope,
 } from "react-native-nitro-storage";
-import { Button, styles } from "../components/shared";
+import { Button, Page, Card, Colors, styles } from "../components/shared";
 
-interface User {
-  name: string;
-  email: string;
-  age: number;
+interface Settings {
+  theme: "dark" | "light";
+  notifications: boolean;
+  lastLogin: string;
 }
 
-const userProfile = createStorageItem<User>({
-  key: "user-profile",
+const complexSettings = createStorageItem<Settings>({
+  key: "app-settings",
   scope: StorageScope.Disk,
-  defaultValue: { name: "", email: "", age: 0 },
+  defaultValue: {
+    theme: "dark",
+    notifications: true,
+    lastLogin: new Date().toISOString(),
+  },
 });
 
 export default function ComplexDemo() {
-  const [profile, setProfile] = useStorage(userProfile);
-  const [tempName, setTempName] = useState("");
-  const [tempEmail, setTempEmail] = useState("");
-  const [tempAge, setTempAge] = useState("");
+  const [settings, setSettings] = useStorage(complexSettings);
+
+  const toggleTheme = () => {
+    setSettings((prev) => ({
+      ...prev,
+      theme: prev.theme === "dark" ? "light" : "dark",
+    }));
+  };
+
+  const toggleNotifications = () => {
+    setSettings((prev) => ({
+      ...prev,
+      notifications: !prev.notifications,
+    }));
+  };
 
   return (
-    <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <View style={[styles.indicator, { backgroundColor: "#A855F7" }]} />
-            <Text style={styles.cardTitle}>Complex Objects</Text>
-          </View>
-          <Text style={styles.description}>
-            Automatic JSON serialization/deserialization.
-          </Text>
+    <Page title="Objects" subtitle="Type-safe Complex State">
+      <Card
+        title="Configuration"
+        subtitle="JSON Persistence"
+        indicatorColor={Colors.primary}
+      >
+        <Text style={{ fontSize: 14, color: Colors.muted }}>
+          Nitro Storage automatically serializes and deserializes complex JSON
+          objects with full TypeScript inference.
+        </Text>
 
-          <View style={styles.inputGroup}>
-            <View style={styles.row}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.label}>Name</Text>
-                <TextInput
-                  style={styles.input}
-                  value={tempName}
-                  onChangeText={setTempName}
-                  placeholder="Alice"
-                  placeholderTextColor="#52525B"
-                />
-              </View>
-              <View style={{ width: 80 }}>
-                <Text style={styles.label}>Age</Text>
-                <TextInput
-                  style={styles.input}
-                  value={tempAge}
-                  onChangeText={setTempAge}
-                  placeholder="25"
-                  keyboardType="numeric"
-                  placeholderTextColor="#52525B"
-                />
-              </View>
-            </View>
-
-            <Text style={styles.label}>Email</Text>
-            <TextInput
-              style={styles.input}
-              value={tempEmail}
-              onChangeText={setTempEmail}
-              placeholder="alice@example.com"
-              placeholderTextColor="#52525B"
-              autoCapitalize="none"
-            />
-
+        <View style={{ gap: 12, marginTop: 10 }}>
+          <View
+            style={[
+              styles.row,
+              {
+                justifyContent: "space-between",
+                alignItems: "center",
+                backgroundColor: Colors.border,
+                padding: 16,
+                borderRadius: 16,
+              },
+            ]}
+          >
+            <Text style={{ color: Colors.text, fontWeight: "700" }}>Theme</Text>
             <Button
-              title="Save Profile Object"
+              title={settings.theme.toUpperCase()}
+              onPress={toggleTheme}
               variant="secondary"
-              style={{
-                backgroundColor: "#27272A",
-                borderWidth: 1,
-                borderColor: "#3F3F46",
-              }}
-              onPress={() => {
-                setProfile({
-                  name: tempName,
-                  email: tempEmail,
-                  age: parseInt(tempAge) || 0,
-                });
-                setTempName("");
-                setTempEmail("");
-                setTempAge("");
-              }}
+              size="sm"
             />
+          </View>
 
-            {profile.name ? (
-              <View style={styles.jsonPreview}>
-                <Text style={styles.codeText}>
-                  {JSON.stringify(profile, null, 2)}
-                </Text>
-              </View>
-            ) : null}
+          <View
+            style={[
+              styles.row,
+              {
+                justifyContent: "space-between",
+                alignItems: "center",
+                backgroundColor: Colors.border,
+                padding: 16,
+                borderRadius: 16,
+              },
+            ]}
+          >
+            <Text style={{ color: Colors.text, fontWeight: "700" }}>
+              Notifications
+            </Text>
+            <Button
+              title={settings.notifications ? "ENABLED" : "DISABLED"}
+              onPress={toggleNotifications}
+              variant={settings.notifications ? "success" : "secondary"}
+              size="sm"
+            />
           </View>
         </View>
-      </ScrollView>
-    </View>
+
+        <View
+          style={{
+            marginTop: 10,
+            padding: 16,
+            backgroundColor: "#000",
+            borderRadius: 16,
+            borderWidth: 1,
+            borderColor: Colors.border,
+          }}
+        >
+          <Text
+            style={{
+              fontSize: 12,
+              color: Colors.primary,
+              fontWeight: "800",
+              marginBottom: 8,
+            }}
+          >
+            JSON PREVIEW
+          </Text>
+          <Text
+            style={{
+              fontFamily: styles.codeText.fontFamily,
+              color: Colors.muted,
+              fontSize: 13,
+            }}
+          >
+            {JSON.stringify(settings, null, 2)}
+          </Text>
+        </View>
+
+        <Button
+          title="Reset Defaults"
+          onPress={() => complexSettings.delete()}
+          variant="ghost"
+          style={{ marginTop: 8 }}
+        />
+      </Card>
+    </Page>
   );
 }

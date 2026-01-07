@@ -75,4 +75,17 @@ void IOSStorageAdapterCpp::deleteSecure(const std::string& key) {
     SecItemDelete((__bridge CFDictionaryRef)query);
 }
 
+void IOSStorageAdapterCpp::clearDisk() {
+    NSString* appDomain = [[NSBundle mainBundle] bundleIdentifier];
+    [[NSUserDefaults standardUserDefaults] removePersistentDomainForName:appDomain];
+}
+
+void IOSStorageAdapterCpp::clearSecure() {
+    NSDictionary* query = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: kKeychainService
+    };
+    SecItemDelete((__bridge CFDictionaryRef)query);
+}
+
 } // namespace NitroStorage

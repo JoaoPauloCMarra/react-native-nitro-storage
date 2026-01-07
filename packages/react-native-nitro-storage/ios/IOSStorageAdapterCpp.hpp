@@ -16,6 +16,9 @@ public:
     void setSecure(const std::string& key, const std::string& value) override;
     std::optional<std::string> getSecure(const std::string& key) override;
     void deleteSecure(const std::string& key) override;
+    
+    void clearDisk() override;
+    void clearSecure() override;
 };
 
 } // namespace NitroStorage

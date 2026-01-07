@@ -3,7 +3,7 @@
   "compilerOptions": {
     "outDir": "./lib/typescript",
     "rootDir": "./src",
-    "lib": ["ES2020"],
+    "lib": ["ES2020", "DOM"],
     "types": ["react-native"]
   },
   "include": ["src/**/*"],

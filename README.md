@@ -35,7 +35,11 @@ Familiar, elegant API with `createStorageItem` and `useStorage`. Works inside an
 
 ### **Production-Ready**
 
-Thread-safe C++ core, comprehensive test coverage, and battle-tested on iOS and Android.
+Thread-safe C++ core, comprehensive test coverage, and battle-tested on iOS, Android, and **Web**.
+
+### **Web Support**
+
+Fully functional on the web via `localStorage` and `sessionStorage`. All hooks and storage atoms are fully reactive across all platforms.
 
 ---
 
@@ -307,6 +311,29 @@ const unsubscribe = counterAtom.subscribe(() => {
 unsubscribe();
 ```
 
+### Batch Operations
+
+Read or write multiple items at once. This is highly optimized on the native side for minimum overhead.
+
+```typescript
+import { getBatch, setBatch, removeBatch } from "react-native-nitro-storage";
+
+// Write multiple items
+setBatch(
+  [
+    { item: item1, value: "v1" },
+    { item: item2, value: "v2" },
+  ],
+  StorageScope.Disk
+);
+
+// Read multiple items
+const [v1, v2] = getBatch([item1, item2], StorageScope.Disk);
+
+// Remove multiple items
+removeBatch([item1, item2], StorageScope.Disk);
+```
+
 ### Functional Updates
 
 Update state based on the previous value, just like `useState`.
@@ -331,16 +358,18 @@ function IncrementButton() {
 
 ### Clearing Data
 
-Clear all data in `Memory` scope (Native scopes coming soon).
+Clear entire storage scopes at once.
 
 ```typescript
 import { storage } from "react-native-nitro-storage";
 
-// Clear all memory state (e.g. on logout)
+// Clear all storage (all scopes)
 storage.clearAll();
 
-// Or specific scope
+// Clear specific scope
 storage.clear(StorageScope.Memory);
+storage.clear(StorageScope.Disk);
+storage.clear(StorageScope.Secure);
 ```
 
 ### Migration from MMKV
@@ -417,8 +446,14 @@ Returns the setter function only. Does not subscribe to updates.
 
 ### `storage` Object
 
-- `clearAll()`: Clears all `Memory` storage.
-- `clear(scope: StorageScope.Memory)`: Clears specific scope.
+- `clearAll()`: Clears all storage across all scopes.
+- `clear(scope)`: Clears a specific storage scope.
+
+### Batch Operations
+
+- `getBatch(items, scope)`: Returns an array of values for the given items.
+- `setBatch(items, scope)`: Sets multiple values at once.
+- `removeBatch(items, scope)`: Removes multiple items at once.
 
 ---
 
@@ -486,6 +521,7 @@ Built on [Nitro Modules](https://nitro.margelo.com) for maximum performance:
 | Type-Safe        | ✅            | ⚠️   | ⚠️           | ✅      | ⚠️                |
 | Unified API      | ✅            | ❌   | ❌           | ❌      | ❌                |
 | React Hooks      | ✅            | ❌   | ❌           | ✅      | ❌                |
+| Web Support      | ✅            | ❌   | ✅           | ✅      | ❌                |
 
 ---
 

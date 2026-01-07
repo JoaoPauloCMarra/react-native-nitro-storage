@@ -16,6 +16,9 @@ public:
     virtual void setSecure(const std::string& key, const std::string& value) = 0;
     virtual std::optional<std::string> getSecure(const std::string& key) = 0;
     virtual void deleteSecure(const std::string& key) = 0;
+    
+    virtual void clearDisk() = 0;
+    virtual void clearSecure() = 0;
 };
 
 } // namespace NitroStorage

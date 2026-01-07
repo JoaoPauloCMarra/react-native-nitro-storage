@@ -10,7 +10,16 @@ import {
 // Mock NitroModules to prevent native module resolution errors
 jest.mock("react-native-nitro-modules", () => ({
   NitroModules: {
-    createHybridObject: jest.fn(),
+    createHybridObject: jest.fn(() => ({
+      clear: jest.fn(),
+      set: jest.fn(),
+      get: jest.fn(),
+      remove: jest.fn(),
+      setBatch: jest.fn(),
+      getBatch: jest.fn(),
+      removeBatch: jest.fn(),
+      addOnChange: jest.fn(() => () => {}),
+    })),
   },
 }));
 

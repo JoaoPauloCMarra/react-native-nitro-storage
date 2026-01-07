@@ -1,3 +1,4 @@
+import React from "react";
 import {
   StyleSheet,
   Pressable,
@@ -5,8 +6,29 @@ import {
   ViewStyle,
   Platform,
   View,
+  TextStyle,
+  Dimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+const { width } = Dimensions.get("window");
+const isWeb = Platform.OS === "web";
+
+export const Colors = {
+  background: "#000000",
+  surface: "#0A0A0A",
+  card: "#111111",
+  border: "#1F1F1F",
+  text: "#FFFFFF",
+  muted: "#71717A",
+  primary: "#3B82F6",
+  success: "#10B981",
+  danger: "#EF4444",
+  warning: "#F59E0B",
+  memory: "#EAB308",
+  disk: "#3B82F6",
+  secure: "#10B981",
+};
 
 export const Button = ({
   title,
@@ -14,21 +36,31 @@ export const Button = ({
   variant = "primary",
   style,
   disabled,
+  size = "md",
 }: {
   title: string;
   onPress: () => void;
-  variant?: "primary" | "danger" | "secondary";
+  variant?: "primary" | "danger" | "secondary" | "ghost" | "success";
   style?: ViewStyle;
   disabled?: boolean;
+  size?: "sm" | "md" | "lg";
 }) => (
   <Pressable
     style={({ pressed }) => [
       styles.button,
-      variant === "primary" && styles.buttonPrimary,
-      variant === "danger" && styles.buttonDanger,
-      variant === "secondary" && styles.buttonSecondary,
+      size === "sm" && { paddingVertical: 8, paddingHorizontal: 12 },
+      size === "lg" && { paddingVertical: 18, paddingHorizontal: 24 },
+      variant === "primary" && { backgroundColor: Colors.primary },
+      variant === "danger" && { backgroundColor: Colors.danger },
+      variant === "success" && { backgroundColor: Colors.success },
+      variant === "secondary" && { backgroundColor: Colors.border },
+      variant === "ghost" && {
+        backgroundColor: "transparent",
+        borderWidth: 1,
+        borderColor: Colors.border,
+      },
       pressed && styles.buttonPressed,
-      disabled && { opacity: 0.5 },
+      disabled && { opacity: 0.4 },
       style,
     ]}
     onPress={onPress}
@@ -37,7 +69,9 @@ export const Button = ({
     <Text
       style={[
         styles.buttonText,
-        variant === "secondary" && styles.buttonTextSecondary,
+        size === "sm" && { fontSize: 13 },
+        size === "lg" && { fontSize: 17 },
+        variant === "ghost" && { color: Colors.muted },
       ]}
     >
       {title}
@@ -45,205 +79,272 @@ export const Button = ({
   </Pressable>
 );
 
-export const Page = ({ children }: { children: React.ReactNode }) => {
+export const Card = ({
+  children,
+  title,
+  subtitle,
+  indicatorColor,
+  style,
+}: {
+  children: React.ReactNode;
+  title?: string;
+  subtitle?: string;
+  indicatorColor?: string;
+  style?: ViewStyle;
+}) => (
+  <View style={[styles.card, style]}>
+    {(title || indicatorColor) && (
+      <View style={styles.cardHeader}>
+        {indicatorColor && (
+          <View
+            style={[styles.indicator, { backgroundColor: indicatorColor }]}
+          />
+        )}
+        <View>
+          {title && <Text style={styles.cardTitle}>{title}</Text>}
+          {subtitle && <Text style={styles.cardSubtitle}>{subtitle}</Text>}
+        </View>
+      </View>
+    )}
+    <View style={styles.cardContent}>{children}</View>
+  </View>
+);
+
+// Helper to use native TextInput safely
+import { TextInput as RNTextInput } from "react-native";
+
+export const Input = ({
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  style,
+  ...props
+}: {
+  label?: string;
+  value: string;
+  onChangeText: (text: string) => void;
+  placeholder?: string;
+  style?: ViewStyle;
+  [key: string]: any;
+}) => (
+  <View style={[styles.inputGroup, style]}>
+    {label && <Text style={styles.label}>{label}</Text>}
+    <RNTextInput
+      style={styles.textInput}
+      value={value}
+      onChangeText={onChangeText}
+      placeholder={placeholder}
+      placeholderTextColor={Colors.muted}
+      selectionColor={Colors.primary}
+      {...props}
+    />
+  </View>
+);
+
+export const Badge = ({
+  label,
+  color = Colors.primary,
+}: {
+  label: string;
+  color?: string;
+}) => (
+  <View
+    style={[
+      styles.badge,
+      { backgroundColor: color + "20", borderColor: color + "40" },
+    ]}
+  >
+    <Text style={[styles.badgeText, { color }]}>{label}</Text>
+  </View>
+);
+
+export const Page = ({
+  children,
+  title,
+  subtitle,
+  scroll = true,
+}: {
+  children: React.ReactNode;
+  title?: string;
+  subtitle?: string;
+  scroll?: boolean;
+}) => {
   const insets = useSafeAreaInsets();
+  const Content = scroll ? ScrollView : View;
+
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      {children}
+    <View style={styles.container}>
+      <Content
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingTop: insets.top + (isWeb ? 20 : 0) },
+        ]}
+        style={{ flex: 1 }}
+      >
+        {(title || subtitle) && (
+          <View style={styles.header}>
+            {title && <Text style={styles.headerTitle}>{title}</Text>}
+            {subtitle && <Text style={styles.headerSubtitle}>{subtitle}</Text>}
+          </View>
+        )}
+        {children}
+      </Content>
     </View>
   );
 };
 
+import { ScrollView } from "react-native";
+
 export const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#09090B", // Zinc 950
+    backgroundColor: Colors.background,
   },
   scrollContent: {
-    padding: 24,
-    paddingBottom: 40,
+    padding: 20,
+    paddingBottom: 100,
+    maxWidth: isWeb ? 800 : width,
+    alignSelf: "center",
+    width: "100%",
   },
   header: {
-    alignItems: "center",
     marginBottom: 32,
-    marginTop: 10,
   },
-  iconBadge: {
-    width: 64,
-    height: 64,
-    backgroundColor: "#18181B",
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#27272A",
-    marginBottom: 16,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.3,
-    shadowRadius: 4.65,
-    elevation: 8,
+  headerTitle: {
+    fontSize: 40,
+    fontWeight: "900",
+    color: Colors.text,
+    letterSpacing: -1,
   },
-  title: {
-    fontSize: 32,
-    fontWeight: "800",
-    color: "#FAFAFA",
-    letterSpacing: -0.5,
-    marginBottom: 6,
-  },
-  subtitle: {
+  headerSubtitle: {
     fontSize: 16,
-    color: "#A1A1AA",
+    color: Colors.muted,
+    marginTop: 4,
     fontWeight: "500",
   },
   card: {
-    backgroundColor: "#18181B", // Zinc 900
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 24,
+    backgroundColor: Colors.surface,
+    borderRadius: 24,
+    padding: 24,
+    marginBottom: 20,
     borderWidth: 1,
-    borderColor: "#27272A", // Zinc 800
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
+    borderColor: Colors.border,
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.4,
+        shadowRadius: 12,
+      },
+      android: {
+        elevation: 8,
+      },
+      web: {
+        boxShadow: "0 8px 32px 0 rgba(0, 0, 0, 0.5)",
+      },
+    }),
   },
   cardHeader: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 8,
+    marginBottom: 20,
   },
   indicator: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginRight: 8,
+    width: 4,
+    height: 24,
+    borderRadius: 2,
+    marginRight: 12,
   },
   cardTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#F4F4F5",
-  },
-  description: {
-    fontSize: 14,
-    color: "#71717A", // Zinc 500
-    lineHeight: 20,
-  },
-  counterWrapper: {
-    alignItems: "center",
-    backgroundColor: "#1C1C1E", // Slightly lighter/different tone
-    borderRadius: 12,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: "#27272A",
-  },
-  counterValue: {
-    fontSize: 64,
+    fontSize: 20,
     fontWeight: "800",
-    color: "#FAFAFA",
-    marginBottom: 24,
-    fontVariant: ["tabular-nums"], // Good for numbers
+    color: Colors.text,
+    letterSpacing: -0.4,
   },
-  counterControls: {
-    flexDirection: "row",
-    gap: 12,
-    width: "100%",
+  cardSubtitle: {
+    fontSize: 13,
+    color: Colors.muted,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  cardContent: {
+    gap: 16,
+  },
+  button: {
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 16,
+    alignItems: "center",
     justifyContent: "center",
+    ...Platform.select({
+      web: {
+        transition: "all 0.2s ease",
+      },
+    }),
+  },
+  buttonPressed: {
+    opacity: 0.8,
+    transform: [{ scale: 0.96 }],
+  },
+  buttonText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#FFFFFF",
   },
   inputGroup: {
-    gap: 16,
+    marginBottom: 16,
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: Colors.muted,
+    marginBottom: 8,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  textInput: {
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 14,
+    padding: 16,
+    color: Colors.text,
+    fontSize: 16,
+    fontWeight: "500",
+  },
+  badge: {
+    alignSelf: "flex-start",
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  badgeText: {
+    fontSize: 12,
+    fontWeight: "800",
+    textTransform: "uppercase",
   },
   row: {
     flexDirection: "row",
     gap: 12,
   },
-  label: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#A1A1AA",
-    marginBottom: 8,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
+  grid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
   },
-  input: {
-    backgroundColor: "#09090B",
-    borderWidth: 1,
-    borderColor: "#27272A",
-    borderRadius: 8,
-    padding: 14,
-    color: "#FAFAFA",
-    fontSize: 16,
-  },
-  button: {
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  buttonPrimary: {
-    backgroundColor: "#3B82F6", // Blue 500
-  },
-  buttonDanger: {
-    backgroundColor: "#EF4444", // Red 500
-  },
-  buttonSecondary: {
-    backgroundColor: "#27272A",
-  },
-  buttonPressed: {
-    opacity: 0.8,
-    transform: [{ scale: 0.98 }],
-  },
-  buttonText: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#FFFFFF",
-  },
-  buttonTextSecondary: {
-    color: "#E4E4E7",
-  },
-  resultBadge: {
-    marginTop: 8,
-    padding: 12,
-    backgroundColor: "rgba(59, 130, 246, 0.1)",
-    borderWidth: 1,
-    borderColor: "rgba(59, 130, 246, 0.3)",
-    borderRadius: 8,
-  },
-  resultLabel: {
-    fontSize: 11,
-    color: "#60A5FA",
-    fontWeight: "700",
-    marginBottom: 4,
-    textTransform: "uppercase",
-  },
-  resultText: {
-    color: "#E4E4E7",
-    fontSize: 15,
-    fontWeight: "500",
-  },
-  jsonPreview: {
-    backgroundColor: "#09090B",
-    padding: 16,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#27272A",
+  flex1: {
+    flex: 1,
   },
   codeText: {
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-    color: "#A1A1AA",
+    color: Colors.muted,
     fontSize: 13,
   },
   footer: {
     marginTop: 20,
     alignItems: "center",
-  },
-  footerText: {
-    color: "#52525B",
-    fontSize: 13,
-    fontWeight: "500",
   },
 });
