@@ -17,6 +17,7 @@ module.exports = {
   collectCoverageFrom: [
     "src/**/*.{ts,tsx}",
     "!src/**/*.nitro.ts",
+    "!src/index.web.ts",
     "!src/__tests__/**",
   ],
   coverageThreshold: {

@@ -480,4 +480,61 @@ describe("Batch Operations", () => {
       StorageScope.Disk
     );
   });
+
+  describe("Memory Scope", () => {
+    const mem1 = createStorageItem({
+      key: "mem-1",
+      scope: StorageScope.Memory,
+      defaultValue: "m1",
+    });
+    const mem2 = createStorageItem({
+      key: "mem-2",
+      scope: StorageScope.Memory,
+      defaultValue: "m2",
+    });
+
+    it("sets multiple items in memory", () => {
+      setBatch(
+        [
+          { item: mem1, value: "mv1" },
+          { item: mem2, value: "mv2" },
+        ],
+        StorageScope.Memory
+      );
+
+      expect(mem1.get()).toBe("mv1");
+      expect(mem2.get()).toBe("mv2");
+    });
+
+    it("gets multiple items from memory", () => {
+      mem1.set("mv1-new");
+      mem2.set("mv2-new");
+
+      const values = getBatch([mem1, mem2], StorageScope.Memory);
+      expect(values).toEqual(["mv1-new", "mv2-new"]);
+    });
+
+    it("removes multiple items from memory", () => {
+      mem1.set("to-be-deleted");
+      removeBatch([mem1, mem2], StorageScope.Memory);
+      expect(mem1.get()).toBe("m1"); // Default value
+    });
+  });
+
+  it("falls back to item.get() in getBatch if native returns undefined", () => {
+    mockHybridObject.getBatch.mockReturnValue([
+      undefined,
+      JSON.stringify("v2"),
+    ]);
+    mockHybridObject.get.mockReturnValue(JSON.stringify("v1-fallback"));
+
+    const item1WithFallback = createStorageItem({
+      key: "fallback-1",
+      scope: StorageScope.Disk,
+      defaultValue: "d1",
+    });
+
+    const values = getBatch([item1WithFallback, item2], StorageScope.Disk);
+    expect(values).toEqual(["v1-fallback", "v2"]);
+  });
 });
