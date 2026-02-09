@@ -50,6 +50,7 @@ private:
     size_t nextListenerId_ = 0;
 
     void notifyListeners(int scope, const std::string& key, const std::optional<std::string>& value);
+    void ensureAdapter() const;
     Scope toScope(double scopeValue);
 };
 

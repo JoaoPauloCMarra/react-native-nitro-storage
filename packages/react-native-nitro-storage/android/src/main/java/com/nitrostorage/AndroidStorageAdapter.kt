@@ -71,6 +71,13 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         @Volatile
         private var instance: AndroidStorageAdapter? = null
 
+        private fun getInstanceOrThrow(): AndroidStorageAdapter {
+            return instance ?: throw IllegalStateException(
+                "NitroStorage not initialized. Call AndroidStorageAdapter.init(this) in your MainApplication.onCreate(), " +
+                "or add 'react-native-nitro-storage' to your Expo plugins array in app.json."
+            )
+        }
+
         @JvmStatic
         fun init(context: Context) {
             if (instance == null) {
@@ -84,59 +91,47 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
 
         @JvmStatic
         fun getContext(): Context {
-            return instance?.context 
-                ?: throw IllegalStateException(
-                    "NitroStorage not initialized. Call AndroidStorageAdapter.init(this) in your MainApplication.onCreate(), " +
-                    "or add 'react-native-nitro-storage' to your Expo plugins array in app.json."
-                )
+            return getInstanceOrThrow().context
         }
         
         @JvmStatic
         fun setDisk(key: String, value: String) {
-            instance?.sharedPreferences?.edit()?.putString(key, value)?.apply()
-                ?: throw IllegalStateException(
-                    "NitroStorage not initialized. Call AndroidStorageAdapter.init(this) in your MainApplication.onCreate(), " +
-                    "or add 'react-native-nitro-storage' to your Expo plugins array in app.json."
-                )
+            getInstanceOrThrow().sharedPreferences.edit().putString(key, value).apply()
         }
         
         @JvmStatic
         fun getDisk(key: String): String? {
-            return instance?.sharedPreferences?.getString(key, null)
+            return getInstanceOrThrow().sharedPreferences.getString(key, null)
         }
         
         @JvmStatic
         fun deleteDisk(key: String) {
-            instance?.sharedPreferences?.edit()?.remove(key)?.apply()
+            getInstanceOrThrow().sharedPreferences.edit().remove(key).apply()
         }
         
         @JvmStatic
         fun setSecure(key: String, value: String) {
-            instance?.encryptedPreferences?.edit()?.putString(key, value)?.apply()
-                ?: throw IllegalStateException(
-                    "NitroStorage not initialized. Call AndroidStorageAdapter.init(this) in your MainApplication.onCreate(), " +
-                    "or add 'react-native-nitro-storage' to your Expo plugins array in app.json."
-                )
+            getInstanceOrThrow().encryptedPreferences.edit().putString(key, value).apply()
         }
         
         @JvmStatic
         fun getSecure(key: String): String? {
-            return instance?.encryptedPreferences?.getString(key, null)
+            return getInstanceOrThrow().encryptedPreferences.getString(key, null)
         }
         
         @JvmStatic
         fun deleteSecure(key: String) {
-            instance?.encryptedPreferences?.edit()?.remove(key)?.apply()
+            getInstanceOrThrow().encryptedPreferences.edit().remove(key).apply()
         }
 
         @JvmStatic
         fun clearDisk() {
-            instance?.sharedPreferences?.edit()?.clear()?.apply()
+            getInstanceOrThrow().sharedPreferences.edit().clear().apply()
         }
 
         @JvmStatic
         fun clearSecure() {
-            instance?.encryptedPreferences?.edit()?.clear()?.apply()
+            getInstanceOrThrow().encryptedPreferences.edit().clear().apply()
         }
     }
 }

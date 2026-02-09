@@ -24,12 +24,21 @@ HybridStorage::HybridStorage(std::shared_ptr<::NitroStorage::NativeStorageAdapte
     : HybridObject(TAG), HybridStorageSpec(), nativeAdapter_(std::move(adapter)) {}
 
 HybridStorage::Scope HybridStorage::toScope(double scopeValue) {
-    return static_cast<Scope>(static_cast<int>(scopeValue));
+    if (scopeValue < 0.0 || scopeValue > 2.0) {
+        throw std::runtime_error("NitroStorage: Invalid scope value");
+    }
+
+    int intValue = static_cast<int>(scopeValue);
+    if (scopeValue != static_cast<double>(intValue)) {
+        throw std::runtime_error("NitroStorage: Invalid scope value");
+    }
+
+    return static_cast<Scope>(intValue);
 }
 
 void HybridStorage::set(const std::string& key, const std::string& value, double scope) {
     Scope s = toScope(scope);
-    
+
     switch (s) {
         case Scope::Memory: {
             std::lock_guard<std::mutex> lock(memoryMutex_);
@@ -37,10 +46,24 @@ void HybridStorage::set(const std::string& key, const std::string& value, double
             break;
         }
         case Scope::Disk:
-            nativeAdapter_->setDisk(key, value);
+            ensureAdapter();
+            try {
+                nativeAdapter_->setDisk(key, value);
+            } catch (const std::exception& e) {
+                throw std::runtime_error(std::string("NitroStorage: Disk set failed: ") + e.what());
+            } catch (...) {
+                throw std::runtime_error("NitroStorage: Disk set failed");
+            }
             break;
         case Scope::Secure:
-            nativeAdapter_->setSecure(key, value);
+            ensureAdapter();
+            try {
+                nativeAdapter_->setSecure(key, value);
+            } catch (const std::exception& e) {
+                throw std::runtime_error(std::string("NitroStorage: Secure set failed: ") + e.what());
+            } catch (...) {
+                throw std::runtime_error("NitroStorage: Secure set failed");
+            }
             break;
     }
     
@@ -60,9 +83,23 @@ std::optional<std::string> HybridStorage::get(const std::string& key, double sco
             return std::nullopt;
         }
         case Scope::Disk:
-            return nativeAdapter_->getDisk(key);
+            ensureAdapter();
+            try {
+                return nativeAdapter_->getDisk(key);
+            } catch (const std::exception& e) {
+                throw std::runtime_error(std::string("NitroStorage: Disk get failed: ") + e.what());
+            } catch (...) {
+                throw std::runtime_error("NitroStorage: Disk get failed");
+            }
         case Scope::Secure:
-            return nativeAdapter_->getSecure(key);
+            ensureAdapter();
+            try {
+                return nativeAdapter_->getSecure(key);
+            } catch (const std::exception& e) {
+                throw std::runtime_error(std::string("NitroStorage: Secure get failed: ") + e.what());
+            } catch (...) {
+                throw std::runtime_error("NitroStorage: Secure get failed");
+            }
     }
     
     return std::nullopt;
@@ -78,10 +115,24 @@ void HybridStorage::remove(const std::string& key, double scope) {
             break;
         }
         case Scope::Disk:
-            nativeAdapter_->deleteDisk(key);
+            ensureAdapter();
+            try {
+                nativeAdapter_->deleteDisk(key);
+            } catch (const std::exception& e) {
+                throw std::runtime_error(std::string("NitroStorage: Disk delete failed: ") + e.what());
+            } catch (...) {
+                throw std::runtime_error("NitroStorage: Disk delete failed");
+            }
             break;
         case Scope::Secure:
-            nativeAdapter_->deleteSecure(key);
+            ensureAdapter();
+            try {
+                nativeAdapter_->deleteSecure(key);
+            } catch (const std::exception& e) {
+                throw std::runtime_error(std::string("NitroStorage: Secure delete failed: ") + e.what());
+            } catch (...) {
+                throw std::runtime_error("NitroStorage: Secure delete failed");
+            }
             break;
     }
     
@@ -123,10 +174,24 @@ void HybridStorage::clear(double scope) {
             break;
         }
         case Scope::Disk:
-            nativeAdapter_->clearDisk();
+            ensureAdapter();
+            try {
+                nativeAdapter_->clearDisk();
+            } catch (const std::exception& e) {
+                throw std::runtime_error(std::string("NitroStorage: Disk clear failed: ") + e.what());
+            } catch (...) {
+                throw std::runtime_error("NitroStorage: Disk clear failed");
+            }
             break;
         case Scope::Secure:
-            nativeAdapter_->clearSecure();
+            ensureAdapter();
+            try {
+                nativeAdapter_->clearSecure();
+            } catch (const std::exception& e) {
+                throw std::runtime_error(std::string("NitroStorage: Secure clear failed: ") + e.what());
+            } catch (...) {
+                throw std::runtime_error("NitroStorage: Secure clear failed");
+            }
             break;
     }
     
@@ -179,7 +244,17 @@ void HybridStorage::notifyListeners(
     }
     
     for (const auto& listener : listenersCopy) {
-        listener.callback(key, value);
+        try {
+            listener.callback(key, value);
+        } catch (...) {
+            // Ignore listener failures to avoid crashing the caller.
+        }
+    }
+}
+
+void HybridStorage::ensureAdapter() const {
+    if (!nativeAdapter_) {
+        throw std::runtime_error("NitroStorage: Native adapter not initialized");
     }
 }
 
