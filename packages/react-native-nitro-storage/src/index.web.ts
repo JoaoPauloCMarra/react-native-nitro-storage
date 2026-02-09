@@ -163,7 +163,7 @@ export function createStorageItem<T = undefined>(
     if (!unsubscribe) {
       if (isMemory) {
         const listener = (key: string) => {
-          if (key === config.key) {
+          if (key === "" || key === config.key) {
             lastRaw = undefined;
             lastValue = undefined;
             listeners.forEach((l) => l());

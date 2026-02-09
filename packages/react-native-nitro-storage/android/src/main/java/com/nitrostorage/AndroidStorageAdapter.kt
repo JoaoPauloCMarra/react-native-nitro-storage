@@ -2,8 +2,11 @@ package com.nitrostorage
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import java.security.KeyStore
+import javax.crypto.AEADBadTagException
 
 class AndroidStorageAdapter private constructor(private val context: Context) {
     private val sharedPreferences: SharedPreferences = 
@@ -13,25 +16,67 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
         .build()
     
-    private val encryptedPreferences: SharedPreferences = try {
-        EncryptedSharedPreferences.create(
-            context,
-            "NitroStorageSecure",
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
-    } catch (e: Exception) {
-        throw RuntimeException(
-            "NitroStorage: Failed to initialize secure storage. " +
-            "This may be due to corrupted encryption keys. " +
-            "Try clearing app data or reinstalling the app.", e
-        )
+    private val encryptedPreferences: SharedPreferences = initializeEncryptedPreferences()
+    
+    private fun initializeEncryptedPreferences(): SharedPreferences {
+        return try {
+            EncryptedSharedPreferences.create(
+                context,
+                "NitroStorageSecure",
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        } catch (e: Exception) {
+            // Handle corrupted keystore keys by clearing and re-initializing
+            if (e is AEADBadTagException || e.cause is AEADBadTagException) {
+                Log.w("NitroStorage", "Detected corrupted encryption keys, clearing secure storage...")
+                clearCorruptedSecureStorage()
+                
+                // Retry initialization
+                EncryptedSharedPreferences.create(
+                    context,
+                    "NitroStorageSecure",
+                    masterKey,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                )
+            } else {
+                throw RuntimeException(
+                    "NitroStorage: Failed to initialize secure storage. " +
+                    "This may be due to corrupted encryption keys. " +
+                    "Try clearing app data or reinstalling the app.", e
+                )
+            }
+        }
+    }
+    
+    private fun clearCorruptedSecureStorage() {
+        try {
+            // Delete the encrypted shared preferences file
+            context.deleteSharedPreferences("NitroStorageSecure")
+            
+            // Delete the master key from Android Keystore
+            val keyStore = KeyStore.getInstance("AndroidKeyStore")
+            keyStore.load(null)
+            keyStore.deleteEntry(MasterKey.DEFAULT_MASTER_KEY_ALIAS)
+            
+            Log.i("NitroStorage", "Successfully cleared corrupted secure storage")
+        } catch (e: Exception) {
+            Log.e("NitroStorage", "Failed to clear corrupted secure storage", e)
+        }
     }
     
     companion object {
         @Volatile
         private var instance: AndroidStorageAdapter? = null
+
+        private fun getInstanceOrThrow(): AndroidStorageAdapter {
+            return instance ?: throw IllegalStateException(
+                "NitroStorage not initialized. Call AndroidStorageAdapter.init(this) in your MainApplication.onCreate(), " +
+                "or add 'react-native-nitro-storage' to your Expo plugins array in app.json."
+            )
+        }
 
         @JvmStatic
         fun init(context: Context) {
@@ -46,59 +91,47 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
 
         @JvmStatic
         fun getContext(): Context {
-            return instance?.context 
-                ?: throw IllegalStateException(
-                    "NitroStorage not initialized. Call AndroidStorageAdapter.init(this) in your MainApplication.onCreate(), " +
-                    "or add 'react-native-nitro-storage' to your Expo plugins array in app.json."
-                )
+            return getInstanceOrThrow().context
         }
         
         @JvmStatic
         fun setDisk(key: String, value: String) {
-            instance?.sharedPreferences?.edit()?.putString(key, value)?.apply()
-                ?: throw IllegalStateException(
-                    "NitroStorage not initialized. Call AndroidStorageAdapter.init(this) in your MainApplication.onCreate(), " +
-                    "or add 'react-native-nitro-storage' to your Expo plugins array in app.json."
-                )
+            getInstanceOrThrow().sharedPreferences.edit().putString(key, value).apply()
         }
         
         @JvmStatic
         fun getDisk(key: String): String? {
-            return instance?.sharedPreferences?.getString(key, null)
+            return getInstanceOrThrow().sharedPreferences.getString(key, null)
         }
         
         @JvmStatic
         fun deleteDisk(key: String) {
-            instance?.sharedPreferences?.edit()?.remove(key)?.apply()
+            getInstanceOrThrow().sharedPreferences.edit().remove(key).apply()
         }
         
         @JvmStatic
         fun setSecure(key: String, value: String) {
-            instance?.encryptedPreferences?.edit()?.putString(key, value)?.apply()
-                ?: throw IllegalStateException(
-                    "NitroStorage not initialized. Call AndroidStorageAdapter.init(this) in your MainApplication.onCreate(), " +
-                    "or add 'react-native-nitro-storage' to your Expo plugins array in app.json."
-                )
+            getInstanceOrThrow().encryptedPreferences.edit().putString(key, value).apply()
         }
         
         @JvmStatic
         fun getSecure(key: String): String? {
-            return instance?.encryptedPreferences?.getString(key, null)
+            return getInstanceOrThrow().encryptedPreferences.getString(key, null)
         }
         
         @JvmStatic
         fun deleteSecure(key: String) {
-            instance?.encryptedPreferences?.edit()?.remove(key)?.apply()
+            getInstanceOrThrow().encryptedPreferences.edit().remove(key).apply()
         }
 
         @JvmStatic
         fun clearDisk() {
-            instance?.sharedPreferences?.edit()?.clear()?.apply()
+            getInstanceOrThrow().sharedPreferences.edit().clear().apply()
         }
 
         @JvmStatic
         fun clearSecure() {
-            instance?.encryptedPreferences?.edit()?.clear()?.apply()
+            getInstanceOrThrow().encryptedPreferences.edit().clear().apply()
         }
     }
 }

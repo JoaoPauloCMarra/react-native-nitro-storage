@@ -39,7 +39,7 @@ void IOSStorageAdapterCpp::setSecure(const std::string& key, const std::string& 
     };
 
     OSStatus status = SecItemUpdate((__bridge CFDictionaryRef)query, (__bridge CFDictionaryRef)updateAttributes);
-    
+
     if (status == errSecItemNotFound) {
         NSMutableDictionary* addQuery = [query mutableCopy];
         addQuery[(__bridge id)kSecValueData] = data;
@@ -77,7 +77,9 @@ void IOSStorageAdapterCpp::deleteSecure(const std::string& key) {
 
 void IOSStorageAdapterCpp::clearDisk() {
     NSString* appDomain = [[NSBundle mainBundle] bundleIdentifier];
-    [[NSUserDefaults standardUserDefaults] removePersistentDomainForName:appDomain];
+    if (appDomain) {
+        [[NSUserDefaults standardUserDefaults] removePersistentDomainForName:appDomain];
+    }
 }
 
 void IOSStorageAdapterCpp::clearSecure() {

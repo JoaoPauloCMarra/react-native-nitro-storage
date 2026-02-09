@@ -104,7 +104,7 @@ void testThreadSafety() {
 
     for (int t = 0; t < numThreads; ++t) {
         threads.emplace_back([&adapter, t]() {
-            for (int i = 0; i < 100; ++i) {
+            for (int i = 0; i < opsPerThread; ++i) {
                 std::string key = "key-" + std::to_string(t) + "-" + std::to_string(i);
                 std::string value = "value-" + std::to_string(i);
                 adapter->setDisk(key, value);
