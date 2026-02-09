@@ -6,6 +6,12 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 
 ## 0.1.4 - 2026-02-09
 
+### Added
+- Add `clearAll` event.
+
+### Fixed
+- Fix Android behavior.
+
 ### Changed
 - Bump react-native-nitro-modules to the latest version and raise the peer dependency floor.
 
