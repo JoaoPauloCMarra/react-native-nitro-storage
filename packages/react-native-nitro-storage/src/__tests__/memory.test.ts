@@ -130,6 +130,23 @@ describe("Pure JS Memory Storage", () => {
     expect(item2.get()).toBe(0);
   });
 
+  it("clearAll notifies memory item subscribers", () => {
+    const item = createStorageItem({
+      key: "clear-notify",
+      scope: StorageScope.Memory,
+      defaultValue: "default",
+    });
+
+    item.set("value");
+    const listener = jest.fn();
+    item.subscribe(listener);
+
+    storage.clearAll();
+
+    expect(item.get()).toBe("default");
+    expect(listener).toHaveBeenCalled();
+  });
+
   it("useStorage hook works with memory", () => {
     const item = createStorageItem({
       key: "hook-test",

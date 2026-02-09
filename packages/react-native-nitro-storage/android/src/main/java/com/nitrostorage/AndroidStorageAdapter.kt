@@ -2,8 +2,11 @@ package com.nitrostorage
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import java.security.KeyStore
+import javax.crypto.AEADBadTagException
 
 class AndroidStorageAdapter private constructor(private val context: Context) {
     private val sharedPreferences: SharedPreferences = 
@@ -13,20 +16,55 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
         .build()
     
-    private val encryptedPreferences: SharedPreferences = try {
-        EncryptedSharedPreferences.create(
-            context,
-            "NitroStorageSecure",
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
-    } catch (e: Exception) {
-        throw RuntimeException(
-            "NitroStorage: Failed to initialize secure storage. " +
-            "This may be due to corrupted encryption keys. " +
-            "Try clearing app data or reinstalling the app.", e
-        )
+    private val encryptedPreferences: SharedPreferences = initializeEncryptedPreferences()
+    
+    private fun initializeEncryptedPreferences(): SharedPreferences {
+        return try {
+            EncryptedSharedPreferences.create(
+                context,
+                "NitroStorageSecure",
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+            )
+        } catch (e: Exception) {
+            // Handle corrupted keystore keys by clearing and re-initializing
+            if (e is AEADBadTagException || e.cause is AEADBadTagException) {
+                Log.w("NitroStorage", "Detected corrupted encryption keys, clearing secure storage...")
+                clearCorruptedSecureStorage()
+                
+                // Retry initialization
+                EncryptedSharedPreferences.create(
+                    context,
+                    "NitroStorageSecure",
+                    masterKey,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                )
+            } else {
+                throw RuntimeException(
+                    "NitroStorage: Failed to initialize secure storage. " +
+                    "This may be due to corrupted encryption keys. " +
+                    "Try clearing app data or reinstalling the app.", e
+                )
+            }
+        }
+    }
+    
+    private fun clearCorruptedSecureStorage() {
+        try {
+            // Delete the encrypted shared preferences file
+            context.deleteSharedPreferences("NitroStorageSecure")
+            
+            // Delete the master key from Android Keystore
+            val keyStore = KeyStore.getInstance("AndroidKeyStore")
+            keyStore.load(null)
+            keyStore.deleteEntry(MasterKey.DEFAULT_MASTER_KEY_ALIAS)
+            
+            Log.i("NitroStorage", "Successfully cleared corrupted secure storage")
+        } catch (e: Exception) {
+            Log.e("NitroStorage", "Failed to clear corrupted secure storage", e)
+        }
     }
     
     companion object {
