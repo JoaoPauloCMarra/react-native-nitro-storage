@@ -24,6 +24,10 @@ import {
   getBatch,
   setBatch,
   removeBatch,
+  migrateToLatest,
+  registerMigration,
+  runTransaction,
+  storage,
 } from "../index";
 
 describe("createStorageItem", () => {
@@ -432,6 +436,11 @@ describe("Batch Operations", () => {
     scope: StorageScope.Disk,
     defaultValue: "d2",
   });
+  const secureItem = createStorageItem({
+    key: "batch-secure",
+    scope: StorageScope.Secure,
+    defaultValue: "s1",
+  });
 
   it("sets multiple items at once", () => {
     setBatch(
@@ -479,6 +488,34 @@ describe("Batch Operations", () => {
       ["batch-1", "batch-2"],
       StorageScope.Disk
     );
+    expect(mockHybridObject.remove).not.toHaveBeenCalled();
+  });
+
+  it("throws on scope mismatch for getBatch", () => {
+    expect(() =>
+      getBatch([item1, secureItem], StorageScope.Disk)
+    ).toThrow(/Batch scope mismatch/);
+    expect(mockHybridObject.getBatch).not.toHaveBeenCalled();
+  });
+
+  it("throws on scope mismatch for setBatch", () => {
+    expect(() =>
+      setBatch(
+        [
+          { item: item1, value: "v1" },
+          { item: secureItem, value: "v2" },
+        ],
+        StorageScope.Disk
+      )
+    ).toThrow(/Batch scope mismatch/);
+    expect(mockHybridObject.setBatch).not.toHaveBeenCalled();
+  });
+
+  it("throws on scope mismatch for removeBatch", () => {
+    expect(() =>
+      removeBatch([item1, secureItem], StorageScope.Disk)
+    ).toThrow(/Batch scope mismatch/);
+    expect(mockHybridObject.removeBatch).not.toHaveBeenCalled();
   });
 
   describe("Memory Scope", () => {
@@ -536,5 +573,258 @@ describe("Batch Operations", () => {
 
     const values = getBatch([item1WithFallback, item2], StorageScope.Disk);
     expect(values).toEqual(["v1-fallback", "v2"]);
+  });
+});
+
+describe("v0.2 features", () => {
+  const diskStore = new Map<string, string>();
+  let migrationVersionSeed = 1_000;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    diskStore.clear();
+    storage.clearAll();
+
+    mockHybridObject.get.mockImplementation((key: string) => diskStore.get(key));
+    mockHybridObject.set.mockImplementation((key: string, value: string) => {
+      diskStore.set(key, value);
+    });
+    mockHybridObject.remove.mockImplementation((key: string) => {
+      diskStore.delete(key);
+    });
+  });
+
+  it("supports schema validation and fallback handling", () => {
+    const item = createStorageItem<number>({
+      key: "validated",
+      scope: StorageScope.Disk,
+      defaultValue: 0,
+      validate: (value): value is number => typeof value === "number" && value >= 0,
+      onValidationError: () => 10,
+    });
+
+    mockHybridObject.get.mockReturnValueOnce(JSON.stringify(-1));
+    expect(item.get()).toBe(10);
+    expect(mockHybridObject.set).toHaveBeenCalledWith(
+      "validated",
+      JSON.stringify(10),
+      StorageScope.Disk
+    );
+
+    expect(() => item.set(-2)).toThrow(/Validation failed/);
+  });
+
+  it("expires values with TTL", () => {
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(1_000);
+    const item = createStorageItem<string>({
+      key: "ttl-key",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+      expiration: { ttlMs: 100 },
+    });
+
+    item.set("value");
+    nowSpy.mockReturnValue(1_050);
+    expect(item.get()).toBe("value");
+
+    nowSpy.mockReturnValue(1_150);
+    expect(item.get()).toBe("default");
+    expect(mockHybridObject.remove).toHaveBeenCalledWith("ttl-key", StorageScope.Disk);
+    nowSpy.mockRestore();
+  });
+
+  it("rolls back transaction on errors", () => {
+    const item = createStorageItem<string>({
+      key: "txn-key",
+      scope: StorageScope.Disk,
+      defaultValue: "init",
+    });
+    item.set("before");
+
+    expect(() =>
+      runTransaction(StorageScope.Disk, (tx) => {
+        tx.setItem(item, "during");
+        tx.setRaw("another", JSON.stringify("x"));
+        throw new Error("boom");
+      })
+    ).toThrow("boom");
+
+    expect(item.get()).toBe("before");
+    expect(diskStore.get("another")).toBeUndefined();
+  });
+
+  it("runs registered migrations in order and stores applied version", () => {
+    const v1 = migrationVersionSeed++;
+    const v2 = migrationVersionSeed++;
+
+    registerMigration(v1, ({ setRaw }) => {
+      setRaw("migrated-a", JSON.stringify("a"));
+    });
+    registerMigration(v2, ({ setRaw }) => {
+      setRaw("migrated-b", JSON.stringify("b"));
+    });
+
+    const appliedVersion = migrateToLatest(StorageScope.Disk);
+
+    expect(appliedVersion).toBe(v2);
+    expect(diskStore.get("migrated-a")).toBe(JSON.stringify("a"));
+    expect(diskStore.get("migrated-b")).toBe(JSON.stringify("b"));
+    expect(diskStore.get("__nitro_storage_migration_version__")).toBe(String(v2));
+  });
+});
+
+describe("v0.2 edge cases", () => {
+  const diskStore = new Map<string, string>();
+  let migrationVersionSeed = 5_000;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    diskStore.clear();
+    storage.clearAll();
+
+    mockHybridObject.get.mockImplementation((key: string) => diskStore.get(key));
+    mockHybridObject.set.mockImplementation((key: string, value: string) => {
+      diskStore.set(key, value);
+    });
+    mockHybridObject.remove.mockImplementation((key: string) => {
+      diskStore.delete(key);
+    });
+  });
+
+  it("throws on non-positive ttl", () => {
+    expect(() =>
+      createStorageItem({
+        key: "invalid-ttl",
+        scope: StorageScope.Disk,
+        expiration: { ttlMs: 0 },
+      })
+    ).toThrow("expiration.ttlMs must be greater than 0.");
+  });
+
+  it("falls back to default when invalid stored value has no validation handler", () => {
+    const item = createStorageItem<number>({
+      key: "invalid-default",
+      scope: StorageScope.Disk,
+      defaultValue: 7,
+      validate: (value): value is number => typeof value === "number" && value > 10,
+    });
+
+    diskStore.set("invalid-default", JSON.stringify(3));
+    expect(item.get()).toBe(7);
+    expect(diskStore.get("invalid-default")).toBe(JSON.stringify(3));
+  });
+
+  it("falls back to default when validation handler returns invalid value", () => {
+    const item = createStorageItem<number>({
+      key: "invalid-handler",
+      scope: StorageScope.Disk,
+      defaultValue: 11,
+      validate: (value): value is number => typeof value === "number" && value > 10,
+      onValidationError: () => 1,
+    });
+
+    diskStore.set("invalid-handler", JSON.stringify(2));
+    expect(item.get()).toBe(11);
+  });
+
+  it("accepts legacy non-envelope payloads for ttl items", () => {
+    const item = createStorageItem<string>({
+      key: "legacy-ttl",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+      expiration: { ttlMs: 100 },
+    });
+
+    diskStore.set("legacy-ttl", JSON.stringify("legacy-value"));
+    expect(item.get()).toBe("legacy-value");
+  });
+
+  it("expires memory ttl values and resets to default", () => {
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(2_000);
+    const item = createStorageItem<string>({
+      key: "mem-ttl",
+      scope: StorageScope.Memory,
+      defaultValue: "m-default",
+      expiration: { ttlMs: 50 },
+    });
+
+    item.set("m-value");
+    nowSpy.mockReturnValue(2_030);
+    expect(item.get()).toBe("m-value");
+
+    nowSpy.mockReturnValue(2_060);
+    expect(item.get()).toBe("m-default");
+    item.delete();
+    nowSpy.mockRestore();
+  });
+
+  it("throws for invalid migration versions and duplicates", () => {
+    expect(() => registerMigration(0, () => undefined)).toThrow(
+      "Migration version must be a positive integer."
+    );
+
+    const version = migrationVersionSeed++;
+    registerMigration(version, () => undefined);
+    expect(() => registerMigration(version, () => undefined)).toThrow(
+      `Migration version ${version} is already registered.`
+    );
+  });
+
+  it("uses memory migration context helpers", () => {
+    const version = migrationVersionSeed++;
+    registerMigration(version, ({ getRaw, setRaw, removeRaw }) => {
+      setRaw("m-key", JSON.stringify("value"));
+      expect(getRaw("m-key")).toBe(JSON.stringify("value"));
+      removeRaw("m-key");
+      expect(getRaw("m-key")).toBeUndefined();
+    });
+
+    expect(migrateToLatest(StorageScope.Memory)).toBe(version);
+  });
+
+  it("rolls back memory transactions and keeps first rollback snapshot", () => {
+    const item = createStorageItem<string>({
+      key: "tx-memory",
+      scope: StorageScope.Memory,
+      defaultValue: "start",
+    });
+    item.set("initial");
+
+    expect(() =>
+      runTransaction(StorageScope.Memory, (tx) => {
+        tx.setRaw("tx-memory", JSON.stringify("step-1"));
+        tx.setRaw("tx-memory", JSON.stringify("step-2"));
+        tx.removeRaw("tx-memory");
+        throw new Error("rollback");
+      })
+    ).toThrow("rollback");
+
+    expect(item.get()).toBe("initial");
+  });
+
+  it("supports transaction removeItem and getItem with scope checks", () => {
+    const item = createStorageItem<string>({
+      key: "tx-item",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+    });
+    const otherScopeItem = createStorageItem<string>({
+      key: "tx-item-other",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+    });
+    item.set("value");
+
+    runTransaction(StorageScope.Disk, (tx) => {
+      expect(tx.getItem(item)).toBe("value");
+      tx.removeItem(item);
+    });
+
+    expect(item.get()).toBe("default");
+    expect(() =>
+      runTransaction(StorageScope.Disk, (tx) => {
+        tx.getItem(otherScopeItem);
+      })
+    ).toThrow(/Batch scope mismatch/);
   });
 });

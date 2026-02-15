@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
+## Unreleased
+
+## 0.2.0 - 2026-02-15
+
+### Added
+- Export `migrateFromMMKV` from the package root entrypoint.
+- Add dedicated web storage tests and include `index.web.ts` in coverage collection.
+- Add `runTransaction(scope, fn)` with rollback on thrown errors.
+- Add versioned migration APIs: `registerMigration` and `migrateToLatest`.
+- Add schema-aware storage options: `validate` and `onValidationError`.
+- Add per-item TTL support via `expiration.ttlMs`.
+
+### Fixed
+- Validate batch operation scope to prevent mixed-scope usage.
+- Avoid duplicate native remove calls in `removeBatch`.
+
+### Changed
+- Standardize internal package scripts and README contributor commands to Bun/Bunx.
+- Remove the Turbo `test` outputs config to avoid warnings on non-coverage test runs.
+
 ## 0.1.4 - 2026-02-09
 
 ### Added

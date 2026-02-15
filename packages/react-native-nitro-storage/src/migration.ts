@@ -1,13 +1,13 @@
 import type { StorageItem } from "./index";
 
-interface MMKVLike {
+export type MMKVLike = {
   getString: (key: string) => string | undefined;
   getNumber: (key: string) => number | undefined;
   getBoolean: (key: string) => boolean | undefined;
   contains: (key: string) => boolean;
   delete: (key: string) => void;
   getAllKeys: () => string[];
-}
+};
 
 export function migrateFromMMKV<T>(
   mmkv: MMKVLike,

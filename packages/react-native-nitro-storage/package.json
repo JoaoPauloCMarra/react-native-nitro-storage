@@ -1,6 +1,6 @@
 {
   "name": "react-native-nitro-storage",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "The fastest, most complete storage solution for React Native. Synchronous Memory, Disk, and Secure storage in one unified API. Built with Nitro Modules.",
   "main": "lib/commonjs/index.js",
   "module": "lib/module/index.js",
@@ -29,7 +29,7 @@
     "!scripts"
   ],
   "scripts": {
-    "prebuild": "npm run codegen",
+    "prebuild": "bun run codegen",
     "build": "bob build",
     "clean": "rimraf lib nitrogen/generated",
     "codegen": "nitrogen --logLevel=\"debug\"",
@@ -37,7 +37,7 @@
     "test": "jest",
     "test:coverage": "jest --coverage",
     "test:cpp": "node scripts/test-cpp.js",
-    "prepublishOnly": "npm run clean && npm run build",
+    "prepublishOnly": "bun run clean && bun run build",
     "prepack": "node -e \"const fs=require('fs'); fs.copyFileSync('../../README.md','./README.md'); try{fs.copyFileSync('../../LICENSE','./LICENSE')}catch(e){}\"",
     "postpack": "node -e \"const fs=require('fs'); ['./README.md','./LICENSE'].forEach(f=>fs.existsSync(f)&&fs.unlinkSync(f))\""
   },

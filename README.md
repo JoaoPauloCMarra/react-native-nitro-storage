@@ -1,65 +1,26 @@
-# react-native-nitro-storage 🗄️
+# react-native-nitro-storage
 
-> **The fastest, most complete storage solution for React Native.** Replace Zustand, MMKV, AsyncStorage, and Expo Secure Store with one lightning-fast, type-safe library.
+Synchronous storage for React Native with a unified API for memory, disk, and secure data.
 
-[![npm version](https://img.shields.io/npm/v/react-native-nitro-storage?style=flat-square)](https://www.npmjs.com/package/react-native-nitro-storage)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
-[![Nitro Modules](https://img.shields.io/badge/Powered%20by-Nitro%20Modules-blueviolet?style=flat-square)](https://nitro.margelo.com)
+## Requirements
 
-**react-native-nitro-storage** unifies **Memory** (global state), **Disk** (persistence), and **Secure** (keychain) storage into a single, blazing-fast C++ library built with [Nitro Modules](https://nitro.margelo.com). All operations are **100% synchronous** via JSI—no promises, no bridge, no lag.
+- `react-native >= 0.75.0`
+- `react-native-nitro-modules >= 0.33.7`
+- `react`
 
-<p align="center">
-  <img src="./readme/ios.png" alt="iOS Benchmark" height="640" />
-  <img src="./readme/android.png" alt="Android Benchmark" height="640" />
-</p>
-
-<p align="center">
-  <em>Real-world performance: 1,000 operations in milliseconds</em>
-</p>
-
----
-
-## ⚡ Why Nitro Storage?
-
-### **One Library, Three Storage Types**
-
-Stop juggling multiple packages. Get memory state, disk persistence, and secure storage in one unified API.
-
-### **Truly Synchronous**
-
-Every operation—read, write, delete—executes instantly. No `await`, no `.then()`, no bridge overhead.
-
-### **Jotai-Style Atoms**
-
-Familiar, elegant API with `createStorageItem` and `useStorage`. Works inside and outside React components.
-
-### **Production-Ready**
-
-Thread-safe C++ core, comprehensive test coverage, and battle-tested on iOS, Android, and **Web**.
-
-### **Web Support**
-
-Fully functional on the web via `localStorage` and `sessionStorage`. All hooks and storage atoms are fully reactive across all platforms.
-
----
-
-## 📦 Installation
+## Installation
 
 ```bash
-npm install react-native-nitro-storage react-native-nitro-modules
-# or
-yarn add react-native-nitro-storage react-native-nitro-modules
-# or
 bun add react-native-nitro-storage react-native-nitro-modules
 ```
 
-### For Expo Projects
+### Expo
 
 ```bash
-npx expo install react-native-nitro-storage react-native-nitro-modules
+bunx expo install react-native-nitro-storage react-native-nitro-modules
 ```
 
-Add the plugin to your `app.json` or `app.config.js`:
+`app.json`:
 
 ```json
 {
@@ -69,25 +30,21 @@ Add the plugin to your `app.json` or `app.config.js`:
 }
 ```
 
-Then run:
+Then:
 
 ```bash
-npx expo prebuild
+bunx expo prebuild
 ```
 
-The config plugin automatically handles Android initialization. No manual setup required!
+### Bare React Native
 
-### For Bare React Native Projects
-
-**iOS:**
+iOS:
 
 ```bash
 cd ios && pod install
 ```
 
-**Android:**
-
-Add initialization to your `MainApplication.kt` (or `.java`):
+Android (`MainApplication.kt`):
 
 ```kotlin
 import com.nitrostorage.AndroidStorageAdapter
@@ -100,435 +57,375 @@ class MainApplication : Application() {
 }
 ```
 
----
+## Quick Start
 
-## 🚀 Quick Start
+```ts
+import { createStorageItem, StorageScope, useStorage } from "react-native-nitro-storage";
 
-```typescript
-import {
-  createStorageItem,
-  useStorage,
-  StorageScope,
-} from "react-native-nitro-storage";
-
-// Create a storage atom
-const counterAtom = createStorageItem({
+const counterItem = createStorageItem({
   key: "counter",
   scope: StorageScope.Memory,
   defaultValue: 0,
 });
 
-// Use in React
-function Counter() {
-  const [count, setCount] = useStorage(counterAtom);
+export function Counter() {
+  const [count, setCount] = useStorage(counterItem);
 
   return (
-    <View>
-      <Text>{count}</Text>
-      <Button title="+" onPress={() => setCount(count + 1)} />
-    </View>
+    <Button
+      title={`Count: ${count}`}
+      onPress={() => setCount((prev) => prev + 1)}
+    />
   );
 }
-
-// Use outside React
-counterAtom.set(42);
-const value = counterAtom.get(); // 42, instantly
 ```
 
----
+## What Is Exported
 
-## 💾 Storage Scopes
+- `StorageScope`
+- `storage`
+- `createStorageItem`
+- `useStorage`
+- `useSetStorage`
+- `getBatch`
+- `setBatch`
+- `removeBatch`
+- `registerMigration`
+- `migrateToLatest`
+- `runTransaction`
+- `migrateFromMMKV`
 
-### **Memory Storage**
+Exported types:
 
-_Replaces: Zustand, Jotai, Redux_
+- `Storage`
+- `StorageItemConfig<T>`
+- `StorageItem<T>`
+- `StorageBatchSetItem<T>`
+- `Validator<T>`
+- `ExpirationConfig`
+- `MigrationContext`
+- `Migration`
+- `TransactionContext`
+- `MMKVLike`
 
-Fast, in-memory state. **Now Pure JS** - can store complex objects, functions, and React nodes!
+## API Reference
 
-```typescript
-// Store a function
-const callbackAtom = createStorageItem({
-  key: "on-click",
-  scope: StorageScope.Memory,
-  defaultValue: () => console.log("Clicked!"),
-});
+### `StorageScope`
 
-// Store a React Component
-const modalAtom = createStorageItem({
-  key: "active-modal",
-  scope: StorageScope.Memory,
-  defaultValue: <View />,
-});
-```
-
-**Performance:** < 0.001ms per operation (Zero JSI overhead)
-
-### **Disk Storage**
-
-_Replaces: MMKV, AsyncStorage_
-
-Persisted to disk. Survives app restarts.
-
-```typescript
-const settingsAtom = createStorageItem({
-  key: "app-settings",
-  scope: StorageScope.Disk,
-  defaultValue: { theme: "dark", notifications: true },
-});
-```
-
-**Performance:** ~1-2ms per operation  
-**Storage:** UserDefaults (iOS), SharedPreferences (Android)
-
-### **Secure Storage**
-
-_Replaces: Expo Secure Store, react-native-keychain_
-
-Encrypted storage for sensitive data like auth tokens.
-
-```typescript
-const tokenAtom = createStorageItem<string | undefined>({
-  key: "auth-token",
-  scope: StorageScope.Secure,
-});
-```
-
-**Performance:** ~2-5ms per operation  
-**Encryption:** Keychain (iOS), EncryptedSharedPreferences with AES256-GCM (Android)
-
----
-
-## 🎯 Advanced Usage
-
-### TypeScript Best Practices
-
-**Nullable Types:**
-Use explicit generics for nullable values. `defaultValue` is optional and defaults to `undefined`.
-
-```typescript
-// ✅ Clean - explicit generic
-const userAtom = createStorageItem<User | null>({
-  key: "current-user",
-  scope: StorageScope.Memory,
-  defaultValue: null,
-});
-
-// ✅ Optional value - no defaultValue needed
-const tokenAtom = createStorageItem<string | undefined>({
-  key: "auth-token",
-  scope: StorageScope.Secure,
-});
-
-// ❌ Avoid - type assertion
-const userAtom = createStorageItem({
-  key: "current-user",
-  scope: StorageScope.Memory,
-  defaultValue: null as User | null, // Not necessary
-});
-```
-
-**Non-nullable Types:**
-For required values, just specify the default.
-
-```typescript
-const counterAtom = createStorageItem({
-  key: "counter",
-  scope: StorageScope.Memory,
-  defaultValue: 0, // Type inferred as number
-});
-```
-
-### Custom Serialization
-
-```typescript
-const dateAtom = createStorageItem({
-  key: "last-login",
-  scope: StorageScope.Disk,
-  defaultValue: new Date(),
-  serialize: (date) => date.toISOString(),
-  deserialize: (str) => new Date(str),
-});
-```
-
-### Complex Objects
-
-```typescript
-interface User {
-  id: string;
-  name: string;
-  preferences: {
-    theme: "light" | "dark";
-    language: string;
-  };
+```ts
+enum StorageScope {
+  Memory = 0,
+  Disk = 1,
+  Secure = 2,
 }
-
-const userAtom = createStorageItem<User>({
-  key: "user",
-  scope: StorageScope.Disk,
-  defaultValue: {
-    id: "",
-    name: "",
-    preferences: { theme: "dark", language: "en" },
-  },
-});
-
-// TypeScript knows the exact shape
-const user = userAtom.get();
-console.log(user.preferences.theme); // ✅ Type-safe
 ```
 
-### Direct Access (Outside React)
+### `Storage` (low-level native/web adapter type)
 
-Perfect for API interceptors, middleware, or anywhere you need storage without React.
-
-```typescript
-// In an API interceptor
-axios.interceptors.request.use((config) => {
-  const token = tokenAtom.get();
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
-
-// In a Redux middleware
-const authMiddleware = (store) => (next) => (action) => {
-  if (action.type === "AUTH_SUCCESS") {
-    tokenAtom.set(action.payload.token);
-  }
-  return next(action);
+```ts
+type Storage = {
+  set(key: string, value: string, scope: number): void;
+  get(key: string, scope: number): string | undefined;
+  remove(key: string, scope: number): void;
+  clear(scope: number): void;
+  setBatch(keys: string[], values: string[], scope: number): void;
+  getBatch(keys: string[], scope: number): (string | undefined)[];
+  removeBatch(keys: string[], scope: number): void;
+  addOnChange(
+    scope: number,
+    callback: (key: string, value: string | undefined) => void
+  ): () => void;
 };
 ```
 
-### Manual Subscriptions
+Notes:
 
-```typescript
-const unsubscribe = counterAtom.subscribe(() => {
-  console.log("Counter changed:", counterAtom.get());
-});
+- Exported for typing/integration use cases.
+- Most app code should use `createStorageItem` + hooks instead of this low-level API.
 
-// Clean up
-unsubscribe();
+### `StorageItemConfig<T>`
+
+```ts
+type StorageItemConfig<T> = {
+  key: string;
+  scope: StorageScope;
+  defaultValue?: T;
+  serialize?: (value: T) => string;
+  deserialize?: (value: string) => T;
+  validate?: Validator<T>;
+  onValidationError?: (invalidValue: unknown) => T;
+  expiration?: ExpirationConfig;
+};
 ```
-
-### Batch Operations
-
-Read or write multiple items at once. This is highly optimized on the native side for minimum overhead.
-
-```typescript
-import { getBatch, setBatch, removeBatch } from "react-native-nitro-storage";
-
-// Write multiple items
-setBatch(
-  [
-    { item: item1, value: "v1" },
-    { item: item2, value: "v2" },
-  ],
-  StorageScope.Disk
-);
-
-// Read multiple items
-const [v1, v2] = getBatch([item1, item2], StorageScope.Disk);
-
-// Remove multiple items
-removeBatch([item1, item2], StorageScope.Disk);
-```
-
-### Functional Updates
-
-Update state based on the previous value, just like `useState`.
-
-```typescript
-// Increment counter
-counterAtom.set((prev) => prev + 1);
-```
-
-### Optimized Writes
-
-Use `useSetStorage` to set values without subscribing to updates (avoids re-renders).
-
-```typescript
-import { useSetStorage } from "react-native-nitro-storage";
-
-function IncrementButton() {
-  const setCount = useSetStorage(counterAtom);
-  return <Button onPress={() => setCount((c) => c + 1)} title="+" />;
-}
-```
-
-### Clearing Data
-
-Clear entire storage scopes at once.
-
-```typescript
-import { storage } from "react-native-nitro-storage";
-
-// Clear all storage (all scopes)
-storage.clearAll();
-
-// Clear specific scope
-storage.clear(StorageScope.Memory);
-storage.clear(StorageScope.Disk);
-storage.clear(StorageScope.Secure);
-```
-
-### Migration from MMKV
-
-Easily migrate data from `react-native-mmkv` to Nitro Storage.
-
-```typescript
-import { migrateFromMMKV } from "react-native-nitro-storage/src/migration";
-
-// Migrate 'user-settings' and delete from MMKV
-migrateFromMMKV(mmkvInstance, settingsAtom, true);
-```
-
----
-
-## 📊 Performance Benchmarks
-
-All operations are **100% synchronous** via JSI—no promises, no bridge, no lag.
-
-**Performance Metrics (1,000 operations per storage type):**
-
-| Storage Type | Write | Read  | Avg/op       |
-| ------------ | ----- | ----- | ------------ |
-| Memory       | 0.5ms | 0.3ms | **0.0008ms** |
-| Disk         | 45ms  | 38ms  | **0.083ms**  |
-| Secure       | 120ms | 95ms  | **0.215ms**  |
-
-Run the benchmark yourself:
-
-```bash
-cd apps/example
-npm run ios  # or npm run android
-# Navigate to the "Benchmark" tab
-```
-
----
-
-## 🎯 API Reference
-
-### `createStorageItem<T>(config)`
-
-Creates a storage atom.
-
-**Parameters:**
-
-- `key: string` - Unique identifier
-- `scope: StorageScope` - Memory, Disk, or Secure
-- `defaultValue: T` - Default value
-- `serialize?: (value: T) => string` - Custom serializer (default: JSON.stringify)
-- `deserialize?: (value: string) => T` - Custom deserializer (default: JSON.parse)
-
-**Returns:** `StorageItem<T>`
 
 ### `StorageItem<T>`
 
-**Methods:**
+```ts
+type StorageItem<T> = {
+  get: () => T;
+  set: (value: T | ((prev: T) => T)) => void;
+  delete: () => void;
+  subscribe: (callback: () => void) => () => void;
+  serialize: (value: T) => string;
+  deserialize: (value: string) => T;
+  _triggerListeners: () => void;
+  scope: StorageScope;
+  key: string;
+};
+```
 
-- `get(): T` - Get current value (synchronous)
-- `set(value: T | ((prev: T) => T)): void` - Set new value (synchronous)
-- `delete(): void` - Remove value (synchronous)
-- `subscribe(callback: () => void): () => void` - Subscribe to changes
+### `createStorageItem<T>(config)`
 
-### `useStorage<T>(item: StorageItem<T>)`
+```ts
+function createStorageItem<T = undefined>(config: StorageItemConfig<T>): StorageItem<T>
+```
 
-React hook using `useSyncExternalStore` for automatic re-renders.
+Notes:
 
-**Returns:** `[value: T, setValue: (value: T | ((prev: T) => T)) => void]`
+- `Memory` stores values directly.
+- `Disk` and `Secure` store serialized values.
+- If `expiration` is enabled, values are wrapped internally and expired lazily on read.
+- If `validate` fails on a stored value, fallback is:
+1. `onValidationError(invalidValue)` if provided
+2. `defaultValue` otherwise
+- Fallback values are written back only when the source was stored data and the resolved fallback also passes `validate`.
 
-### `useSetStorage<T>(item: StorageItem<T>)`
+Throws:
 
-Returns the setter function only. Does not subscribe to updates.
+- `Error("expiration.ttlMs must be greater than 0.")` when `expiration.ttlMs <= 0`.
 
-**Returns:** `(value: T | ((prev: T) => T)) => void`
+### `useStorage(item)`
 
-### `storage` Object
+```ts
+function useStorage<T>(
+  item: StorageItem<T>
+): [T, (value: T | ((prev: T) => T)) => void]
+```
 
-- `clearAll()`: Clears all storage across all scopes.
-- `clear(scope)`: Clears a specific storage scope.
+### `useSetStorage(item)`
+
+```ts
+function useSetStorage<T>(
+  item: StorageItem<T>
+): (value: T | ((prev: T) => T)) => void
+```
+
+### `storage`
+
+```ts
+const storage: {
+  clear: (scope: StorageScope) => void;
+  clearAll: () => void;
+};
+```
+
+Behavior:
+
+- `clear(scope)` clears all keys in a single scope.
+- `clearAll()` clears `Memory`, `Disk`, and `Secure`.
 
 ### Batch Operations
 
-- `getBatch(items, scope)`: Returns an array of values for the given items.
-- `setBatch(items, scope)`: Sets multiple values at once.
-- `removeBatch(items, scope)`: Removes multiple items at once.
+```ts
+type StorageBatchSetItem<T> = {
+  item: StorageItem<T>;
+  value: T;
+};
 
----
+function getBatch(
+  items: readonly Pick<StorageItem<unknown>, "key" | "scope" | "get" | "deserialize">[],
+  scope: StorageScope
+): unknown[];
 
-## 🔐 Security
+function setBatch<T>(
+  items: readonly StorageBatchSetItem<T>[],
+  scope: StorageScope
+): void;
 
-### iOS
-
-- **Disk:** `UserDefaults.standard`
-- **Secure:** Keychain with `kSecAttrAccessibleWhenUnlocked`
-
-### Android
-
-- **Disk:** `SharedPreferences`
-- **Secure:** `EncryptedSharedPreferences` with AES256-GCM encryption
-
-All secure operations use platform-native encryption. No data is stored in plain text.
-
----
-
-## 🧪 Testing
-
-Comprehensive test coverage for both TypeScript and C++:
-
-```bash
-# TypeScript/Jest tests
-npm test
-
-# Type checking
-npm run typecheck
-
-# Build verification
-npm run build
+function removeBatch(
+  items: readonly Pick<StorageItem<unknown>, "key" | "scope" | "delete" | "_triggerListeners">[],
+  scope: StorageScope
+): void;
 ```
 
-**Test Coverage:**
+Rules:
 
-- ✅ All storage scopes (Memory, Disk, Secure)
-- ✅ Custom serialization
-- ✅ Complex objects
-- ✅ Subscription/unsubscription
-- ✅ Memory leak prevention
-- ✅ Thread safety (C++)
+- All items must match the batch `scope`.
+- Mixed-scope calls throw:
+  - `Batch scope mismatch for "<key>": expected <Scope>, received <Scope>.`
 
----
+### Migrations
 
-## 🏗️ Architecture
+```ts
+type MigrationContext = {
+  scope: StorageScope;
+  getRaw: (key: string) => string | undefined;
+  setRaw: (key: string, value: string) => void;
+  removeRaw: (key: string) => void;
+};
 
-Built on [Nitro Modules](https://nitro.margelo.com) for maximum performance:
+type Migration = (context: MigrationContext) => void;
 
-- **C++ Core:** Thread-safe storage implementation with mutex protection
-- **JSI Bridge:** Zero-copy, synchronous JavaScript ↔ C++ communication
-- **Platform Adapters:** Native iOS (Objective-C++) and Android (Kotlin + JNI) implementations
-- **React Integration:** `useSyncExternalStore` for optimal React 18+ compatibility
+function registerMigration(version: number, migration: Migration): void;
+function migrateToLatest(scope?: StorageScope): number;
+```
 
----
+Behavior:
 
-## 🆚 Comparison
+- Versions must be positive integers.
+- Duplicate versions throw.
+- Migration version is tracked per scope using key `__nitro_storage_migration_version__`.
+- `migrateToLatest` applies pending migrations in ascending version order and returns applied/latest version.
 
-| Feature          | Nitro Storage | MMKV | AsyncStorage | Zustand | Expo Secure Store |
-| ---------------- | ------------- | ---- | ------------ | ------- | ----------------- |
-| Synchronous      | ✅            | ✅   | ❌           | ✅      | ❌                |
-| Memory State     | ✅            | ❌   | ❌           | ✅      | ❌                |
-| Disk Persistence | ✅            | ✅   | ✅           | ❌      | ❌                |
-| Secure Storage   | ✅            | ❌   | ❌           | ❌      | ✅                |
-| Type-Safe        | ✅            | ⚠️   | ⚠️           | ✅      | ⚠️                |
-| Unified API      | ✅            | ❌   | ❌           | ❌      | ❌                |
-| React Hooks      | ✅            | ❌   | ❌           | ✅      | ❌                |
-| Web Support      | ✅            | ❌   | ✅           | ✅      | ❌                |
+Throws:
 
----
+- `registerMigration`: throws when version is not a positive integer.
+- `registerMigration`: throws when version is already registered.
+- `migrateToLatest`: throws on invalid scope.
 
-## 📄 License
+### Transactions
+
+```ts
+type TransactionContext = {
+  scope: StorageScope;
+  getRaw: (key: string) => string | undefined;
+  setRaw: (key: string, value: string) => void;
+  removeRaw: (key: string) => void;
+  getItem: <T>(item: Pick<StorageItem<T>, "scope" | "key" | "get">) => T;
+  setItem: <T>(
+    item: Pick<StorageItem<T>, "scope" | "key" | "serialize">,
+    value: T
+  ) => void;
+  removeItem: (item: Pick<StorageItem<unknown>, "scope" | "key">) => void;
+};
+
+function runTransaction<T>(
+  scope: StorageScope,
+  transaction: (context: TransactionContext) => T
+): T;
+```
+
+Behavior:
+
+- On exception, it rolls back keys modified in that transaction.
+- Rollback is best-effort within process lifetime.
+
+Throws:
+
+- Throws on invalid scope.
+- Rethrows any error thrown by the transaction callback after rollback.
+
+### Validation and Expiration Types
+
+```ts
+type Validator<T> = (value: unknown) => value is T;
+
+type ExpirationConfig = {
+  ttlMs: number;
+};
+```
+
+### MMKV Migration
+
+```ts
+type MMKVLike = {
+  getString: (key: string) => string | undefined;
+  getNumber: (key: string) => number | undefined;
+  getBoolean: (key: string) => boolean | undefined;
+  contains: (key: string) => boolean;
+  delete: (key: string) => void;
+  getAllKeys: () => string[];
+};
+
+function migrateFromMMKV<T>(
+  mmkv: MMKVLike,
+  item: StorageItem<T>,
+  deleteFromMMKV?: boolean
+): boolean;
+```
+
+Behavior:
+
+- Returns `true` when a value is found and copied, `false` otherwise.
+- Read priority is: `getString` -> `getNumber` -> `getBoolean`.
+- Uses `item.set(...)`, so schema validation on the target item still applies.
+- If `deleteFromMMKV` is `true`, deletes only when migration succeeds.
+
+## Examples
+
+### Schema Validation + Fallback
+
+```ts
+const userIdItem = createStorageItem<number>({
+  key: "user-id",
+  scope: StorageScope.Disk,
+  defaultValue: 0,
+  validate: (v): v is number => typeof v === "number" && v > 0,
+  onValidationError: () => 1,
+});
+```
+
+### TTL
+
+```ts
+const otpItem = createStorageItem<string | undefined>({
+  key: "otp",
+  scope: StorageScope.Secure,
+  expiration: { ttlMs: 60_000 },
+});
+```
+
+### Transaction
+
+```ts
+runTransaction(StorageScope.Disk, (tx) => {
+  tx.setRaw("a", JSON.stringify(1));
+  tx.setRaw("b", JSON.stringify(2));
+});
+```
+
+### Versioned Migrations
+
+```ts
+registerMigration(1, ({ setRaw }) => {
+  setRaw("seed", JSON.stringify({ ready: true }));
+});
+
+registerMigration(2, ({ getRaw, setRaw }) => {
+  const raw = getRaw("seed");
+  if (!raw) return;
+  const value = JSON.parse(raw) as { ready: boolean };
+  setRaw("seed", JSON.stringify({ ...value, migrated: true }));
+});
+
+migrateToLatest(StorageScope.Disk);
+```
+
+## Scope Semantics
+
+- `Memory`: in-memory only, not persisted.
+- `Disk`: UserDefaults (iOS), SharedPreferences (Android), `localStorage` (web).
+- `Secure`: Keychain (iOS), EncryptedSharedPreferences (Android), `sessionStorage` fallback (web).
+
+## Dev Commands
+
+From repo root:
+
+```bash
+bun run test -- --filter=react-native-nitro-storage
+bun run typecheck -- --filter=react-native-nitro-storage
+bun run build -- --filter=react-native-nitro-storage
+```
+
+Inside package:
+
+```bash
+bun run test
+bun run test:coverage
+bun run typecheck
+bun run build
+```
+
+## License
 
 MIT
-
----
-
-**Keywords:** react-native storage, react-native state management, react-native keychain, react-native secure storage, react-native mmkv alternative, react-native async storage, synchronous storage react native, jsi storage, nitro modules, react native persistence
