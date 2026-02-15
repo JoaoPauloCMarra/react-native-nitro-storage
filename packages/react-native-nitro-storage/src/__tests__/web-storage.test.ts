@@ -14,7 +14,7 @@ import {
   useStorageSelector,
   useStorage,
 } from "../index.web";
-import { serializeWithPrimitiveFastPath } from "../internal";
+import { MIGRATION_VERSION_KEY, serializeWithPrimitiveFastPath } from "../internal";
 
 function createStorageMock(): Storage {
   const store = new Map<string, string>();
@@ -605,5 +605,237 @@ describe("Web Storage", () => {
     });
 
     expect(migrateToLatest(StorageScope.Memory)).toBe(version);
+  });
+
+  it("reads pending secure values before coalesced writes flush", async () => {
+    const item = createStorageItem({
+      key: "pending-secure-read",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      coalesceSecureWrites: true,
+    });
+
+    item.set("queued");
+    expect(item.get()).toBe("queued");
+
+    await Promise.resolve();
+    expect(globalThis.sessionStorage.getItem("pending-secure-read")).toBe(
+      serializeWithPrimitiveFastPath("queued")
+    );
+  });
+
+  it("keeps direct and coalesced secure write paths independent", async () => {
+    const coalesced = createStorageItem({
+      key: "queued-secure",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      coalesceSecureWrites: true,
+    });
+    const direct = createStorageItem({
+      key: "direct-secure",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+    });
+    const setSpy = jest.spyOn(globalThis.sessionStorage, "setItem");
+    const removeSpy = jest.spyOn(globalThis.sessionStorage, "removeItem");
+
+    coalesced.set("queued-1");
+    direct.set("direct-1");
+    coalesced.delete();
+    direct.delete();
+
+    expect(setSpy).toHaveBeenCalledWith(
+      "direct-secure",
+      serializeWithPrimitiveFastPath("direct-1")
+    );
+    expect(removeSpy).toHaveBeenCalledWith("direct-secure");
+
+    await Promise.resolve();
+    expect(removeSpy).toHaveBeenCalledWith("queued-secure");
+  });
+
+  it("handles memory TTL expiration and delete cleanup", () => {
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(1_000);
+    const listener = jest.fn();
+    const item = createStorageItem<string>({
+      key: "memory-ttl-web",
+      scope: StorageScope.Memory,
+      defaultValue: "fallback",
+      expiration: { ttlMs: 10 },
+    });
+
+    item.subscribe(listener);
+    item.set("live");
+    expect(item.get()).toBe("live");
+
+    nowSpy.mockReturnValue(1_020);
+    expect(item.get()).toBe("fallback");
+
+    item.set("second");
+    item.delete();
+    expect(item.get()).toBe("fallback");
+    expect(listener).toHaveBeenCalled();
+    nowSpy.mockRestore();
+  });
+
+  it("uses cache and pending secure paths in batch reads", async () => {
+    const diskGetSpy = jest.spyOn(globalThis.localStorage, "getItem");
+    const cachedDisk = createStorageItem({
+      key: "disk-batch-cache",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+      readCache: true,
+    });
+    cachedDisk.set("cached-value");
+    diskGetSpy.mockClear();
+
+    expect(getBatch([cachedDisk], StorageScope.Disk)).toEqual(["cached-value"]);
+    expect(diskGetSpy).toHaveBeenCalledTimes(0);
+
+    const pendingSecure = createStorageItem({
+      key: "secure-batch-pending",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      coalesceSecureWrites: true,
+    });
+    pendingSecure.set("queued-secure-value");
+    expect(getBatch([pendingSecure], StorageScope.Secure)).toEqual([
+      "queued-secure-value",
+    ]);
+
+    await Promise.resolve();
+  });
+
+  it("falls back to item.get in web getBatch when raw value is missing", () => {
+    const item = createStorageItem({
+      key: "web-batch-fallback",
+      scope: StorageScope.Disk,
+      defaultValue: "fallback",
+    });
+
+    expect(getBatch([item], StorageScope.Disk)).toEqual(["fallback"]);
+  });
+
+  it("uses per-item fallback path for non-raw batch set items", () => {
+    const validatedItem = createStorageItem<number>({
+      key: "batch-web-fallback-valid",
+      scope: StorageScope.Disk,
+      defaultValue: 1,
+      validate: (value): value is number => typeof value === "number" && value > 0,
+    });
+
+    setBatch([{ item: validatedItem, value: 9 }], StorageScope.Disk);
+    expect(validatedItem.get()).toBe(9);
+  });
+
+  it("handles missing browser storage in web batch operations", () => {
+    const originalLocalStorage = globalThis.localStorage;
+    try {
+      Object.defineProperty(globalThis, "localStorage", {
+        value: undefined,
+        configurable: true,
+        writable: true,
+      });
+
+      const item = createStorageItem({
+        key: "missing-storage-batch",
+        scope: StorageScope.Disk,
+        defaultValue: "default",
+      });
+
+      expect(() =>
+        setBatch([{ item, value: "next" }], StorageScope.Disk)
+      ).not.toThrow();
+      expect(() => removeBatch([item], StorageScope.Disk)).not.toThrow();
+    } finally {
+      Object.defineProperty(globalThis, "localStorage", {
+        value: originalLocalStorage,
+        configurable: true,
+        writable: true,
+      });
+    }
+  });
+
+  it("flushes pending secure writes for secure batch set/remove", () => {
+    const coalesced = createStorageItem({
+      key: "secure-batch-coalesced",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      coalesceSecureWrites: true,
+    });
+    const secureBatchItem = createStorageItem({
+      key: "secure-batch-item",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+    });
+
+    coalesced.set("queued-before-batch");
+    setBatch([{ item: secureBatchItem, value: "batched" }], StorageScope.Secure);
+    expect(secureBatchItem.get()).toBe("batched");
+
+    coalesced.set("queued-before-remove");
+    removeBatch([secureBatchItem], StorageScope.Secure);
+    expect(secureBatchItem.get()).toBe("default");
+  });
+
+  it("validates migration registration version rules", () => {
+    expect(() => registerMigration(0, () => undefined)).toThrow(
+      /positive integer/
+    );
+
+    const version = migrationVersionSeed++;
+    registerMigration(version, () => undefined);
+    expect(() => registerMigration(version, () => undefined)).toThrow(
+      /already registered/
+    );
+  });
+
+  it("treats invalid stored migration versions as zero", () => {
+    const version = migrationVersionSeed++;
+    registerMigration(version, () => undefined);
+    globalThis.localStorage.setItem(MIGRATION_VERSION_KEY, "not-a-number");
+
+    expect(migrateToLatest(StorageScope.Disk)).toBe(version);
+  });
+
+  it("flushes secure queue in transactions and records rollback once per key", () => {
+    const queued = createStorageItem({
+      key: "secure-tx-queued",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      coalesceSecureWrites: true,
+    });
+    const item = createStorageItem({
+      key: "secure-tx-key",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+    });
+
+    queued.set("pending");
+
+    runTransaction(StorageScope.Secure, (tx) => {
+      tx.setRaw("secure-tx-key", serializeWithPrimitiveFastPath("first"));
+      tx.setRaw("secure-tx-key", serializeWithPrimitiveFastPath("second"));
+      tx.setItem(item, "committed");
+    });
+
+    expect(item.get()).toBe("committed");
+  });
+
+  it("notifies listeners when _triggerListeners is called", () => {
+    const item = createStorageItem({
+      key: "manual-trigger-web",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+    });
+    const listenerA = jest.fn();
+    const listenerB = jest.fn();
+
+    item.subscribe(listenerA);
+    item.subscribe(listenerB);
+    item._triggerListeners();
+
+    expect(listenerA).toHaveBeenCalledTimes(1);
+    expect(listenerB).toHaveBeenCalledTimes(1);
   });
 });
