@@ -22,7 +22,7 @@
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
-    "react-native-nitro-modules": "^0.32.2",
+    "react-native-nitro-modules": "^0.33.9",
     "react-native-nitro-storage": "*",
     "react-native-safe-area-context": "5.6.2",
     "react-native-screens": "~4.16.0",
@@ -30,7 +30,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",
-    "@types/react": "~19.2.14",
+    "@types/react": "~19.1.10",
     "babel-preset-expo": "~54.0.10"
   }
 }

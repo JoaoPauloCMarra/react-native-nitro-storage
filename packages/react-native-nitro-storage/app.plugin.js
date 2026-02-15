@@ -6,19 +6,21 @@ const {
 } = require("@expo/config-plugins");
 
 const withNitroStorage = (config, props = {}) => {
-  const {
-    faceIDPermission = "Allow $(PRODUCT_NAME) to use Face ID for secure authentication",
-  } = props;
+  const defaultFaceIDPermission =
+    "Allow $(PRODUCT_NAME) to use Face ID for secure authentication";
+  const { faceIDPermission, addBiometricPermissions = false } = props;
 
   config = withInfoPlist(config, (config) => {
-    config.modResults.NSFaceIDUsageDescription =
-      faceIDPermission || config.modResults.NSFaceIDUsageDescription;
+    if (typeof faceIDPermission === "string" && faceIDPermission.trim() !== "") {
+      config.modResults.NSFaceIDUsageDescription = faceIDPermission;
+    } else if (!config.modResults.NSFaceIDUsageDescription) {
+      config.modResults.NSFaceIDUsageDescription = defaultFaceIDPermission;
+    }
     return config;
   });
 
   config = withAndroidManifest(config, (config) => {
-    const mainApplication = config.modResults.manifest.application?.[0];
-    if (!mainApplication) {
+    if (!addBiometricPermissions) {
       return config;
     }
 

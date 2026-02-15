@@ -30,17 +30,21 @@ export default function MemoryDemo() {
         <View
           style={{
             backgroundColor: Colors.background,
-            borderRadius: 20,
-            padding: 40,
+            borderRadius: 16,
+            paddingVertical: 26,
+            paddingHorizontal: 20,
             alignItems: "center",
             borderWidth: 1,
             borderColor: Colors.border,
             marginVertical: 10,
           }}
         >
+          <Text style={{ color: Colors.muted, fontSize: 12, marginBottom: 6 }}>
+            Current value
+          </Text>
           <Text
             style={{
-              fontSize: 80,
+              fontSize: 64,
               fontWeight: "900",
               color: Colors.text,
               fontVariant: ["tabular-nums"],

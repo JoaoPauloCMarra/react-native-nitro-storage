@@ -10,6 +10,10 @@
 
 namespace margelo::nitro::NitroStorage {
 
+namespace {
+constexpr auto kBatchMissingSentinel = "__nitro_storage_batch_missing__::v1";
+} // namespace
+
 HybridStorage::HybridStorage()
     : HybridObject(TAG), HybridStorageSpec() {
 #if __APPLE__
@@ -202,9 +206,41 @@ void HybridStorage::setBatch(const std::vector<std::string>& keys, const std::ve
     if (keys.size() != values.size()) {
         throw std::runtime_error("NitroStorage: Keys and values size mismatch in setBatch");
     }
-    
+
+    Scope s = toScope(scope);
+
+    switch (s) {
+        case Scope::Memory: {
+            std::lock_guard<std::mutex> lock(memoryMutex_);
+            for (size_t i = 0; i < keys.size(); ++i) {
+                memoryStore_[keys[i]] = values[i];
+            }
+            break;
+        }
+        case Scope::Disk:
+            ensureAdapter();
+            try {
+                nativeAdapter_->setDiskBatch(keys, values);
+            } catch (const std::exception& e) {
+                throw std::runtime_error(std::string("NitroStorage: Disk setBatch failed: ") + e.what());
+            } catch (...) {
+                throw std::runtime_error("NitroStorage: Disk setBatch failed");
+            }
+            break;
+        case Scope::Secure:
+            ensureAdapter();
+            try {
+                nativeAdapter_->setSecureBatch(keys, values);
+            } catch (const std::exception& e) {
+                throw std::runtime_error(std::string("NitroStorage: Secure setBatch failed: ") + e.what());
+            } catch (...) {
+                throw std::runtime_error("NitroStorage: Secure setBatch failed");
+            }
+            break;
+    }
+
     for (size_t i = 0; i < keys.size(); ++i) {
-        set(keys[i], values[i], scope);
+        notifyListeners(static_cast<int>(s), keys[i], values[i]);
     }
 }
 
@@ -212,19 +248,103 @@ void HybridStorage::setBatch(const std::vector<std::string>& keys, const std::ve
 std::vector<std::string> HybridStorage::getBatch(const std::vector<std::string>& keys, double scope) {
     std::vector<std::string> results;
     results.reserve(keys.size());
-    
-    for (const auto& key : keys) {
-        auto val = get(key, scope);
-        results.push_back(val.value_or(""));
+
+    Scope s = toScope(scope);
+
+    switch (s) {
+        case Scope::Memory: {
+            std::lock_guard<std::mutex> lock(memoryMutex_);
+            for (const auto& key : keys) {
+                auto it = memoryStore_.find(key);
+                if (it != memoryStore_.end()) {
+                    results.push_back(it->second);
+                } else {
+                    results.push_back(kBatchMissingSentinel);
+                }
+            }
+            return results;
+        }
+        case Scope::Disk: {
+            ensureAdapter();
+            std::vector<std::optional<std::string>> values;
+            try {
+                values = nativeAdapter_->getDiskBatch(keys);
+            } catch (const std::exception& e) {
+                throw std::runtime_error(std::string("NitroStorage: Disk getBatch failed: ") + e.what());
+            } catch (...) {
+                throw std::runtime_error("NitroStorage: Disk getBatch failed");
+            }
+
+            for (const auto& value : values) {
+                if (value.has_value()) {
+                    results.push_back(*value);
+                } else {
+                    results.push_back(kBatchMissingSentinel);
+                }
+            }
+            return results;
+        }
+        case Scope::Secure: {
+            ensureAdapter();
+            std::vector<std::optional<std::string>> values;
+            try {
+                values = nativeAdapter_->getSecureBatch(keys);
+            } catch (const std::exception& e) {
+                throw std::runtime_error(std::string("NitroStorage: Secure getBatch failed: ") + e.what());
+            } catch (...) {
+                throw std::runtime_error("NitroStorage: Secure getBatch failed");
+            }
+
+            for (const auto& value : values) {
+                if (value.has_value()) {
+                    results.push_back(*value);
+                } else {
+                    results.push_back(kBatchMissingSentinel);
+                }
+            }
+            return results;
+        }
     }
-    
+
     return results;
 }
 
 
 void HybridStorage::removeBatch(const std::vector<std::string>& keys, double scope) {
+    Scope s = toScope(scope);
+
+    switch (s) {
+        case Scope::Memory: {
+            std::lock_guard<std::mutex> lock(memoryMutex_);
+            for (const auto& key : keys) {
+                memoryStore_.erase(key);
+            }
+            break;
+        }
+        case Scope::Disk:
+            ensureAdapter();
+            try {
+                nativeAdapter_->deleteDiskBatch(keys);
+            } catch (const std::exception& e) {
+                throw std::runtime_error(std::string("NitroStorage: Disk removeBatch failed: ") + e.what());
+            } catch (...) {
+                throw std::runtime_error("NitroStorage: Disk removeBatch failed");
+            }
+            break;
+        case Scope::Secure:
+            ensureAdapter();
+            try {
+                nativeAdapter_->deleteSecureBatch(keys);
+            } catch (const std::exception& e) {
+                throw std::runtime_error(std::string("NitroStorage: Secure removeBatch failed: ") + e.what());
+            } catch (...) {
+                throw std::runtime_error("NitroStorage: Secure removeBatch failed");
+            }
+            break;
+    }
+
     for (const auto& key : keys) {
-        remove(key, scope);
+        notifyListeners(static_cast<int>(s), key, std::nullopt);
     }
 }
 

@@ -23,6 +23,7 @@ const diskUsername = createStorageItem({
 export default function DiskDemo() {
   const [username, setUsername] = useStorage(diskUsername);
   const [tempUsername, setTempUsername] = useState("");
+  const canSave = tempUsername.trim().length > 0;
 
   return (
     <Page title="Disk" subtitle="MMKV-style Persistence">
@@ -40,17 +41,22 @@ export default function DiskDemo() {
           label="Display Name"
           value={tempUsername}
           onChangeText={setTempUsername}
-          placeholder="Enter username..."
+          placeholder="Enter a display name"
+          autoCapitalize="words"
         />
+        <Text style={{ color: Colors.muted, fontSize: 12 }}>
+          Persisted across app restarts.
+        </Text>
 
         <View style={styles.row}>
           <Button
             title="Save to Disk"
             onPress={() => {
-              setUsername(tempUsername);
+              setUsername(tempUsername.trim());
               setTempUsername("");
             }}
             style={styles.flex1}
+            disabled={!canSave}
           />
           <Button
             title="Delete"

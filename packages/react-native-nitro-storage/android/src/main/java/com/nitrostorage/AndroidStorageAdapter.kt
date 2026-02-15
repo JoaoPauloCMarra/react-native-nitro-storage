@@ -11,8 +11,9 @@ import javax.crypto.AEADBadTagException
 class AndroidStorageAdapter private constructor(private val context: Context) {
     private val sharedPreferences: SharedPreferences = 
         context.getSharedPreferences("NitroStorage", Context.MODE_PRIVATE)
-    
-    private val masterKey: MasterKey = MasterKey.Builder(context)
+
+    private val masterKeyAlias = "${context.packageName}.nitro_storage.master_key"
+    private val masterKey: MasterKey = MasterKey.Builder(context, masterKeyAlias)
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
         .build()
     
@@ -59,7 +60,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             // Delete the master key from Android Keystore
             val keyStore = KeyStore.getInstance("AndroidKeyStore")
             keyStore.load(null)
-            keyStore.deleteEntry(MasterKey.DEFAULT_MASTER_KEY_ALIAS)
+            keyStore.deleteEntry(masterKeyAlias)
             
             Log.i("NitroStorage", "Successfully cleared corrupted secure storage")
         } catch (e: Exception) {
@@ -98,30 +99,84 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         fun setDisk(key: String, value: String) {
             getInstanceOrThrow().sharedPreferences.edit().putString(key, value).apply()
         }
+
+        @JvmStatic
+        fun setDiskBatch(keys: Array<String>, values: Array<String>) {
+            val editor = getInstanceOrThrow().sharedPreferences.edit()
+            val count = minOf(keys.size, values.size)
+            for (index in 0 until count) {
+                editor.putString(keys[index], values[index])
+            }
+            editor.apply()
+        }
         
         @JvmStatic
         fun getDisk(key: String): String? {
             return getInstanceOrThrow().sharedPreferences.getString(key, null)
+        }
+
+        @JvmStatic
+        fun getDiskBatch(keys: Array<String>): Array<String?> {
+            val prefs = getInstanceOrThrow().sharedPreferences
+            return Array(keys.size) { index ->
+                prefs.getString(keys[index], null)
+            }
         }
         
         @JvmStatic
         fun deleteDisk(key: String) {
             getInstanceOrThrow().sharedPreferences.edit().remove(key).apply()
         }
+
+        @JvmStatic
+        fun deleteDiskBatch(keys: Array<String>) {
+            val editor = getInstanceOrThrow().sharedPreferences.edit()
+            for (key in keys) {
+                editor.remove(key)
+            }
+            editor.apply()
+        }
         
         @JvmStatic
         fun setSecure(key: String, value: String) {
             getInstanceOrThrow().encryptedPreferences.edit().putString(key, value).apply()
+        }
+
+        @JvmStatic
+        fun setSecureBatch(keys: Array<String>, values: Array<String>) {
+            val editor = getInstanceOrThrow().encryptedPreferences.edit()
+            val count = minOf(keys.size, values.size)
+            for (index in 0 until count) {
+                editor.putString(keys[index], values[index])
+            }
+            editor.apply()
         }
         
         @JvmStatic
         fun getSecure(key: String): String? {
             return getInstanceOrThrow().encryptedPreferences.getString(key, null)
         }
+
+        @JvmStatic
+        fun getSecureBatch(keys: Array<String>): Array<String?> {
+            val prefs = getInstanceOrThrow().encryptedPreferences
+            return Array(keys.size) { index ->
+                prefs.getString(keys[index], null)
+            }
+        }
         
         @JvmStatic
         fun deleteSecure(key: String) {
             getInstanceOrThrow().encryptedPreferences.edit().remove(key).apply()
+        }
+
+        @JvmStatic
+        fun deleteSecureBatch(keys: Array<String>) {
+            val editor = getInstanceOrThrow().encryptedPreferences.edit()
+            for (key in keys) {
+                editor.remove(key)
+            }
+            editor.apply()
         }
 
         @JvmStatic

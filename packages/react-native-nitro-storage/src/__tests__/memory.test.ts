@@ -46,7 +46,7 @@ describe("Pure JS Memory Storage", () => {
   });
 
   it("stores and retrieves complex objects (references)", () => {
-    const item = createStorageItem<any>({
+    const item = createStorageItem<Record<string, string>>({
       key: "test-obj",
       scope: StorageScope.Memory,
       defaultValue: {},
@@ -54,7 +54,7 @@ describe("Pure JS Memory Storage", () => {
 
     const obj = { foo: "bar" };
     item.set(obj);
-    expect(item.get()).toBe(obj); // Should be exact reference match
+    expect(item.get()).toBe(obj);
   });
 
   it("stores functions", () => {
