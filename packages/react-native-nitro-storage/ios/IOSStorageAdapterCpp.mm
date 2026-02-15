@@ -5,23 +5,77 @@
 namespace NitroStorage {
 
 static NSString* const kKeychainService = @"com.nitrostorage.keychain";
+static NSString* const kDiskSuiteName = @"com.nitrostorage.disk";
+
+static NSUserDefaults* NitroDiskDefaults() {
+    static NSUserDefaults* defaults = [[NSUserDefaults alloc] initWithSuiteName:kDiskSuiteName];
+    return defaults ?: [NSUserDefaults standardUserDefaults];
+}
 
 IOSStorageAdapterCpp::IOSStorageAdapterCpp() {}
 IOSStorageAdapterCpp::~IOSStorageAdapterCpp() {}
 
 void IOSStorageAdapterCpp::setDisk(const std::string& key, const std::string& value) {
-    [[NSUserDefaults standardUserDefaults] setObject:[NSString stringWithUTF8String:value.c_str()]
-                                              forKey:[NSString stringWithUTF8String:key.c_str()]];
+    NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
+    NSString* nsValue = [NSString stringWithUTF8String:value.c_str()];
+    NSUserDefaults* defaults = NitroDiskDefaults();
+    [defaults setObject:nsValue forKey:nsKey];
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:nsKey];
 }
 
 std::optional<std::string> IOSStorageAdapterCpp::getDisk(const std::string& key) {
-    NSString* result = [[NSUserDefaults standardUserDefaults] stringForKey:[NSString stringWithUTF8String:key.c_str()]];
+    NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
+    NSUserDefaults* defaults = NitroDiskDefaults();
+    NSString* result = [defaults stringForKey:nsKey];
+
+    if (!result) {
+        NSUserDefaults* legacyDefaults = [NSUserDefaults standardUserDefaults];
+        NSString* legacyValue = [legacyDefaults stringForKey:nsKey];
+        if (legacyValue) {
+            [defaults setObject:legacyValue forKey:nsKey];
+            [legacyDefaults removeObjectForKey:nsKey];
+            result = legacyValue;
+        }
+    }
+
     if (!result) return std::nullopt;
     return std::string([result UTF8String]);
 }
 
 void IOSStorageAdapterCpp::deleteDisk(const std::string& key) {
-    [[NSUserDefaults standardUserDefaults] removeObjectForKey:[NSString stringWithUTF8String:key.c_str()]];
+    NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
+    [NitroDiskDefaults() removeObjectForKey:nsKey];
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:nsKey];
+}
+
+void IOSStorageAdapterCpp::setDiskBatch(
+    const std::vector<std::string>& keys,
+    const std::vector<std::string>& values
+) {
+    NSUserDefaults* defaults = NitroDiskDefaults();
+    for (size_t i = 0; i < keys.size() && i < values.size(); ++i) {
+        NSString* nsKey = [NSString stringWithUTF8String:keys[i].c_str()];
+        NSString* nsValue = [NSString stringWithUTF8String:values[i].c_str()];
+        [defaults setObject:nsValue forKey:nsKey];
+        [[NSUserDefaults standardUserDefaults] removeObjectForKey:nsKey];
+    }
+}
+
+std::vector<std::optional<std::string>> IOSStorageAdapterCpp::getDiskBatch(
+    const std::vector<std::string>& keys
+) {
+    std::vector<std::optional<std::string>> results;
+    results.reserve(keys.size());
+    for (const auto& key : keys) {
+        results.push_back(getDisk(key));
+    }
+    return results;
+}
+
+void IOSStorageAdapterCpp::deleteDiskBatch(const std::vector<std::string>& keys) {
+    for (const auto& key : keys) {
+        deleteDisk(key);
+    }
 }
 
 void IOSStorageAdapterCpp::setSecure(const std::string& key, const std::string& value) {
@@ -75,10 +129,37 @@ void IOSStorageAdapterCpp::deleteSecure(const std::string& key) {
     SecItemDelete((__bridge CFDictionaryRef)query);
 }
 
+void IOSStorageAdapterCpp::setSecureBatch(
+    const std::vector<std::string>& keys,
+    const std::vector<std::string>& values
+) {
+    for (size_t i = 0; i < keys.size() && i < values.size(); ++i) {
+        setSecure(keys[i], values[i]);
+    }
+}
+
+std::vector<std::optional<std::string>> IOSStorageAdapterCpp::getSecureBatch(
+    const std::vector<std::string>& keys
+) {
+    std::vector<std::optional<std::string>> results;
+    results.reserve(keys.size());
+    for (const auto& key : keys) {
+        results.push_back(getSecure(key));
+    }
+    return results;
+}
+
+void IOSStorageAdapterCpp::deleteSecureBatch(const std::vector<std::string>& keys) {
+    for (const auto& key : keys) {
+        deleteSecure(key);
+    }
+}
+
 void IOSStorageAdapterCpp::clearDisk() {
-    NSString* appDomain = [[NSBundle mainBundle] bundleIdentifier];
-    if (appDomain) {
-        [[NSUserDefaults standardUserDefaults] removePersistentDomainForName:appDomain];
+    NSUserDefaults* defaults = NitroDiskDefaults();
+    NSDictionary<NSString*, id>* entries = [defaults dictionaryRepresentation];
+    for (NSString* key in entries) {
+        [defaults removeObjectForKey:key];
     }
 }
 

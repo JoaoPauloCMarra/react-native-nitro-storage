@@ -3,7 +3,7 @@
   "globalPassThroughEnv": ["ANDROID_HOME", "ANDROID_SDK_ROOT", "JAVA_HOME"],
   "tasks": {
     "build": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^build", "codegen"],
       "outputs": ["lib/**", "dist/**"]
     },
     "lint": {
@@ -13,14 +13,17 @@
       "cache": false
     },
     "codegen": {
-      "cache": false,
+      "inputs": ["src/**/*.nitro.ts", "nitro.json", "package.json"],
       "outputs": ["nitrogen/generated/**"]
     },
-    "typecheck": {
-      "dependsOn": ["^build"]
+    "typecheck": {},
+    "test": {},
+    "test:coverage": {
+      "outputs": ["coverage/**"]
     },
-    "test": {
-      "dependsOn": ["^build"]
+    "benchmark": {
+      "dependsOn": ["build"],
+      "cache": false
     },
     "prebuild": {
       "cache": false

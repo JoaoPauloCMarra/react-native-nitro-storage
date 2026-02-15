@@ -136,7 +136,7 @@ export default function BenchmarkScreen() {
 
   const runBenchmark = useCallback(
     async (
-      item: StorageItem<any>,
+      item: StorageItem<string>,
       setResult: (result: BenchmarkResult) => void,
       type: string
     ) => {
@@ -183,6 +183,9 @@ export default function BenchmarkScreen() {
 
   return (
     <Page title="Benchmark" subtitle="JSI Speed Comparison">
+      <Text style={{ color: Colors.muted, marginBottom: 8 }}>
+        Run scope benchmarks and compare average latency in real time.
+      </Text>
       <Button
         title={isAnyRunning ? "Work in progress..." : "Stress Test All Scopes"}
         onPress={runAll}

@@ -6,7 +6,7 @@ Synchronous storage for React Native with a unified API for memory, disk, and se
 
 - `react-native >= 0.75.0`
 - `react-native-nitro-modules >= 0.33.9`
-- `react`
+- `react >= 18.2.0`
 
 ## Installation
 
@@ -25,10 +25,23 @@ bunx expo install react-native-nitro-storage react-native-nitro-modules
 ```json
 {
   "expo": {
-    "plugins": ["react-native-nitro-storage"]
+    "plugins": [
+      [
+        "react-native-nitro-storage",
+        {
+          "faceIDPermission": "Allow $(PRODUCT_NAME) to use Face ID for secure authentication",
+          "addBiometricPermissions": false
+        }
+      ]
+    ]
   }
 }
 ```
+
+Notes:
+
+- If `faceIDPermission` is omitted, the plugin sets a default only when `NSFaceIDUsageDescription` is missing.
+- Android biometric permissions are opt-in via `addBiometricPermissions: true`.
 
 Then:
 
@@ -86,6 +99,7 @@ export function Counter() {
 - `storage`
 - `createStorageItem`
 - `useStorage`
+- `useStorageSelector`
 - `useSetStorage`
 - `getBatch`
 - `setBatch`
@@ -155,6 +169,8 @@ type StorageItemConfig<T> = {
   validate?: Validator<T>;
   onValidationError?: (invalidValue: unknown) => T;
   expiration?: ExpirationConfig;
+  readCache?: boolean;
+  coalesceSecureWrites?: boolean;
 };
 ```
 
@@ -184,7 +200,10 @@ Notes:
 
 - `Memory` stores values directly.
 - `Disk` and `Secure` store serialized values.
+- Default serialization uses a primitive fast path for strings/numbers/booleans/null/undefined and JSON for objects/arrays.
 - If `expiration` is enabled, values are wrapped internally and expired lazily on read.
+- `readCache` is opt-in for `Disk`/`Secure` and can be enabled per item.
+- `coalesceSecureWrites` is opt-in and batches same-tick secure writes per key.
 - If `validate` fails on a stored value, fallback is:
 1. `onValidationError(invalidValue)` if provided
 2. `defaultValue` otherwise
@@ -201,6 +220,18 @@ function useStorage<T>(
   item: StorageItem<T>
 ): [T, (value: T | ((prev: T) => T)) => void]
 ```
+
+### `useStorageSelector(item, selector, isEqual?)`
+
+```ts
+function useStorageSelector<T, TSelected>(
+  item: StorageItem<T>,
+  selector: (value: T) => TSelected,
+  isEqual?: (prev: TSelected, next: TSelected) => boolean
+): [TSelected, (value: T | ((prev: T) => T)) => void]
+```
+
+Use this to subscribe to a derived slice of a storage value and avoid rerenders when that slice does not change.
 
 ### `useSetStorage(item)`
 
@@ -243,7 +274,7 @@ function setBatch<T>(
 ): void;
 
 function removeBatch(
-  items: readonly Pick<StorageItem<unknown>, "key" | "scope" | "delete" | "_triggerListeners">[],
+  items: readonly Pick<StorageItem<unknown>, "key" | "scope" | "delete">[],
   scope: StorageScope
 ): void;
 ```
@@ -251,6 +282,7 @@ function removeBatch(
 Rules:
 
 - All items must match the batch `scope`.
+- Items using `validate` or `expiration` automatically run via per-item `get()`/`set()` paths to preserve validation and TTL behavior.
 - Mixed-scope calls throw:
   - `Batch scope mismatch for "<key>": expected <Scope>, received <Scope>.`
 
@@ -292,11 +324,8 @@ type TransactionContext = {
   setRaw: (key: string, value: string) => void;
   removeRaw: (key: string) => void;
   getItem: <T>(item: Pick<StorageItem<T>, "scope" | "key" | "get">) => T;
-  setItem: <T>(
-    item: Pick<StorageItem<T>, "scope" | "key" | "serialize">,
-    value: T
-  ) => void;
-  removeItem: (item: Pick<StorageItem<unknown>, "scope" | "key">) => void;
+  setItem: <T>(item: Pick<StorageItem<T>, "scope" | "key" | "set">, value: T) => void;
+  removeItem: (item: Pick<StorageItem<unknown>, "scope" | "key" | "delete">) => void;
 };
 
 function runTransaction<T>(
@@ -309,6 +338,7 @@ Behavior:
 
 - On exception, it rolls back keys modified in that transaction.
 - Rollback is best-effort within process lifetime.
+- `setItem`/`removeItem` prefer item methods when available, so validation/TTL/cache semantics stay consistent.
 
 Throws:
 
@@ -404,7 +434,7 @@ migrateToLatest(StorageScope.Disk);
 ## Scope Semantics
 
 - `Memory`: in-memory only, not persisted.
-- `Disk`: UserDefaults (iOS), SharedPreferences (Android), `localStorage` (web).
+- `Disk`: App-scoped UserDefaults suite (iOS), SharedPreferences (Android), `localStorage` (web).
 - `Secure`: Keychain (iOS), EncryptedSharedPreferences (Android), `sessionStorage` fallback (web).
 
 ## Dev Commands
@@ -415,6 +445,7 @@ From repo root:
 bun run test -- --filter=react-native-nitro-storage
 bun run typecheck -- --filter=react-native-nitro-storage
 bun run build -- --filter=react-native-nitro-storage
+bun run benchmark
 ```
 
 Inside package:
@@ -424,6 +455,7 @@ bun run test
 bun run test:coverage
 bun run typecheck
 bun run build
+bun run benchmark
 ```
 
 ## License

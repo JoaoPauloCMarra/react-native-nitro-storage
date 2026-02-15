@@ -11,8 +11,10 @@ import {
   storage,
   StorageScope,
   useSetStorage,
+  useStorageSelector,
   useStorage,
 } from "../index.web";
+import { serializeWithPrimitiveFastPath } from "../internal";
 
 function createStorageMock(): Storage {
   const store = new Map<string, string>();
@@ -67,7 +69,10 @@ describe("Web Storage", () => {
     diskItem.set("value");
 
     expect(diskItem.get()).toBe("value");
-    expect(setSpy).toHaveBeenCalledWith("disk-key", JSON.stringify("value"));
+    expect(setSpy).toHaveBeenCalledWith(
+      "disk-key",
+      serializeWithPrimitiveFastPath("value")
+    );
   });
 
   it("stores and retrieves secure values", () => {
@@ -81,7 +86,10 @@ describe("Web Storage", () => {
     secureItem.set("value");
 
     expect(secureItem.get()).toBe("value");
-    expect(setSpy).toHaveBeenCalledWith("secure-key", JSON.stringify("value"));
+    expect(setSpy).toHaveBeenCalledWith(
+      "secure-key",
+      serializeWithPrimitiveFastPath("value")
+    );
   });
 
   it("clears disk and secure scopes", () => {
@@ -149,6 +157,97 @@ describe("Web Storage", () => {
     expect(item.get()).toBe(2);
   });
 
+  it("supports useStorageSelector and comparator-based rerender control", () => {
+    const item = createStorageItem({
+      key: "web-selector",
+      scope: StorageScope.Memory,
+      defaultValue: { count: 0, label: "a" },
+    });
+
+    let renderCount = 0;
+    const { result } = renderHook(() => {
+      renderCount += 1;
+      return useStorageSelector(
+        item,
+        (value) => ({ count: value.count }),
+        (prev, next) => prev.count === next.count
+      );
+    });
+
+    expect(result.current[0]).toEqual({ count: 0 });
+    expect(renderCount).toBe(1);
+
+    act(() => {
+      item.set((prev) => ({ ...prev, label: "b" }));
+    });
+    expect(result.current[0]).toEqual({ count: 0 });
+    expect(renderCount).toBe(1);
+
+    act(() => {
+      item.set((prev) => ({ ...prev, count: 1 }));
+    });
+    expect(result.current[0]).toEqual({ count: 1 });
+    expect(renderCount).toBe(2);
+  });
+
+  it("supports read-through cache when enabled on web disk scope", () => {
+    const getSpy = jest.spyOn(globalThis.localStorage, "getItem");
+    globalThis.localStorage.setItem(
+      "web-cache-default",
+      serializeWithPrimitiveFastPath("cached")
+    );
+
+    const item = createStorageItem({
+      key: "web-cache-default",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+      readCache: true,
+    });
+
+    expect(item.get()).toBe("cached");
+    expect(item.get()).toBe("cached");
+    expect(getSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps read-through cache disabled by default on web items", () => {
+    const getSpy = jest.spyOn(globalThis.localStorage, "getItem");
+    globalThis.localStorage.setItem(
+      "web-cache-disabled",
+      serializeWithPrimitiveFastPath("cached")
+    );
+
+    const item = createStorageItem({
+      key: "web-cache-disabled",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+    });
+
+    expect(item.get()).toBe("cached");
+    expect(item.get()).toBe("cached");
+    expect(getSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("coalesces secure writes on the same tick when enabled", async () => {
+    const setSpy = jest.spyOn(globalThis.sessionStorage, "setItem");
+    const item = createStorageItem({
+      key: "web-secure-coalesce",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      coalesceSecureWrites: true,
+    });
+
+    item.set("first");
+    item.set("second");
+    expect(setSpy).toHaveBeenCalledTimes(0);
+
+    await Promise.resolve();
+
+    expect(setSpy).toHaveBeenCalledTimes(1);
+    expect(globalThis.sessionStorage.getItem("web-secure-coalesce")).toBe(
+      serializeWithPrimitiveFastPath("second")
+    );
+  });
+
   it("runs batch operations for disk scope", () => {
     const item1 = createStorageItem({
       key: "batch-1",
@@ -206,6 +305,31 @@ describe("Web Storage", () => {
     ).toThrow(/Batch scope mismatch/);
   });
 
+  it("uses per-item set path for validated items in batch set", () => {
+    const validatedItem = createStorageItem<number>({
+      key: "batch-web-validated-set",
+      scope: StorageScope.Disk,
+      defaultValue: 1,
+      validate: (value): value is number => typeof value === "number" && value > 0,
+    });
+
+    expect(() =>
+      setBatch([{ item: validatedItem, value: -1 }], StorageScope.Disk)
+    ).toThrow(/Validation failed/);
+  });
+
+  it("uses per-item get path for validated items in batch get", () => {
+    const validatedItem = createStorageItem<number>({
+      key: "batch-web-validated-get",
+      scope: StorageScope.Disk,
+      defaultValue: 7,
+      validate: (value): value is number => typeof value === "number" && value > 10,
+    });
+
+    globalThis.localStorage.setItem("batch-web-validated-get", JSON.stringify(2));
+    expect(getBatch([validatedItem], StorageScope.Disk)).toEqual([7]);
+  });
+
   it("exports and runs MMKV migration from the root entrypoint", () => {
     const mmkv = {
       getString: jest.fn(() => JSON.stringify("migrated")),
@@ -240,7 +364,9 @@ describe("Web Storage", () => {
 
     globalThis.localStorage.setItem("validated", JSON.stringify(-1));
     expect(item.get()).toBe(10);
-    expect(globalThis.localStorage.getItem("validated")).toBe(JSON.stringify(10));
+    expect(globalThis.localStorage.getItem("validated")).toBe(
+      serializeWithPrimitiveFastPath(10)
+    );
     expect(() => item.set(-2)).toThrow(/Validation failed/);
   });
 
@@ -412,7 +538,7 @@ describe("Web Storage", () => {
     item.set("value");
 
     runTransaction(StorageScope.Disk, (tx) => {
-      expect(tx.getRaw("tx-web")).toBe(JSON.stringify("value"));
+      expect(tx.getRaw("tx-web")).toBe(serializeWithPrimitiveFastPath("value"));
       expect(tx.getItem(item)).toBe("value");
       tx.removeItem(item);
       tx.removeRaw("missing");
@@ -424,6 +550,49 @@ describe("Web Storage", () => {
         tx.getItem(secureItem);
       })
     ).toThrow(/Batch scope mismatch/);
+  });
+
+  it("uses item.set semantics in transactions for ttl items", () => {
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(20_000);
+    const ttlItem = createStorageItem<string>({
+      key: "tx-web-ttl",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+      expiration: { ttlMs: 100 },
+    });
+
+    runTransaction(StorageScope.Disk, (tx) => {
+      tx.setItem(ttlItem, "value");
+    });
+
+    const raw = globalThis.localStorage.getItem("tx-web-ttl");
+    expect(raw).toBeTruthy();
+    expect(JSON.parse(raw!)).toEqual({
+      __nitroStorageEnvelope: true,
+      expiresAt: 20_100,
+      payload: serializeWithPrimitiveFastPath("value"),
+    });
+    nowSpy.mockRestore();
+  });
+
+  it("uses item.set validation semantics in memory transactions", () => {
+    const validatedMemoryItem = createStorageItem<string>({
+      key: "tx-web-memory-validated",
+      scope: StorageScope.Memory,
+      defaultValue: "ok",
+      validate: (value): value is string => value === "ok" || value === "great",
+    });
+
+    runTransaction(StorageScope.Memory, (tx) => {
+      tx.setItem(validatedMemoryItem, "great");
+    });
+    expect(validatedMemoryItem.get()).toBe("great");
+
+    expect(() =>
+      runTransaction(StorageScope.Memory, (tx) => {
+        tx.setItem(validatedMemoryItem, "bad");
+      })
+    ).toThrow(/Validation failed/);
   });
 
   it("runs memory migration context and persists memory migration version", () => {

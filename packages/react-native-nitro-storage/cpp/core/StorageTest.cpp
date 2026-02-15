@@ -6,6 +6,7 @@
 #include <thread>
 #include <map>
 #include <mutex>
+#include <algorithm>
 
 using namespace ::NitroStorage;
 
@@ -36,6 +37,41 @@ public:
         diskStore_.erase(key);
     }
 
+    void setDiskBatch(
+        const std::vector<std::string>& keys,
+        const std::vector<std::string>& values
+    ) override {
+        std::lock_guard<std::mutex> lock(diskMutex_);
+        const size_t count = std::min(keys.size(), values.size());
+        for (size_t i = 0; i < count; ++i) {
+            diskStore_[keys[i]] = values[i];
+        }
+    }
+
+    std::vector<std::optional<std::string>> getDiskBatch(
+        const std::vector<std::string>& keys
+    ) override {
+        std::lock_guard<std::mutex> lock(diskMutex_);
+        std::vector<std::optional<std::string>> values;
+        values.reserve(keys.size());
+        for (const auto& key : keys) {
+            auto it = diskStore_.find(key);
+            if (it != diskStore_.end()) {
+                values.push_back(it->second);
+            } else {
+                values.push_back(std::nullopt);
+            }
+        }
+        return values;
+    }
+
+    void deleteDiskBatch(const std::vector<std::string>& keys) override {
+        std::lock_guard<std::mutex> lock(diskMutex_);
+        for (const auto& key : keys) {
+            diskStore_.erase(key);
+        }
+    }
+
     void setSecure(const std::string& key, const std::string& value) override {
         std::lock_guard<std::mutex> lock(secureMutex_);
         secureStore_[key] = value;
@@ -53,6 +89,41 @@ public:
     void deleteSecure(const std::string& key) override {
         std::lock_guard<std::mutex> lock(secureMutex_);
         secureStore_.erase(key);
+    }
+
+    void setSecureBatch(
+        const std::vector<std::string>& keys,
+        const std::vector<std::string>& values
+    ) override {
+        std::lock_guard<std::mutex> lock(secureMutex_);
+        const size_t count = std::min(keys.size(), values.size());
+        for (size_t i = 0; i < count; ++i) {
+            secureStore_[keys[i]] = values[i];
+        }
+    }
+
+    std::vector<std::optional<std::string>> getSecureBatch(
+        const std::vector<std::string>& keys
+    ) override {
+        std::lock_guard<std::mutex> lock(secureMutex_);
+        std::vector<std::optional<std::string>> values;
+        values.reserve(keys.size());
+        for (const auto& key : keys) {
+            auto it = secureStore_.find(key);
+            if (it != secureStore_.end()) {
+                values.push_back(it->second);
+            } else {
+                values.push_back(std::nullopt);
+            }
+        }
+        return values;
+    }
+
+    void deleteSecureBatch(const std::vector<std::string>& keys) override {
+        std::lock_guard<std::mutex> lock(secureMutex_);
+        for (const auto& key : keys) {
+            secureStore_.erase(key);
+        }
     }
 
     void clearDisk() override {

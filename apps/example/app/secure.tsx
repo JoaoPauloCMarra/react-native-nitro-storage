@@ -23,6 +23,7 @@ const secureToken = createStorageItem({
 export default function SecureDemo() {
   const [token, setToken] = useStorage(secureToken);
   const [tempToken, setTempToken] = useState("");
+  const canStore = tempToken.trim().length > 0;
 
   return (
     <Page title="Secure" subtitle="Hardware Encrypted">
@@ -40,19 +41,24 @@ export default function SecureDemo() {
           label="Secret Token"
           value={tempToken}
           onChangeText={setTempToken}
-          placeholder="Paste sensitive data..."
+          placeholder="Paste sensitive value"
           secureTextEntry
+          autoCapitalize="none"
         />
+        <Text style={{ color: Colors.muted, fontSize: 12 }}>
+          Stored in encrypted platform key storage.
+        </Text>
 
         <View style={styles.row}>
           <Button
             title="Lock in Vault"
             onPress={() => {
-              setToken(tempToken);
+              setToken(tempToken.trim());
               setTempToken("");
             }}
             variant="success"
             style={styles.flex1}
+            disabled={!canStore}
           />
           <Button
             title="Wipe"

@@ -1,6 +1,6 @@
 {
   "name": "react-native-nitro-storage",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "The fastest, most complete storage solution for React Native. Synchronous Memory, Disk, and Secure storage in one unified API. Built with Nitro Modules.",
   "main": "lib/commonjs/index.js",
   "module": "lib/module/index.js",
@@ -9,6 +9,17 @@
   "browser": "src/index.web.ts",
   "source": "src/index.ts",
   "app": "app.plugin.js",
+  "exports": {
+    ".": {
+      "types": "./lib/typescript/index.d.ts",
+      "react-native": "./src/index.ts",
+      "browser": "./src/index.web.ts",
+      "default": "./lib/commonjs/index.js"
+    },
+    "./app.plugin": "./app.plugin.js",
+    "./app.plugin.js": "./app.plugin.js",
+    "./package.json": "./package.json"
+  },
   "files": [
     "src",
     "lib",
@@ -29,15 +40,15 @@
     "!scripts"
   ],
   "scripts": {
-    "prebuild": "bun run codegen",
     "build": "bob build",
     "clean": "rimraf lib nitrogen/generated",
     "codegen": "nitrogen --logLevel=\"debug\"",
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:coverage": "jest --coverage",
+    "benchmark": "node scripts/benchmark-check.js",
     "test:cpp": "node scripts/test-cpp.js",
-    "prepublishOnly": "bun run clean && bun run build",
+    "prepublishOnly": "bun run clean && bun run codegen && bun run build && bun run benchmark",
     "prepack": "node -e \"const fs=require('fs'); fs.copyFileSync('../../README.md','./README.md'); try{fs.copyFileSync('../../LICENSE','./LICENSE')}catch(e){}\"",
     "postpack": "node -e \"const fs=require('fs'); ['./README.md','./LICENSE'].forEach(f=>fs.existsSync(f)&&fs.unlinkSync(f))\""
   },
@@ -79,11 +90,11 @@
     "@react-native/babel-preset": "^0.83.2",
     "@testing-library/react-hooks": "^8.0.1",
     "@testing-library/react-native": "^13.3.3",
-    "@types/react": "^19.2.14",
+    "@types/react": "~19.1.10",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
-    "react": "*",
+    "react": ">=18.2.0",
     "react-native": ">=0.75.0",
     "react-native-nitro-modules": ">=0.33.9"
   },

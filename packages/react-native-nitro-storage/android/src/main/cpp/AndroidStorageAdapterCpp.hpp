@@ -18,47 +18,6 @@ struct AndroidStorageAdapterJava : facebook::jni::JavaClass<AndroidStorageAdapte
      return method(javaClassStatic());
   }
 
-  void setDisk(std::string key, std::string value) {
-      static auto method = javaClassStatic()->getMethod<void(std::string, std::string)>("setDisk");
-      method(self(), key, value);
-  }
-
-  std::string getDisk(std::string key) {
-      static auto method = javaClassStatic()->getMethod<jstring(std::string)>("getDisk");
-      auto result = method(self(), key);
-      return result ? result->toStdString() : "";
-  }
-  
-  void deleteDisk(std::string key) {
-      static auto method = javaClassStatic()->getMethod<void(std::string)>("deleteDisk");
-      method(self(), key);
-  }
-
-  void setSecure(std::string key, std::string value) {
-      static auto method = javaClassStatic()->getMethod<void(std::string, std::string)>("setSecure");
-      method(self(), key, value);
-  }
-
-  std::string getSecure(std::string key) {
-      static auto method = javaClassStatic()->getMethod<jstring(std::string)>("getSecure");
-      auto result = method(self(), key);
-      return result ? result->toStdString() : "";
-  }
-  
-  void deleteSecure(std::string key) {
-      static auto method = javaClassStatic()->getMethod<void(std::string)>("deleteSecure");
-      method(self(), key);
-  }
-
-  void clearDisk() {
-      static auto method = javaClassStatic()->getStaticMethod<void()>("clearDisk");
-      method(javaClassStatic());
-  }
-
-  void clearSecure() {
-      static auto method = javaClassStatic()->getStaticMethod<void()>("clearSecure");
-      method(javaClassStatic());
-  }
 };
 
 class AndroidStorageAdapterCpp : public NativeStorageAdapter {
@@ -69,10 +28,16 @@ public:
     void setDisk(const std::string& key, const std::string& value) override;
     std::optional<std::string> getDisk(const std::string& key) override;
     void deleteDisk(const std::string& key) override;
+    void setDiskBatch(const std::vector<std::string>& keys, const std::vector<std::string>& values) override;
+    std::vector<std::optional<std::string>> getDiskBatch(const std::vector<std::string>& keys) override;
+    void deleteDiskBatch(const std::vector<std::string>& keys) override;
     
     void setSecure(const std::string& key, const std::string& value) override;
     std::optional<std::string> getSecure(const std::string& key) override;
     void deleteSecure(const std::string& key) override;
+    void setSecureBatch(const std::vector<std::string>& keys, const std::vector<std::string>& values) override;
+    std::vector<std::optional<std::string>> getSecureBatch(const std::vector<std::string>& keys) override;
+    void deleteSecureBatch(const std::vector<std::string>& keys) override;
     
     void clearDisk() override;
     void clearSecure() override;

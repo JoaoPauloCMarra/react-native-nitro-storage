@@ -20,6 +20,7 @@ jest.mock("react-native-nitro-modules", () => ({
 import {
   createStorageItem,
   useStorage,
+  useStorageSelector,
   StorageScope,
   getBatch,
   setBatch,
@@ -29,10 +30,12 @@ import {
   runTransaction,
   storage,
 } from "../index";
+import { serializeWithPrimitiveFastPath } from "../internal";
 
 describe("createStorageItem", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    storage.clearAll();
   });
 
   it("creates a storage item with default value", () => {
@@ -53,7 +56,7 @@ describe("createStorageItem", () => {
       defaultValue: "default",
     });
 
-    mockHybridObject.get.mockReturnValue(JSON.stringify("stored-value"));
+    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("stored-value"));
     expect(item.get()).toBe("stored-value");
   });
 
@@ -67,7 +70,7 @@ describe("createStorageItem", () => {
     item.set("new-value");
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "test-key",
-      JSON.stringify("new-value"),
+      serializeWithPrimitiveFastPath("new-value"),
       StorageScope.Disk
     );
   });
@@ -141,23 +144,15 @@ describe("createStorageItem", () => {
 
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "user",
-      JSON.stringify(user),
+      serializeWithPrimitiveFastPath(user),
       StorageScope.Disk
     );
 
-    mockHybridObject.get.mockReturnValue(JSON.stringify(user));
+    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath(user));
     expect(item.get()).toEqual(user);
   });
 
   it("notifies subscribers on change", () => {
-    let changeCallback: (key: string, value: string | undefined) => void;
-    mockHybridObject.addOnChange.mockImplementation(
-      (scope: number, cb: (key: string, value: string | undefined) => void) => {
-        changeCallback = cb;
-        return jest.fn();
-      }
-    );
-
     const item = createStorageItem({
       key: "test-key",
       scope: StorageScope.Disk,
@@ -165,17 +160,15 @@ describe("createStorageItem", () => {
     });
 
     const listener = jest.fn();
-    item.subscribe(listener);
+    const unsubscribe = item.subscribe(listener);
 
-    changeCallback!("test-key", "new-value");
+    item._triggerListeners();
 
     expect(listener).toHaveBeenCalled();
+    unsubscribe();
   });
 
   it("unsubscribes correctly", () => {
-    const mockUnsubscribe = jest.fn();
-    mockHybridObject.addOnChange.mockReturnValue(mockUnsubscribe);
-
     const item = createStorageItem({
       key: "test-key",
       scope: StorageScope.Disk,
@@ -191,7 +184,9 @@ describe("createStorageItem", () => {
     unsub1();
     unsub2();
 
-    expect(mockUnsubscribe).toHaveBeenCalled();
+    item._triggerListeners();
+    expect(listener1).not.toHaveBeenCalled();
+    expect(listener2).not.toHaveBeenCalled();
   });
 
   it("handles nullable types with explicit generic", () => {
@@ -210,7 +205,7 @@ describe("createStorageItem", () => {
     expect(item.get()).toBe(null);
 
     const user = { id: "1", name: "John" };
-    mockHybridObject.get.mockReturnValue(JSON.stringify(user));
+    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath(user));
     expect(item.get()).toEqual(user);
   });
 
@@ -223,7 +218,7 @@ describe("createStorageItem", () => {
     mockHybridObject.get.mockReturnValue(undefined);
     expect(item.get()).toBe(undefined);
 
-    mockHybridObject.get.mockReturnValue(JSON.stringify("value"));
+    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("value"));
     expect(item.get()).toBe("value");
   });
 
@@ -237,7 +232,7 @@ describe("createStorageItem", () => {
     mockHybridObject.get.mockReturnValue(undefined);
     expect(item.get()).toBe(0);
 
-    mockHybridObject.get.mockReturnValue(JSON.stringify(42));
+    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath(42));
     expect(item.get()).toBe(42);
   });
 
@@ -251,7 +246,7 @@ describe("createStorageItem", () => {
     item.set("value");
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "memory-key",
-      JSON.stringify("value"),
+      serializeWithPrimitiveFastPath("value"),
       StorageScope.Disk
     );
   });
@@ -266,7 +261,7 @@ describe("createStorageItem", () => {
     item.set("value");
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "disk-key",
-      JSON.stringify("value"),
+      serializeWithPrimitiveFastPath("value"),
       StorageScope.Disk
     );
   });
@@ -281,7 +276,7 @@ describe("createStorageItem", () => {
     item.set("value");
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "secure-key",
-      JSON.stringify("value"),
+      serializeWithPrimitiveFastPath("value"),
       StorageScope.Secure
     );
   });
@@ -290,6 +285,7 @@ describe("createStorageItem", () => {
 describe("useStorage", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    storage.clearAll();
   });
 
   it("returns current value and setter", () => {
@@ -299,7 +295,7 @@ describe("useStorage", () => {
       defaultValue: "initial",
     });
 
-    mockHybridObject.get.mockReturnValue(JSON.stringify("initial"));
+    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("initial"));
 
     const { result } = renderHook(() => useStorage(item));
 
@@ -308,16 +304,6 @@ describe("useStorage", () => {
   });
 
   it("updates when value changes", () => {
-    let changeCallback:
-      | ((key: string, value: string | undefined) => void)
-      | null = null;
-    mockHybridObject.addOnChange.mockImplementation(
-      (scope: number, cb: (key: string, value: string | undefined) => void) => {
-        changeCallback = cb;
-        return jest.fn();
-      }
-    );
-
     const item = createStorageItem({
       key: "test-key",
       scope: StorageScope.Disk,
@@ -325,16 +311,14 @@ describe("useStorage", () => {
     });
 
     // Initial render
-    mockHybridObject.get.mockReturnValue(JSON.stringify("initial"));
+    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("initial"));
     const { result } = renderHook(() => useStorage(item));
     expect(result.current[0]).toBe("initial");
 
     // Change happens
-    mockHybridObject.get.mockReturnValue(JSON.stringify("updated"));
+    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("updated"));
     act(() => {
-      if (changeCallback) {
-        changeCallback("test-key", "updated");
-      }
+      item._triggerListeners();
     });
 
     expect(result.current[0]).toBe("updated");
@@ -348,7 +332,7 @@ describe("useStorage", () => {
     });
 
     const obj = { count: 1 };
-    mockHybridObject.get.mockReturnValue(JSON.stringify(obj));
+    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath(obj));
 
     // First call deserializes
     const ref1 = item.get();
@@ -361,7 +345,7 @@ describe("useStorage", () => {
 
     // Simulate change
     const newObj = { count: 2 };
-    mockHybridObject.get.mockReturnValue(JSON.stringify(newObj));
+    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath(newObj));
 
     // Should get new reference
     const ref3 = item.get();
@@ -370,30 +354,29 @@ describe("useStorage", () => {
   });
 
   it("cleans up native listeners to prevent memory leaks", () => {
-    let nativeUnsubscribe = jest.fn();
-    mockHybridObject.addOnChange.mockReturnValue(nativeUnsubscribe);
-
     const item = createStorageItem({
       key: "test-leak",
       scope: StorageScope.Disk,
       defaultValue: "val",
     });
 
-    // 1. Subscribe first listener
-    const unsub1 = item.subscribe(jest.fn());
-    expect(mockHybridObject.addOnChange).toHaveBeenCalledTimes(1);
+    const listener1 = jest.fn();
+    const listener2 = jest.fn();
+    const unsub1 = item.subscribe(listener1);
+    const unsub2 = item.subscribe(listener2);
 
-    // 2. Subscribe second listener
-    const unsub2 = item.subscribe(jest.fn());
-    expect(mockHybridObject.addOnChange).toHaveBeenCalledTimes(1); // Should reuse existing native connection
+    item._triggerListeners();
+    expect(listener1).toHaveBeenCalledTimes(1);
+    expect(listener2).toHaveBeenCalledTimes(1);
 
-    // 3. Unsubscribe first
     unsub1();
-    expect(nativeUnsubscribe).not.toHaveBeenCalled(); // Still one listener left
-
-    // 4. Unsubscribe last
     unsub2();
-    expect(nativeUnsubscribe).toHaveBeenCalledTimes(1); // Should clean up native
+
+    listener1.mockClear();
+    listener2.mockClear();
+    item._triggerListeners();
+    expect(listener1).not.toHaveBeenCalled();
+    expect(listener2).not.toHaveBeenCalled();
   });
 
   it("calls setter correctly", () => {
@@ -403,7 +386,7 @@ describe("useStorage", () => {
       defaultValue: "initial",
     });
 
-    mockHybridObject.get.mockReturnValue(JSON.stringify("initial"));
+    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("initial"));
 
     const { result } = renderHook(() => useStorage(item));
 
@@ -413,8 +396,124 @@ describe("useStorage", () => {
 
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "test-key",
-      JSON.stringify("new-value"),
+      serializeWithPrimitiveFastPath("new-value"),
       StorageScope.Disk
+    );
+  });
+
+  it("supports selectors and skips rerenders when selected value is unchanged", () => {
+    const item = createStorageItem({
+      key: "selector-test",
+      scope: StorageScope.Memory,
+      defaultValue: { count: 0, label: "a" },
+    });
+
+    let renderCount = 0;
+    const { result } = renderHook(() => {
+      renderCount += 1;
+      return useStorageSelector(
+        item,
+        (value) => ({ count: value.count }),
+        (prev, next) => prev.count === next.count
+      );
+    });
+
+    expect(result.current[0]).toEqual({ count: 0 });
+    expect(renderCount).toBe(1);
+
+    act(() => {
+      item.set((prev) => ({ ...prev, label: "b" }));
+    });
+    expect(result.current[0]).toEqual({ count: 0 });
+    expect(renderCount).toBe(1);
+
+    act(() => {
+      item.set((prev) => ({ ...prev, count: 1 }));
+    });
+    expect(result.current[0]).toEqual({ count: 1 });
+    expect(renderCount).toBe(2);
+  });
+
+  it("supports read-through cache when enabled", () => {
+    const item = createStorageItem({
+      key: "cache-default",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+      readCache: true,
+    });
+
+    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("cached"));
+    expect(item.get()).toBe("cached");
+    expect(item.get()).toBe("cached");
+    expect(mockHybridObject.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps read-through cache disabled by default", () => {
+    const item = createStorageItem({
+      key: "cache-disabled",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+    });
+
+    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("cached"));
+    expect(item.get()).toBe("cached");
+    expect(item.get()).toBe("cached");
+    expect(mockHybridObject.get).toHaveBeenCalledTimes(2);
+  });
+
+  it("dispatches memory listeners by key and fan-outs on clear", () => {
+    const itemA = createStorageItem({
+      key: "shared-a",
+      scope: StorageScope.Memory,
+      defaultValue: "a",
+    });
+    const itemB = createStorageItem({
+      key: "shared-b",
+      scope: StorageScope.Memory,
+      defaultValue: "b",
+    });
+
+    const listenerA = jest.fn();
+    const listenerB = jest.fn();
+    const unsubA = itemA.subscribe(listenerA);
+    const unsubB = itemB.subscribe(listenerB);
+
+    act(() => {
+      itemA.set("next-a");
+    });
+    expect(listenerA).toHaveBeenCalledTimes(1);
+    expect(listenerB).toHaveBeenCalledTimes(0);
+
+    act(() => {
+      storage.clear(StorageScope.Memory);
+    });
+    expect(listenerA).toHaveBeenCalledTimes(2);
+    expect(listenerB).toHaveBeenCalledTimes(1);
+
+    unsubA();
+    unsubB();
+  });
+
+  it("coalesces secure writes in the same tick when enabled", async () => {
+    const item = createStorageItem({
+      key: "secure-coalesce",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      coalesceSecureWrites: true,
+    });
+
+    item.set("first");
+    item.set("second");
+
+    expect(mockHybridObject.set).not.toHaveBeenCalled();
+    expect(mockHybridObject.setBatch).not.toHaveBeenCalled();
+
+    await Promise.resolve();
+
+    expect(mockHybridObject.setBatch).toHaveBeenCalledWith(
+      ["secure-coalesce"],
+      [serializeWithPrimitiveFastPath("second")],
+      StorageScope.Secure
     );
   });
 });
@@ -422,8 +521,7 @@ describe("useStorage", () => {
 describe("Batch Operations", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    // Memory scope is handled via Map in the mock for consistency if needed,
-    // but here we just test Disk/Secure which use mockHybridObject.
+    storage.clearAll();
   });
 
   const item1 = createStorageItem({
@@ -453,22 +551,22 @@ describe("Batch Operations", () => {
 
     expect(mockHybridObject.setBatch).toHaveBeenCalledWith(
       ["batch-1", "batch-2"],
-      [JSON.stringify("v1"), JSON.stringify("v2")],
+      [serializeWithPrimitiveFastPath("v1"), serializeWithPrimitiveFastPath("v2")],
       StorageScope.Disk
     );
   });
 
   it("gets multiple items at once", () => {
     mockHybridObject.getBatch.mockReturnValue([
-      JSON.stringify("v1"),
-      JSON.stringify("v2"),
+      serializeWithPrimitiveFastPath("v1"),
+      serializeWithPrimitiveFastPath("v2"),
     ]);
 
     // We also need to mock individual get calls because currently getBatch implementation in JS
     // calls item.get() which checks the native side individually if cache is empty.
     mockHybridObject.get.mockImplementation((key) => {
-      if (key === "batch-1") return JSON.stringify("v1");
-      if (key === "batch-2") return JSON.stringify("v2");
+      if (key === "batch-1") return serializeWithPrimitiveFastPath("v1");
+      if (key === "batch-2") return serializeWithPrimitiveFastPath("v2");
       return undefined;
     });
 
@@ -561,9 +659,9 @@ describe("Batch Operations", () => {
   it("falls back to item.get() in getBatch if native returns undefined", () => {
     mockHybridObject.getBatch.mockReturnValue([
       undefined,
-      JSON.stringify("v2"),
+      serializeWithPrimitiveFastPath("v2"),
     ]);
-    mockHybridObject.get.mockReturnValue(JSON.stringify("v1-fallback"));
+    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("v1-fallback"));
 
     const item1WithFallback = createStorageItem({
       key: "fallback-1",
@@ -573,6 +671,52 @@ describe("Batch Operations", () => {
 
     const values = getBatch([item1WithFallback, item2], StorageScope.Disk);
     expect(values).toEqual(["v1-fallback", "v2"]);
+  });
+
+  it("uses per-item set path for validated items", () => {
+    const validatedItem = createStorageItem<number>({
+      key: "batch-validated-set",
+      scope: StorageScope.Disk,
+      defaultValue: 1,
+      validate: (value): value is number => typeof value === "number" && value > 0,
+    });
+
+    expect(() =>
+      setBatch([{ item: validatedItem, value: -1 }], StorageScope.Disk)
+    ).toThrow(/Validation failed/);
+
+    expect(mockHybridObject.setBatch).not.toHaveBeenCalled();
+  });
+
+  it("uses per-item get path for validated items", () => {
+    const validatedItem = createStorageItem<number>({
+      key: "batch-validated-get",
+      scope: StorageScope.Disk,
+      defaultValue: 7,
+      validate: (value): value is number => typeof value === "number" && value > 10,
+    });
+
+    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath(2));
+    const values = getBatch([validatedItem], StorageScope.Disk);
+
+    expect(values).toEqual([7]);
+    expect(mockHybridObject.getBatch).not.toHaveBeenCalled();
+  });
+
+  it("treats native batch missing sentinel as undefined", () => {
+    const sentinelItem = createStorageItem({
+      key: "batch-native-sentinel",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+    });
+
+    mockHybridObject.getBatch.mockReturnValue([
+      "__nitro_storage_batch_missing__::v1",
+    ]);
+    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("fallback"));
+
+    const values = getBatch([sentinelItem], StorageScope.Disk);
+    expect(values).toEqual(["fallback"]);
   });
 });
 
@@ -603,11 +747,11 @@ describe("v0.2 features", () => {
       onValidationError: () => 10,
     });
 
-    mockHybridObject.get.mockReturnValueOnce(JSON.stringify(-1));
+    mockHybridObject.get.mockReturnValueOnce(serializeWithPrimitiveFastPath(-1));
     expect(item.get()).toBe(10);
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "validated",
-      JSON.stringify(10),
+      serializeWithPrimitiveFastPath(10),
       StorageScope.Disk
     );
 
@@ -826,5 +970,48 @@ describe("v0.2 edge cases", () => {
         tx.getItem(otherScopeItem);
       })
     ).toThrow(/Batch scope mismatch/);
+  });
+
+  it("uses item.set semantics in transactions for ttl items", () => {
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(10_000);
+    const ttlItem = createStorageItem<string>({
+      key: "tx-ttl",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+      expiration: { ttlMs: 100 },
+    });
+
+    runTransaction(StorageScope.Disk, (tx) => {
+      tx.setItem(ttlItem, "value");
+    });
+
+    const raw = diskStore.get("tx-ttl");
+    expect(raw).toBeDefined();
+    expect(JSON.parse(raw!)).toEqual({
+      __nitroStorageEnvelope: true,
+      expiresAt: 10_100,
+      payload: serializeWithPrimitiveFastPath("value"),
+    });
+    nowSpy.mockRestore();
+  });
+
+  it("uses item.set validation semantics in transactions for memory scope", () => {
+    const validatedMemoryItem = createStorageItem<string>({
+      key: "tx-memory-validated",
+      scope: StorageScope.Memory,
+      defaultValue: "ok",
+      validate: (value): value is string => value === "ok" || value === "great",
+    });
+
+    runTransaction(StorageScope.Memory, (tx) => {
+      tx.setItem(validatedMemoryItem, "great");
+    });
+    expect(validatedMemoryItem.get()).toBe("great");
+
+    expect(() =>
+      runTransaction(StorageScope.Memory, (tx) => {
+        tx.setItem(validatedMemoryItem, "bad");
+      })
+    ).toThrow(/Validation failed/);
   });
 });
