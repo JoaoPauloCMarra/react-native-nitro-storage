@@ -5,7 +5,7 @@ Synchronous storage for React Native with a unified API for memory, disk, and se
 ## Requirements
 
 - `react-native >= 0.75.0`
-- `react-native-nitro-modules >= 0.33.7`
+- `react-native-nitro-modules >= 0.33.9`
 - `react`
 
 ## Installation

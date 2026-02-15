@@ -4,8 +4,6 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
-## Unreleased
-
 ## 0.2.0 - 2026-02-15
 
 ### Added
@@ -19,10 +17,13 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 ### Fixed
 - Validate batch operation scope to prevent mixed-scope usage.
 - Avoid duplicate native remove calls in `removeBatch`.
+- Clear cached item values on `delete()` to prevent stale reads (native and web).
 
 ### Changed
 - Standardize internal package scripts and README contributor commands to Bun/Bunx.
 - Remove the Turbo `test` outputs config to avoid warnings on non-coverage test runs.
+- Expand README with complete API behavior/throws documentation.
+- Strengthen native and web test coverage for validation, TTL, migrations, and transactions.
 
 ## 0.1.4 - 2026-02-09
 
