@@ -4,6 +4,7 @@ export const MIGRATION_VERSION_KEY = "__nitro_storage_migration_version__";
 export const NATIVE_BATCH_MISSING_SENTINEL =
   "__nitro_storage_batch_missing__::v1";
 const PRIMITIVE_FAST_PATH_PREFIX = "__nitro_storage_primitive__:";
+const NAMESPACE_SEPARATOR = ":";
 
 export type StoredEnvelope = {
   __nitroStorageEnvelope: true;
@@ -41,7 +42,7 @@ export type ScopedBatchItem = {
 
 export function assertBatchScope(
   items: readonly ScopedBatchItem[],
-  scope: StorageScope
+  scope: StorageScope,
 ): void {
   const mismatchedItem = items.find((item) => item.scope !== scope);
   if (!mismatchedItem) {
@@ -53,18 +54,27 @@ export function assertBatchScope(
     StorageScope[mismatchedItem.scope] ?? String(mismatchedItem.scope);
 
   throw new Error(
-    `Batch scope mismatch for "${mismatchedItem.key}": expected ${expectedScope}, received ${actualScope}.`
+    `Batch scope mismatch for "${mismatchedItem.key}": expected ${expectedScope}, received ${actualScope}.`,
   );
 }
 
 export function decodeNativeBatchValue(
-  value: string | undefined
+  value: string | undefined,
 ): string | undefined {
   if (value === NATIVE_BATCH_MISSING_SENTINEL) {
     return undefined;
   }
 
   return value;
+}
+
+export function prefixKey(namespace: string | undefined, key: string): string {
+  if (!namespace) return key;
+  return `${namespace}${NAMESPACE_SEPARATOR}${key}`;
+}
+
+export function isNamespaced(key: string, namespace: string): boolean {
+  return key.startsWith(`${namespace}${NAMESPACE_SEPARATOR}`);
 }
 
 export function serializeWithPrimitiveFastPath<T>(value: T): string {
@@ -91,7 +101,7 @@ export function serializeWithPrimitiveFastPath<T>(value: T): string {
   const serialized = JSON.stringify(value);
   if (serialized === undefined) {
     throw new Error(
-      "Unable to serialize value with default serializer. Provide a custom serialize function."
+      "Unable to serialize value with default serializer. Provide a custom serialize function.",
     );
   }
   return serialized;

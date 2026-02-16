@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { View, Text } from "react-native";
 import {
   storage,
@@ -15,87 +15,51 @@ import {
   Card,
   Colors,
   Badge,
+  StatusRow,
+  Section,
   styles,
 } from "../components/shared";
 
-// Test atoms
-const batchItem1 = createStorageItem({
+const batch1 = createStorageItem({
   key: "batch-1",
   scope: StorageScope.Disk,
-  defaultValue: "Empty 1",
+  defaultValue: "—",
 });
-const batchItem2 = createStorageItem({
+const batch2 = createStorageItem({
   key: "batch-2",
   scope: StorageScope.Disk,
-  defaultValue: "Empty 2",
+  defaultValue: "—",
 });
-const batchItem3 = createStorageItem({
+const batch3 = createStorageItem({
   key: "batch-3",
   scope: StorageScope.Disk,
-  defaultValue: "Empty 3",
+  defaultValue: "—",
 });
 
 export default function ToolsScreen() {
-  const [val1] = useStorage(batchItem1);
-  const [val2] = useStorage(batchItem2);
-  const [val3] = useStorage(batchItem3);
-  const [batchGetResult, setBatchGetResult] = useState<string | null>(null);
+  const [v1] = useStorage(batch1);
+  const [v2] = useStorage(batch2);
+  const [v3] = useStorage(batch3);
+  const [batchResult, setBatchResult] = useState<string | null>(null);
 
   return (
-    <Page title="Tools" subtitle="System Maintenance">
-      <Card
-        title="Scope Control"
-        subtitle="Danger Zone"
-        indicatorColor={Colors.danger}
-      >
-        <View style={styles.grid}>
-          <Button
-            title="Wipe Memory"
-            onPress={() => storage.clear(StorageScope.Memory)}
-            variant="secondary"
-            style={{ width: "48%" }}
-            size="sm"
-          />
-          <Button
-            title="Wipe Disk"
-            onPress={() => storage.clear(StorageScope.Disk)}
-            variant="secondary"
-            style={{ width: "48%" }}
-            size="sm"
-          />
-          <Button
-            title="Wipe Secure"
-            onPress={() => storage.clear(StorageScope.Secure)}
-            variant="secondary"
-            style={{ width: "48%" }}
-            size="sm"
-          />
-          <Button
-            title="Reset Everything"
-            onPress={() => storage.clearAll()}
-            variant="danger"
-            style={{ width: "48%" }}
-            size="sm"
-          />
-        </View>
-      </Card>
-
+    <Page title="Tools" subtitle="Batch ops & system maintenance">
+      {/* Batch */}
       <Card
         title="Batch Operations"
-        subtitle="Disk Scope"
+        subtitle="Disk scope"
         indicatorColor={Colors.primary}
       >
-        <View style={{ gap: 8, marginBottom: 16 }}>
-          {[val1, val2, val3].map((val, i) => (
+        <View style={{ gap: 6 }}>
+          {[v1, v2, v3].map((val, i) => (
             <View
               key={i}
               style={[
                 styles.row,
                 {
-                  alignItems: "center",
                   backgroundColor: Colors.background,
-                  padding: 12,
-                  borderRadius: 12,
+                  padding: 10,
+                  borderRadius: 10,
                   borderWidth: 1,
                   borderColor: Colors.border,
                 },
@@ -105,8 +69,9 @@ export default function ToolsScreen() {
               <Text
                 style={{
                   color: Colors.text,
-                  marginLeft: 12,
+                  marginLeft: 10,
                   fontWeight: "500",
+                  flex: 1,
                 }}
               >
                 {val}
@@ -119,27 +84,26 @@ export default function ToolsScreen() {
           <Button
             title="Batch Set"
             onPress={() => {
-              const now = new Date().toLocaleTimeString();
+              const t = new Date().toLocaleTimeString();
               setBatch(
                 [
-                  { item: batchItem1, value: `Value A - ${now}` },
-                  { item: batchItem2, value: `Value B - ${now}` },
-                  { item: batchItem3, value: `Value C - ${now}` },
+                  { item: batch1, value: `A — ${t}` },
+                  { item: batch2, value: `B — ${t}` },
+                  { item: batch3, value: `C — ${t}` },
                 ],
-                StorageScope.Disk
+                StorageScope.Disk,
               );
             }}
-            variant="primary"
             style={styles.flex1}
           />
           <Button
             title="Batch Get"
             onPress={() => {
-              const values = getBatch(
-                [batchItem1, batchItem2, batchItem3],
-                StorageScope.Disk
+              const vals = getBatch(
+                [batch1, batch2, batch3],
+                StorageScope.Disk,
               );
-              setBatchGetResult(values.join("\n"));
+              setBatchResult(vals.join("\n"));
             }}
             variant="success"
             style={styles.flex1}
@@ -147,50 +111,99 @@ export default function ToolsScreen() {
         </View>
 
         <Button
-          title="Batch Remove All"
+          title="Batch Remove"
           onPress={() => {
-            removeBatch(
-              [batchItem1, batchItem2, batchItem3],
-              StorageScope.Disk
-            );
-            setBatchGetResult(null);
+            removeBatch([batch1, batch2, batch3], StorageScope.Disk);
+            setBatchResult(null);
           }}
           variant="secondary"
           size="sm"
         />
 
-        {batchGetResult && (
+        {batchResult ? (
           <View
             style={{
-              marginTop: 10,
-              padding: 16,
-              backgroundColor: Colors.surface,
-              borderRadius: 16,
+              padding: 14,
+              backgroundColor: Colors.card,
+              borderRadius: 10,
               borderWidth: 1,
-              borderColor: Colors.success,
+              borderColor: Colors.success + "40",
             }}
           >
             <Text
               style={{
-                fontSize: 12,
+                fontSize: 11,
                 color: Colors.success,
                 fontWeight: "800",
                 textTransform: "uppercase",
-                marginBottom: 8,
+                marginBottom: 6,
               }}
             >
-              Native Batch Response
+              Batch Response
             </Text>
-            <Text
-              style={{
-                color: Colors.text,
-                fontFamily: styles.codeText.fontFamily,
-              }}
-            >
-              {batchGetResult}
+            <Text style={[styles.codeText, { color: Colors.text }]}>
+              {batchResult}
             </Text>
           </View>
-        )}
+        ) : null}
+      </Card>
+
+      {/* Scope Control */}
+      <Card
+        title="Scope Control"
+        subtitle="Danger zone"
+        indicatorColor={Colors.danger}
+      >
+        <Section title="Clear Individual Scopes">
+          <View style={styles.grid}>
+            <Button
+              title="Memory"
+              onPress={() => {
+                storage.clear(StorageScope.Memory);
+              }}
+              variant="secondary"
+              size="sm"
+              style={styles.flex1}
+            />
+            <Button
+              title="Disk"
+              onPress={() => {
+                storage.clear(StorageScope.Disk);
+              }}
+              variant="secondary"
+              size="sm"
+              style={styles.flex1}
+            />
+            <Button
+              title="Secure"
+              onPress={() => {
+                storage.clear(StorageScope.Secure);
+              }}
+              variant="secondary"
+              size="sm"
+              style={styles.flex1}
+            />
+          </View>
+        </Section>
+        <Button
+          title="Reset Everything"
+          onPress={() => {
+            storage.clearAll();
+          }}
+          variant="danger"
+          size="sm"
+        />
+
+        <Section title="Introspection">
+          <StatusRow
+            label="Disk keys"
+            value={String(storage.size(StorageScope.Disk))}
+          />
+          <StatusRow
+            label="Memory keys"
+            value={String(storage.size(StorageScope.Memory))}
+          />
+        </Section>
       </Card>
     </Page>
   );

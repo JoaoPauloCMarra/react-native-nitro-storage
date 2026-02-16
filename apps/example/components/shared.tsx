@@ -8,7 +8,6 @@ import {
   Text,
   TextInput,
   type TextInputProps,
-  type TextStyle,
   View,
   type ViewStyle,
 } from "react-native";
@@ -18,19 +17,20 @@ const { width } = Dimensions.get("window");
 const isWeb = Platform.OS === "web";
 
 export const Colors = {
-  background: "#070A12",
-  surface: "#0D1424",
-  card: "#111A2C",
-  border: "#23304A",
-  text: "#F4F7FF",
-  muted: "#94A3B8",
-  primary: "#5B8CFF",
-  success: "#22C55E",
-  danger: "#EF4444",
-  warning: "#F59E0B",
-  memory: "#F8B94A",
-  disk: "#60A5FA",
+  background: "#060910",
+  surface: "#0C1220",
+  card: "#101828",
+  border: "#1E2D48",
+  text: "#F1F5FF",
+  muted: "#8899B4",
+  primary: "#6B8AFF",
+  success: "#2DD4A8",
+  danger: "#F06565",
+  warning: "#FBBF24",
+  memory: "#F5A623",
+  disk: "#5B9CF5",
   secure: "#34D399",
+  purple: "#A78BFA",
 };
 
 type ButtonVariant = "primary" | "danger" | "secondary" | "ghost" | "success";
@@ -45,7 +45,7 @@ type ButtonProps = {
   size?: ButtonSize;
 };
 
-const buttonBackgroundByVariant: Record<ButtonVariant, string> = {
+const buttonBg: Record<ButtonVariant, string> = {
   primary: Colors.primary,
   danger: Colors.danger,
   success: Colors.success,
@@ -65,7 +65,7 @@ export const Button = ({
     hitSlop={6}
     style={({ pressed }) => [
       styles.button,
-      { backgroundColor: buttonBackgroundByVariant[variant] },
+      { backgroundColor: buttonBg[variant] },
       size === "sm" && styles.buttonSm,
       size === "lg" && styles.buttonLg,
       variant === "ghost" && styles.buttonGhost,
@@ -105,17 +105,21 @@ export const Card = ({
   style,
 }: CardProps) => (
   <View style={[styles.card, style]}>
-    {(title || indicatorColor) && (
+    {title || indicatorColor ? (
       <View style={styles.cardHeader}>
         {indicatorColor ? (
-          <View style={[styles.indicator, { backgroundColor: indicatorColor }]} />
+          <View
+            style={[styles.indicator, { backgroundColor: indicatorColor }]}
+          />
         ) : null}
         <View style={styles.cardTitleWrap}>
           {title ? <Text style={styles.cardTitle}>{title}</Text> : null}
-          {subtitle ? <Text style={styles.cardSubtitle}>{subtitle}</Text> : null}
+          {subtitle ? (
+            <Text style={styles.cardSubtitle}>{subtitle}</Text>
+          ) : null}
         </View>
       </View>
-    )}
+    ) : null}
     <View style={styles.cardContent}>{children}</View>
   </View>
 );
@@ -158,10 +162,73 @@ export const Badge = ({ label, color = Colors.primary }: BadgeProps) => (
   <View
     style={[
       styles.badge,
-      { backgroundColor: `${color}1F`, borderColor: `${color}4D` },
+      { backgroundColor: `${color}18`, borderColor: `${color}40` },
     ]}
   >
     <Text style={[styles.badgeText, { color }]}>{label}</Text>
+  </View>
+);
+
+export const Chip = ({
+  label,
+  active = false,
+  color = Colors.primary,
+}: {
+  label: string;
+  active?: boolean;
+  color?: string;
+}) => (
+  <View
+    style={[
+      styles.chip,
+      active
+        ? { backgroundColor: `${color}22`, borderColor: `${color}55` }
+        : { backgroundColor: Colors.card, borderColor: Colors.border },
+    ]}
+  >
+    <View
+      style={[
+        styles.chipDot,
+        { backgroundColor: active ? color : Colors.muted },
+      ]}
+    />
+    <Text style={[styles.chipText, { color: active ? color : Colors.muted }]}>
+      {label}
+    </Text>
+  </View>
+);
+
+export const StatusRow = ({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: string;
+  color?: string;
+}) => (
+  <View style={styles.statusRow}>
+    <Text style={styles.statusLabel}>{label}</Text>
+    <Text style={[styles.statusValue, color ? { color } : null]}>{value}</Text>
+  </View>
+);
+
+export const CodeBlock = ({ children }: { children: string }) => (
+  <View style={styles.codeBlock}>
+    <Text style={styles.codeBlockText}>{children}</Text>
+  </View>
+);
+
+export const Section = ({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) => (
+  <View style={styles.section}>
+    <Text style={styles.sectionTitle}>{title}</Text>
+    {children}
   </View>
 );
 
@@ -173,9 +240,7 @@ type PageProps = {
 };
 
 function Header({ title, subtitle }: { title?: string; subtitle?: string }) {
-  if (!title && !subtitle) {
-    return null;
-  }
+  if (!title && !subtitle) return null;
 
   return (
     <View style={styles.header}>
@@ -185,7 +250,12 @@ function Header({ title, subtitle }: { title?: string; subtitle?: string }) {
   );
 }
 
-export const Page = ({ children, title, subtitle, scroll = true }: PageProps) => {
+export const Page = ({
+  children,
+  title,
+  subtitle,
+  scroll = true,
+}: PageProps) => {
   const insets = useSafeAreaInsets();
   const contentPaddingTop = insets.top + (isWeb ? 20 : 8);
 
@@ -193,7 +263,10 @@ export const Page = ({ children, title, subtitle, scroll = true }: PageProps) =>
     return (
       <View style={styles.container}>
         <ScrollView
-          contentContainerStyle={[styles.scrollContent, { paddingTop: contentPaddingTop }]}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingTop: contentPaddingTop },
+          ]}
           bounces={false}
           style={styles.pageBody}
         >
@@ -206,7 +279,13 @@ export const Page = ({ children, title, subtitle, scroll = true }: PageProps) =>
 
   return (
     <View style={styles.container}>
-      <View style={[styles.scrollContent, styles.pageBody, { paddingTop: contentPaddingTop }]}>
+      <View
+        style={[
+          styles.scrollContent,
+          styles.pageBody,
+          { paddingTop: contentPaddingTop },
+        ]}
+      >
         <Header title={title} subtitle={subtitle} />
         {children}
       </View>
@@ -226,46 +305,33 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingBottom: 110,
     gap: 14,
-    maxWidth: isWeb ? 920 : width,
+    maxWidth: isWeb ? 720 : width,
     alignSelf: "center",
     width: "100%",
   },
   header: {
     marginBottom: 8,
-    gap: 6,
+    gap: 4,
   },
   headerTitle: {
-    fontSize: 34,
+    fontSize: 32,
     fontWeight: "900",
     color: Colors.text,
-    letterSpacing: -0.8,
+    letterSpacing: -1,
   },
   headerSubtitle: {
-    fontSize: 15,
-    lineHeight: 21,
+    fontSize: 14,
+    lineHeight: 20,
     color: Colors.muted,
     fontWeight: "500",
   },
   card: {
     backgroundColor: Colors.surface,
-    borderRadius: 20,
+    borderRadius: 18,
     padding: 18,
     borderWidth: 1,
     borderColor: Colors.border,
-    ...Platform.select({
-      ios: {
-        shadowColor: "#000000",
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.26,
-        shadowRadius: 16,
-      },
-      android: {
-        elevation: 6,
-      },
-      web: {
-        boxShadow: "0 8px 24px rgba(0,0,0,0.28)",
-      },
-    }),
+    boxShadow: "0 6px 20px rgba(0,0,0,0.32)",
   },
   cardHeader: {
     flexDirection: "row",
@@ -278,38 +344,39 @@ export const styles = StyleSheet.create({
   },
   indicator: {
     width: 4,
-    height: 22,
+    height: 20,
     borderRadius: 999,
     marginRight: 10,
   },
   cardTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "800",
     color: Colors.text,
     letterSpacing: -0.3,
   },
   cardSubtitle: {
-    fontSize: 12,
+    fontSize: 11,
     color: Colors.muted,
     fontWeight: "700",
     textTransform: "uppercase",
-    letterSpacing: 0.8,
+    letterSpacing: 0.9,
   },
   cardContent: {
     gap: 12,
   },
   button: {
-    minHeight: 44,
-    paddingVertical: 11,
+    minHeight: 42,
+    paddingVertical: 10,
     paddingHorizontal: 14,
-    borderRadius: 14,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
   },
   buttonSm: {
-    minHeight: 36,
-    paddingVertical: 8,
+    minHeight: 34,
+    paddingVertical: 7,
     paddingHorizontal: 10,
+    borderRadius: 10,
   },
   buttonLg: {
     minHeight: 50,
@@ -321,11 +388,11 @@ export const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   buttonPressed: {
-    transform: [{ scale: 0.98 }],
-    opacity: 0.9,
+    transform: [{ scale: 0.97 }],
+    opacity: 0.88,
   },
   buttonDisabled: {
-    opacity: 0.45,
+    opacity: 0.4,
   },
   buttonText: {
     fontSize: 14,
@@ -334,7 +401,7 @@ export const styles = StyleSheet.create({
     letterSpacing: 0.1,
   },
   buttonTextSm: {
-    fontSize: 13,
+    fontSize: 12,
   },
   buttonTextLg: {
     fontSize: 16,
@@ -343,60 +410,103 @@ export const styles = StyleSheet.create({
     color: Colors.muted,
   },
   inputGroup: {
-    gap: 8,
+    gap: 6,
   },
   label: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "700",
     color: Colors.muted,
     textTransform: "uppercase",
-    letterSpacing: 0.9,
+    letterSpacing: 1,
   },
   textInput: {
-    minHeight: 44,
+    minHeight: 42,
     backgroundColor: Colors.card,
     borderWidth: 1,
     borderColor: Colors.border,
-    borderRadius: 12,
+    borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 10,
     color: Colors.text,
-    fontSize: 15,
+    fontSize: 14,
   },
   badge: {
     alignSelf: "flex-start",
-    paddingVertical: 4,
-    paddingHorizontal: 10,
+    paddingVertical: 3,
+    paddingHorizontal: 9,
     borderRadius: 999,
     borderWidth: 1,
   },
   badgeText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "800",
     textTransform: "uppercase",
     letterSpacing: 0.7,
   },
-  row: {
+  chip: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 6,
   },
-  grid: {
+  chipDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  chipText: {
+    fontSize: 11,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  statusRow: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: Colors.card,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
-  flex1: {
-    flex: 1,
-  },
-  codeText: {
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+  statusLabel: {
+    fontSize: 12,
+    fontWeight: "600",
     color: Colors.muted,
+  },
+  statusValue: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: Colors.text,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+  },
+  codeBlock: {
+    backgroundColor: "#000",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 14,
+  },
+  codeBlockText: {
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
     fontSize: 12,
     lineHeight: 18,
-  } as TextStyle,
-  footer: {
-    marginTop: 8,
-    alignItems: "center",
+    color: Colors.muted,
+  },
+  section: {
+    gap: 10,
+  },
+  sectionTitle: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: Colors.muted,
+    textTransform: "uppercase",
+    letterSpacing: 1.2,
+    marginTop: 4,
   },
 });

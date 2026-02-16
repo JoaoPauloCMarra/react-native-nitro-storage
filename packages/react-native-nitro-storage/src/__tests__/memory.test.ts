@@ -12,21 +12,26 @@ jest.mock("react-native-nitro-modules", () => ({
   NitroModules: {
     createHybridObject: jest.fn(() => ({
       clear: jest.fn(),
+      clearSecureBiometric: jest.fn(),
       set: jest.fn(),
       get: jest.fn(),
       remove: jest.fn(),
+      has: jest.fn(),
+      getAllKeys: jest.fn(() => []),
+      size: jest.fn(() => 0),
       setBatch: jest.fn(),
       getBatch: jest.fn(),
       removeBatch: jest.fn(),
       addOnChange: jest.fn(() => () => {}),
+      setSecureAccessControl: jest.fn(),
+      setKeychainAccessGroup: jest.fn(),
+      setSecureBiometric: jest.fn(),
+      getSecureBiometric: jest.fn(),
+      deleteSecureBiometric: jest.fn(),
+      hasSecureBiometric: jest.fn(),
     })),
   },
 }));
-
-// We don't need to mock NitroModules for Memory scope as it should be pure JS now.
-// However, if we import index, it might try to initialize the module?
-// The module initialization is lazy in `getStorageModule()`.
-// Since we only use Memory scope here, `getStorageModule()` should NOT be called.
 
 describe("Pure JS Memory Storage", () => {
   beforeEach(() => {

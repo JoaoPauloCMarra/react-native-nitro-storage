@@ -1,6 +1,5 @@
-import React, { memo } from "react";
+import { memo, useCallback, useState } from "react";
 import { View, Text } from "react-native";
-import { useState, useCallback } from "react";
 import {
   createStorageItem,
   StorageScope,
@@ -12,32 +11,30 @@ import {
   Card,
   Colors,
   Badge,
-  styles,
+  StatusRow,
 } from "../components/shared";
 
 const diskItem = createStorageItem({
-  key: "benchmark-disk",
+  key: "bench-disk",
   scope: StorageScope.Disk,
   defaultValue: "",
 });
-
 const secureItem = createStorageItem({
-  key: "benchmark-secure",
+  key: "bench-sec",
   scope: StorageScope.Secure,
   defaultValue: "",
 });
-
 const memoryItem = createStorageItem({
-  key: "benchmark-memory",
+  key: "bench-mem",
   scope: StorageScope.Memory,
   defaultValue: "",
 });
 
-interface BenchmarkResult {
+type BenchResult = {
   write: number;
   read: number;
   ops: number;
-}
+};
 
 const ResultCard = memo(
   ({
@@ -49,7 +46,7 @@ const ResultCard = memo(
     disabled,
   }: {
     title: string;
-    result: BenchmarkResult | null;
+    result: BenchResult | null;
     color: string;
     onRun: () => void;
     running: boolean;
@@ -57,170 +54,141 @@ const ResultCard = memo(
   }) => (
     <Card
       title={title}
-      subtitle={running ? "EXECUTING..." : "PERFORMANCE METRICS"}
+      subtitle={running ? "RUNNING..." : "LATENCY METRICS"}
       indicatorColor={color}
     >
       {result ? (
-        <View style={{ gap: 8 }}>
+        <View style={{ gap: 6 }}>
+          <StatusRow
+            label={`Write ${result.ops} ops`}
+            value={`${result.write.toFixed(2)}ms`}
+            color={color}
+          />
+          <StatusRow
+            label={`Read ${result.ops} ops`}
+            value={`${result.read.toFixed(2)}ms`}
+            color={color}
+          />
           <View
             style={{
               flexDirection: "row",
               justifyContent: "space-between",
               alignItems: "center",
-            }}
-          >
-            <Text style={{ color: Colors.muted, fontWeight: "600" }}>
-              Write {result.ops} ops
-            </Text>
-            <Badge label={`${result.write.toFixed(2)}ms`} color={color} />
-          </View>
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <Text style={{ color: Colors.muted, fontWeight: "600" }}>
-              Read {result.ops} ops
-            </Text>
-            <Badge label={`${result.read.toFixed(2)}ms`} color={color} />
-          </View>
-          <View
-            style={{
-              marginTop: 8,
-              paddingTop: 12,
+              marginTop: 6,
+              paddingTop: 10,
               borderTopWidth: 1,
               borderTopColor: Colors.border,
-              flexDirection: "row",
-              justifyContent: "space-between",
             }}
           >
-            <Text style={{ color: Colors.text, fontWeight: "800" }}>
+            <Text
+              style={{ color: Colors.text, fontWeight: "800", fontSize: 12 }}
+            >
               AVG LATENCY
             </Text>
-            <Text style={{ color, fontWeight: "900" }}>
-              {((result.write + result.read) / (result.ops * 2)).toFixed(4)}ms
-            </Text>
+            <Badge
+              label={`${((result.write + result.read) / (result.ops * 2)).toFixed(4)}ms`}
+              color={color}
+            />
           </View>
         </View>
       ) : (
-        <Text style={{ color: Colors.muted, fontStyle: "italic" }}>
-          Ready for stress test...
-        </Text>
+        <Text style={{ color: Colors.muted, fontStyle: "italic" }}>Ready…</Text>
       )}
       <Button
-        title={running ? "Running..." : "Start Benchmark"}
+        title={running ? "Running…" : "Start"}
         onPress={onRun}
         variant="ghost"
         disabled={disabled}
-        style={{ marginTop: 12 }}
       />
     </Card>
-  )
+  ),
 );
+ResultCard.displayName = "ResultCard";
 
 export default function BenchmarkScreen() {
-  const [memoryResult, setMemoryResult] = useState<BenchmarkResult | null>(
-    null
-  );
-  const [diskResult, setDiskResult] = useState<BenchmarkResult | null>(null);
-  const [secureResult, setSecureResult] = useState<BenchmarkResult | null>(
-    null
-  );
+  const [memResult, setMemResult] = useState<BenchResult | null>(null);
+  const [diskResult, setDiskResult] = useState<BenchResult | null>(null);
+  const [secResult, setSecResult] = useState<BenchResult | null>(null);
   const [runningType, setRunningType] = useState<string | null>(null);
-  const [isRunningAll, setIsRunningAll] = useState(false);
+  const [runAll, setRunAll] = useState(false);
 
-  const delay = (ms: number) =>
-    new Promise((resolve) => setTimeout(resolve, ms));
+  const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-  const runBenchmark = useCallback(
+  const bench = useCallback(
     async (
       item: StorageItem<string>,
-      setResult: (result: BenchmarkResult) => void,
-      type: string
+      set: (r: BenchResult) => void,
+      type: string,
     ) => {
       setRunningType(type);
-      await delay(150);
-
+      await delay(120);
       const ops = 1_000;
-      const data = JSON.stringify({ test: "data", timestamp: Date.now() });
-
-      const writeStart = performance.now();
-      for (let i = 0; i < ops; i++) {
-        item.set(data);
-      }
-      const writeTime = performance.now() - writeStart;
-
-      const readStart = performance.now();
-      for (let i = 0; i < ops; i++) {
-        item.get();
-      }
-      const readTime = performance.now() - readStart;
-
-      setResult({ write: writeTime, read: readTime, ops });
+      const data = JSON.stringify({ test: "data", ts: Date.now() });
+      const ws = performance.now();
+      for (let i = 0; i < ops; i++) item.set(data);
+      const wt = performance.now() - ws;
+      const rs = performance.now();
+      for (let i = 0; i < ops; i++) item.get();
+      const rt = performance.now() - rs;
+      set({ write: wt, read: rt, ops });
       setRunningType(null);
     },
-    []
+    [],
   );
 
-  const runAll = async () => {
-    setIsRunningAll(true);
-    setMemoryResult(null);
+  const stressAll = async () => {
+    setRunAll(true);
+    setMemResult(null);
     setDiskResult(null);
-    setSecureResult(null);
-    await delay(300);
-
-    await runBenchmark(memoryItem, setMemoryResult, "memory");
-    await delay(200);
-    await runBenchmark(diskItem, setDiskResult, "disk");
-    await delay(200);
-    await runBenchmark(secureItem, setSecureResult, "secure");
-    setIsRunningAll(false);
+    setSecResult(null);
+    await delay(250);
+    await bench(memoryItem, setMemResult, "mem");
+    await delay(150);
+    await bench(diskItem, setDiskResult, "disk");
+    await delay(150);
+    await bench(secureItem, setSecResult, "sec");
+    setRunAll(false);
   };
 
-  const isAnyRunning = isRunningAll || !!runningType;
+  const busy = runAll || !!runningType;
 
   return (
-    <Page title="Benchmark" subtitle="JSI Speed Comparison">
-      <Text style={{ color: Colors.muted, marginBottom: 8 }}>
-        Run scope benchmarks and compare average latency in real time.
+    <Page title="Benchmark" subtitle="JSI performance stress test">
+      <Text style={{ color: Colors.muted, fontSize: 13, marginBottom: 4 }}>
+        1,000 sequential read/write ops per scope. Measures raw JSI throughput.
       </Text>
       <Button
-        title={isAnyRunning ? "Work in progress..." : "Stress Test All Scopes"}
-        onPress={runAll}
-        variant="primary"
-        disabled={isAnyRunning}
-        style={{ marginBottom: 24 }}
+        title={busy ? "Running…" : "Stress Test All Scopes"}
+        onPress={stressAll}
+        disabled={busy}
         size="lg"
+        style={{ marginBottom: 8 }}
       />
 
-      <View style={{ gap: 8 }}>
-        <ResultCard
-          title="Memory Storage"
-          result={memoryResult}
-          color={Colors.memory}
-          onRun={() => runBenchmark(memoryItem, setMemoryResult, "memory")}
-          running={runningType === "memory"}
-          disabled={isAnyRunning}
-        />
-        <ResultCard
-          title="Disk Storage"
-          result={diskResult}
-          color={Colors.disk}
-          onRun={() => runBenchmark(diskItem, setDiskResult, "disk")}
-          running={runningType === "disk"}
-          disabled={isAnyRunning}
-        />
-        <ResultCard
-          title="Secure Storage"
-          result={secureResult}
-          color={Colors.secure}
-          onRun={() => runBenchmark(secureItem, setSecureResult, "secure")}
-          running={runningType === "secure"}
-          disabled={isAnyRunning}
-        />
-      </View>
+      <ResultCard
+        title="Memory"
+        result={memResult}
+        color={Colors.memory}
+        onRun={() => bench(memoryItem, setMemResult, "mem")}
+        running={runningType === "mem"}
+        disabled={busy}
+      />
+      <ResultCard
+        title="Disk"
+        result={diskResult}
+        color={Colors.disk}
+        onRun={() => bench(diskItem, setDiskResult, "disk")}
+        running={runningType === "disk"}
+        disabled={busy}
+      />
+      <ResultCard
+        title="Secure"
+        result={secResult}
+        color={Colors.secure}
+        onRun={() => bench(secureItem, setSecResult, "sec")}
+        running={runningType === "sec"}
+        disabled={busy}
+      />
     </Page>
   );
 }

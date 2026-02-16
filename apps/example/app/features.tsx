@@ -15,24 +15,70 @@ import {
   Badge,
   Button,
   Card,
+  Chip,
   Colors,
   Input,
   Page,
+  StatusRow,
   styles,
 } from "../components/shared";
 
-type HookState = {
-  count: number;
-  label: string;
-};
+// --- Items ---
 
-type CustomCodecValue = {
-  id: string;
-  enabled: boolean;
-};
+type HookState = { count: number; label: string };
 
-type FakeMMKVValue = string | number | boolean;
-type FakeMMKVLike = {
+const hookItem = createStorageItem<HookState>({
+  key: "ft-hook",
+  scope: StorageScope.Memory,
+  defaultValue: { count: 0, label: "Ready" },
+});
+
+const validatedAge = createStorageItem<number>({
+  key: "ft-age",
+  scope: StorageScope.Disk,
+  defaultValue: 21,
+  validate: (v): v is number =>
+    typeof v === "number" && Number.isInteger(v) && v >= 13 && v <= 120,
+  onValidationError: () => 21,
+});
+
+const ttlItem = createStorageItem<string>({
+  key: "ft-ttl",
+  scope: StorageScope.Disk,
+  defaultValue: "",
+  expiration: { ttlMs: 5000 },
+  onExpired: () => {},
+});
+
+const txBalance = createStorageItem<number>({
+  key: "ft-tx-bal",
+  scope: StorageScope.Disk,
+  defaultValue: 100,
+});
+
+const txLog = createStorageItem<string>({
+  key: "ft-tx-log",
+  scope: StorageScope.Disk,
+  defaultValue: "No log yet",
+});
+
+const migName = createStorageItem<string>({
+  key: "ft-mig-name",
+  scope: StorageScope.Disk,
+  defaultValue: "legacy-user",
+  serialize: (v) => v,
+  deserialize: (v) => v,
+});
+
+const migMarker = createStorageItem<string>({
+  key: "ft-mig-mark",
+  scope: StorageScope.Disk,
+  defaultValue: "pending",
+  serialize: (v) => v,
+  deserialize: (v) => v,
+});
+
+type FakeMMKV = {
   getString: (key: string) => string | undefined;
   getNumber: (key: string) => number | undefined;
   getBoolean: (key: string) => boolean | undefined;
@@ -41,479 +87,438 @@ type FakeMMKVLike = {
   getAllKeys: () => string[];
 };
 
-const hookStateItem = createStorageItem<HookState>({
-  key: "features-hook-state",
-  scope: StorageScope.Memory,
-  defaultValue: { count: 0, label: "Ready" },
-});
-
-const validatedAgeItem = createStorageItem<number>({
-  key: "features-validated-age",
-  scope: StorageScope.Disk,
-  defaultValue: 21,
-  validate: (value): value is number =>
-    typeof value === "number" &&
-    Number.isInteger(value) &&
-    value >= 13 &&
-    value <= 120,
-  onValidationError: () => 21,
-});
-
-const ttlSessionItem = createStorageItem<string>({
-  key: "features-ttl-session",
+const mmkvTarget = createStorageItem<string>({
+  key: "ft-mmkv",
   scope: StorageScope.Disk,
   defaultValue: "",
-  expiration: { ttlMs: 5000 },
+  serialize: (v) => v,
+  deserialize: (v) => v,
 });
 
-const transactionBalanceItem = createStorageItem<number>({
-  key: "features-transaction-balance",
-  scope: StorageScope.Disk,
-  defaultValue: 100,
-});
+type CodecVal = { id: string; enabled: boolean };
 
-const transactionLogItem = createStorageItem<string>({
-  key: "features-transaction-log",
-  scope: StorageScope.Disk,
-  defaultValue: "No log yet",
-});
-
-const migrationNameItem = createStorageItem<string>({
-  key: "features-migration-name",
-  scope: StorageScope.Disk,
-  defaultValue: "legacy-user",
-  serialize: (value) => value,
-  deserialize: (value) => value,
-});
-
-const migrationMarkerItem = createStorageItem<string>({
-  key: "features-migration-marker",
-  scope: StorageScope.Disk,
-  defaultValue: "pending",
-  serialize: (value) => value,
-  deserialize: (value) => value,
-});
-
-const mmkvTargetItem = createStorageItem<string>({
-  key: "features-mmkv-target",
-  scope: StorageScope.Disk,
-  defaultValue: "",
-  serialize: (value) => value,
-  deserialize: (value) => value,
-});
-
-const customCodecItem = createStorageItem<CustomCodecValue>({
-  key: "features-custom-codec",
+const codecItem = createStorageItem<CodecVal>({
+  key: "ft-codec",
   scope: StorageScope.Disk,
   defaultValue: { id: "item-1", enabled: false },
-  serialize: (value) => `${value.id}::${value.enabled ? "1" : "0"}`,
-  deserialize: (value) => {
-    const [id, enabledFlag] = value.split("::");
-    return {
-      id: id || "item-1",
-      enabled: enabledFlag === "1",
-    };
+  serialize: (v) => `${v.id}::${v.enabled ? "1" : "0"}`,
+  deserialize: (v) => {
+    const [id, flag] = v.split("::");
+    return { id: id || "item-1", enabled: flag === "1" };
   },
 });
 
-const cachedReadItem = createStorageItem<string>({
-  key: "features-read-cache-on",
+const cachedRead = createStorageItem<string>({
+  key: "ft-cache-on",
   scope: StorageScope.Disk,
   defaultValue: "",
   readCache: true,
 });
 
-const uncachedReadItem = createStorageItem<string>({
-  key: "features-read-cache-off",
+const uncachedRead = createStorageItem<string>({
+  key: "ft-cache-off",
   scope: StorageScope.Disk,
   defaultValue: "",
 });
 
-const secureBurstItem = createStorageItem<string>({
-  key: "features-secure-burst",
+const secureBurst = createStorageItem<string>({
+  key: "ft-secure-burst",
   scope: StorageScope.Secure,
   defaultValue: "",
   coalesceSecureWrites: true,
 });
 
-export default function FeaturesDemo() {
-  const [hookState] = useStorage(hookStateItem);
-  const setHookState = useSetStorage(hookStateItem);
-  const [selectedCount] = useStorageSelector(hookStateItem, (state) => state.count);
+// --- Screen ---
 
-  const [age] = useStorage(validatedAgeItem);
+export default function FeaturesScreen() {
+  const [hookState] = useStorage(hookItem);
+  const setHook = useSetStorage(hookItem);
+  const [selectedCount] = useStorageSelector(hookItem, (s) => s.count);
+
+  const [age] = useStorage(validatedAge);
   const [ageInput, setAgeInput] = useState(String(age));
-  const [validationStatus, setValidationStatus] = useState("Ready");
+  const [valStatus, setValStatus] = useState("Ready");
 
-  const [ttlValue, setTtlValue] = useState(() => ttlSessionItem.get());
-  const [ttlStatus, setTtlStatus] = useState("No value stored");
+  const [ttlVal, setTtlVal] = useState(() => ttlItem.get());
+  const [ttlStatus, setTtlStatus] = useState("No value");
 
-  const [balance] = useStorage(transactionBalanceItem);
-  const [transactionLog] = useStorage(transactionLogItem);
-  const [transactionStatus, setTransactionStatus] = useState("No transaction yet");
+  const [balance] = useStorage(txBalance);
+  const [log] = useStorage(txLog);
+  const [txStatus, setTxStatus] = useState("No transaction yet");
 
-  const [migrationStatus, setMigrationStatus] = useState("No migrations executed");
-  const migrationVersionRef = useRef(20_000);
+  const [migStatus, setMigStatus] = useState("No migrations");
+  const migVer = useRef(20_000);
 
-  const [mmkvStatus, setMmkvStatus] = useState("Fake MMKV is empty");
-  const [mmkvValue] = useStorage(mmkvTargetItem);
-  const fakeMMKVStore = useRef<Map<string, FakeMMKVValue>>(new Map());
-  const fakeMMKV = useMemo<FakeMMKVLike>(
+  const [mmkvStatus, setMmkvStatus] = useState("Empty");
+  const [mmkvVal] = useStorage(mmkvTarget);
+  const fakeStore = useRef<Map<string, string | number | boolean>>(new Map());
+  const fakeMMKV = useMemo<FakeMMKV>(
     () => ({
-      getString: (key) => {
-        const value = fakeMMKVStore.current.get(key);
-        return typeof value === "string" ? value : undefined;
+      getString: (k) => {
+        const v = fakeStore.current.get(k);
+        return typeof v === "string" ? v : undefined;
       },
-      getNumber: (key) => {
-        const value = fakeMMKVStore.current.get(key);
-        return typeof value === "number" ? value : undefined;
+      getNumber: (k) => {
+        const v = fakeStore.current.get(k);
+        return typeof v === "number" ? v : undefined;
       },
-      getBoolean: (key) => {
-        const value = fakeMMKVStore.current.get(key);
-        return typeof value === "boolean" ? value : undefined;
+      getBoolean: (k) => {
+        const v = fakeStore.current.get(k);
+        return typeof v === "boolean" ? v : undefined;
       },
-      contains: (key) => fakeMMKVStore.current.has(key),
-      delete: (key) => {
-        fakeMMKVStore.current.delete(key);
+      contains: (k) => fakeStore.current.has(k),
+      delete: (k) => {
+        fakeStore.current.delete(k);
       },
-      getAllKeys: () => Array.from(fakeMMKVStore.current.keys()),
+      getAllKeys: () => Array.from(fakeStore.current.keys()),
     }),
-    []
+    [],
   );
 
-  const [customCodecValue, setCustomCodecValue] = useStorage(customCodecItem);
-  const [customCodecId, setCustomCodecId] = useState(customCodecValue.id);
+  const [codecVal, setCodecVal] = useStorage(codecItem);
+  const [codecId, setCodecId] = useState(codecVal.id);
 
-  const [secureBurstValue, setSecureBurstValue] = useStorage(secureBurstItem);
-  const [secureInput, setSecureInput] = useState("");
+  const [burstVal, setBurstVal] = useStorage(secureBurst);
+  const [secInput, setSecInput] = useState("");
 
-  const [readCacheResult, setReadCacheResult] = useState("Run benchmark to compare");
-
-  const saveValidatedAge = () => {
-    const parsedValue = Number(ageInput);
-    if (!Number.isFinite(parsedValue)) {
-      setValidationStatus("Enter a valid number");
-      return;
-    }
-
-    try {
-      validatedAgeItem.set(parsedValue);
-      setValidationStatus(`Saved ${parsedValue}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setValidationStatus(message);
-    }
-  };
-
-  const injectInvalidAge = () => {
-    runTransaction(StorageScope.Disk, (tx) => {
-      tx.setRaw(validatedAgeItem.key, "-999");
-    });
-    setValidationStatus(
-      `Injected invalid raw value, recovered to ${validatedAgeItem.get()}`
-    );
-  };
-
-  const seedTtlValue = () => {
-    ttlSessionItem.set(`session-${Date.now()}`);
-    setTtlValue(ttlSessionItem.get());
-    setTtlStatus("Saved for 5 seconds");
-  };
-
-  const refreshTtl = () => {
-    const currentValue = ttlSessionItem.get();
-    setTtlValue(currentValue);
-    setTtlStatus(currentValue ? "Still active" : "Expired and reset to default");
-  };
-
-  const runCommittedTransaction = () => {
-    runTransaction(StorageScope.Disk, (tx) => {
-      const current = tx.getItem(transactionBalanceItem);
-      tx.setItem(transactionBalanceItem, current + 10);
-      tx.setItem(transactionLogItem, `+10 at ${new Date().toLocaleTimeString()}`);
-      tx.setRaw("features-transaction-meta", String(Date.now()));
-    });
-    setTransactionStatus("Committed +10 transaction");
-  };
-
-  const runRollbackTransaction = () => {
-    try {
-      runTransaction(StorageScope.Disk, (tx) => {
-        const current = tx.getItem(transactionBalanceItem);
-        tx.setItem(transactionBalanceItem, current - 25);
-        tx.setRaw("features-transaction-meta", "rollback");
-        throw new Error("rollback-demo");
-      });
-    } catch {
-      setTransactionStatus("Rollback triggered, persisted values unchanged");
-    }
-  };
-
-  const clearTransactionLog = () => {
-    runTransaction(StorageScope.Disk, (tx) => {
-      tx.removeItem(transactionLogItem);
-      tx.removeRaw("features-transaction-meta");
-    });
-    setTransactionStatus("Removed transaction log");
-  };
-
-  const seedMigrationValues = () => {
-    migrationNameItem.set("legacy-user");
-    migrationMarkerItem.set("pending");
-    setMigrationStatus("Seeded legacy values");
-  };
-
-  const runMigrationDemo = () => {
-    const v1 = migrationVersionRef.current + 1;
-    const v2 = migrationVersionRef.current + 2;
-    migrationVersionRef.current = v2;
-
-    registerMigration(v1, ({ getRaw, setRaw }) => {
-      const rawName = getRaw(migrationNameItem.key);
-      if (rawName !== undefined) {
-        setRaw(migrationNameItem.key, rawName.toUpperCase());
-      }
-    });
-
-    registerMigration(v2, ({ setRaw }) => {
-      setRaw(migrationMarkerItem.key, `migrated-v${v2}`);
-    });
-
-    const applied = migrateToLatest(StorageScope.Disk);
-    setMigrationStatus(
-      `Applied v${applied}: ${migrationNameItem.get()} / ${migrationMarkerItem.get()}`
-    );
-  };
-
-  const seedFakeMMKV = () => {
-    fakeMMKVStore.current.set(mmkvTargetItem.key, "legacy-mmkv-value");
-    setMmkvStatus("Seeded fake MMKV with a string value");
-  };
-
-  const runMmkvMigration = () => {
-    const migrated = migrateFromMMKV(fakeMMKV, mmkvTargetItem, true);
-    const stillInMMKV = fakeMMKV.contains(mmkvTargetItem.key);
-    setMmkvStatus(
-      migrated
-        ? `Migrated to Nitro Storage (deleteFromMMKV=true, stillInMMKV=${stillInMMKV})`
-        : "No matching key found in fake MMKV"
-    );
-  };
-
-  const runReadCacheComparison = () => {
-    const payload = `value-${Date.now()}`;
-    cachedReadItem.set(payload);
-    uncachedReadItem.set(payload);
-
-    const loops = 30_000;
-
-    const cachedStart = performance.now();
-    for (let index = 0; index < loops; index += 1) {
-      cachedReadItem.get();
-    }
-    const cachedMs = performance.now() - cachedStart;
-
-    const uncachedStart = performance.now();
-    for (let index = 0; index < loops; index += 1) {
-      uncachedReadItem.get();
-    }
-    const uncachedMs = performance.now() - uncachedStart;
-
-    setReadCacheResult(
-      `readCache=true: ${cachedMs.toFixed(2)}ms | readCache=false: ${uncachedMs.toFixed(2)}ms`
-    );
-  };
-
-  const runSecureBurst = () => {
-    const base = secureInput || "secure";
-    secureBurstItem.set(`${base}-1`);
-    secureBurstItem.set(`${base}-2`);
-    secureBurstItem.set(`${base}-3`);
-  };
+  const [cacheResult, setCacheResult] = useState("Run to compare");
 
   return (
-    <Page title="Features" subtitle="Complete API Playground">
-      <Card title="Hooks" subtitle="useStorage / useSetStorage / useStorageSelector">
-        <Text style={{ color: Colors.muted }}>
-          Selected count: {selectedCount} | label: {hookState.label}
-        </Text>
+    <Page title="Features" subtitle="Full API playground">
+      {/* Hooks */}
+      <Card
+        title="Hooks"
+        subtitle="useStorage / useSetStorage / useStorageSelector"
+      >
+        <View style={styles.row}>
+          <Chip
+            label={`count: ${selectedCount}`}
+            active
+            color={Colors.primary}
+          />
+          <Chip label={hookState.label} active={false} />
+        </View>
         <View style={styles.row}>
           <Button
             title="Count +1"
-            onPress={() =>
-              setHookState((prev) => ({ ...prev, count: prev.count + 1 }))
-            }
+            onPress={() => {
+              setHook((p) => ({ ...p, count: p.count + 1 }));
+            }}
             style={styles.flex1}
           />
           <Button
             title="Change Label"
-            onPress={() =>
-              setHookState((prev) => ({
-                ...prev,
-                label: `label-${Date.now().toString().slice(-4)}`,
-              }))
-            }
+            onPress={() => {
+              setHook((p) => ({
+                ...p,
+                label: `lbl-${Date.now().toString().slice(-4)}`,
+              }));
+            }}
             variant="secondary"
             style={styles.flex1}
           />
         </View>
       </Card>
 
-      <Card title="Validation + Fallback" subtitle="validate / onValidationError">
+      {/* Validation */}
+      <Card
+        title="Validation"
+        subtitle="validate / onValidationError"
+        indicatorColor={Colors.warning}
+      >
         <Input
-          label="Age (13-120)"
+          label="Age (13–120)"
           value={ageInput}
           onChangeText={setAgeInput}
-          placeholder="Type an age"
+          placeholder="Enter age"
           keyboardType="numeric"
         />
         <View style={styles.row}>
-          <Button title="Save Age" onPress={saveValidatedAge} style={styles.flex1} />
           <Button
-            title="Inject Invalid Raw"
-            onPress={injectInvalidAge}
+            title="Save"
+            onPress={() => {
+              const n = Number(ageInput);
+              if (!Number.isFinite(n)) {
+                setValStatus("Invalid number");
+                return;
+              }
+              try {
+                validatedAge.set(n);
+                setValStatus(`Saved ${n}`);
+              } catch (e) {
+                setValStatus(String(e));
+              }
+            }}
+            style={styles.flex1}
+          />
+          <Button
+            title="Inject Invalid"
+            onPress={() => {
+              runTransaction(StorageScope.Disk, (tx) => {
+                tx.setRaw(validatedAge.key, "-999");
+              });
+              setValStatus(
+                `Injected invalid → recovered to ${validatedAge.get()}`,
+              );
+            }}
             variant="secondary"
             style={styles.flex1}
           />
         </View>
-        <Text style={{ color: Colors.text, fontWeight: "700" }}>Current: {age}</Text>
-        <Text style={{ color: Colors.muted }}>{validationStatus}</Text>
+        <StatusRow label="Current" value={String(age)} color={Colors.text} />
+        <Text style={{ color: Colors.muted, fontSize: 12 }}>{valStatus}</Text>
       </Card>
 
-      <Card title="TTL Expiration" subtitle="expiration.ttlMs (lazy read)">
-        <Text style={{ color: Colors.text, fontWeight: "700" }}>
-          Value: {ttlValue || "(expired/default)"}
-        </Text>
-        <Text style={{ color: Colors.muted }}>{ttlStatus}</Text>
+      {/* TTL */}
+      <Card
+        title="TTL Expiration"
+        subtitle="expiration.ttlMs + onExpired"
+        indicatorColor={Colors.danger}
+      >
         <View style={styles.row}>
-          <Button title="Seed 5s Value" onPress={seedTtlValue} style={styles.flex1} />
+          <Badge label="5s TTL" color={Colors.danger} />
+          <Badge label="Lazy Read" color={Colors.muted} />
+        </View>
+        <View style={styles.row}>
           <Button
-            title="Refresh Read"
-            onPress={refreshTtl}
+            title="Seed 5s Value"
+            onPress={() => {
+              ttlItem.set(`session-${Date.now()}`);
+              setTtlVal(ttlItem.get());
+              setTtlStatus("Stored — expires in 5s");
+            }}
+            style={styles.flex1}
+          />
+          <Button
+            title="Refresh"
+            onPress={() => {
+              const v = ttlItem.get();
+              setTtlVal(v);
+              setTtlStatus(v ? "Still active" : "Expired → default");
+            }}
             variant="secondary"
             style={styles.flex1}
           />
         </View>
+        <StatusRow
+          label="Value"
+          value={ttlVal || "(expired)"}
+          color={ttlVal ? Colors.text : Colors.muted}
+        />
+        <Text style={{ color: Colors.muted, fontSize: 12 }}>{ttlStatus}</Text>
       </Card>
 
-      <Card title="Transactions" subtitle="runTransaction + rollback">
-        <Text style={{ color: Colors.text, fontWeight: "700" }}>
-          Balance: {balance}
-        </Text>
-        <Text style={{ color: Colors.muted }}>Log: {transactionLog}</Text>
+      {/* Transactions */}
+      <Card
+        title="Transactions"
+        subtitle="runTransaction + rollback"
+        indicatorColor={Colors.primary}
+      >
+        <StatusRow
+          label="Balance"
+          value={String(balance)}
+          color={Colors.text}
+        />
+        <StatusRow label="Log" value={log} />
         <View style={styles.row}>
           <Button
             title="Commit +10"
-            onPress={runCommittedTransaction}
+            onPress={() => {
+              runTransaction(StorageScope.Disk, (tx) => {
+                const cur = tx.getItem(txBalance);
+                tx.setItem(txBalance, cur + 10);
+                tx.setItem(txLog, `+10 at ${new Date().toLocaleTimeString()}`);
+              });
+              setTxStatus("Committed +10");
+            }}
             style={styles.flex1}
           />
           <Button
-            title="Rollback Demo"
-            onPress={runRollbackTransaction}
+            title="Rollback"
+            onPress={() => {
+              try {
+                runTransaction(StorageScope.Disk, (tx) => {
+                  tx.setItem(txBalance, tx.getItem(txBalance) - 25);
+                  throw new Error("rollback-demo");
+                });
+              } catch {
+                setTxStatus("Rolled back — values unchanged");
+              }
+            }}
             variant="danger"
             style={styles.flex1}
           />
         </View>
         <Button
-          title="Clear Log (removeItem/removeRaw)"
-          onPress={clearTransactionLog}
+          title="Clear Log"
+          onPress={() => {
+            runTransaction(StorageScope.Disk, (tx) => {
+              tx.removeItem(txLog);
+            });
+            setTxStatus("Cleared");
+          }}
           variant="secondary"
+          size="sm"
         />
-        <Text style={{ color: Colors.muted }}>{transactionStatus}</Text>
+        <Text style={{ color: Colors.muted, fontSize: 12 }}>{txStatus}</Text>
       </Card>
 
+      {/* Migrations */}
       <Card title="Migrations" subtitle="registerMigration / migrateToLatest">
         <View style={styles.row}>
           <Button
-            title="Seed Legacy Values"
-            onPress={seedMigrationValues}
+            title="Seed Legacy"
+            onPress={() => {
+              migName.set("legacy-user");
+              migMarker.set("pending");
+              setMigStatus("Seeded");
+            }}
             variant="secondary"
             style={styles.flex1}
           />
           <Button
-            title="Run New Migrations"
-            onPress={runMigrationDemo}
+            title="Run Migrations"
+            onPress={() => {
+              const v1 = migVer.current + 1;
+              const v2 = migVer.current + 2;
+              migVer.current = v2;
+              registerMigration(v1, ({ getRaw, setRaw }) => {
+                const raw = getRaw(migName.key);
+                if (raw !== undefined) setRaw(migName.key, raw.toUpperCase());
+              });
+              registerMigration(v2, ({ setRaw }) => {
+                setRaw(migMarker.key, `migrated-v${v2}`);
+              });
+              const applied = migrateToLatest(StorageScope.Disk);
+              setMigStatus(
+                `Applied v${applied}: ${migName.get()} / ${migMarker.get()}`,
+              );
+            }}
             style={styles.flex1}
           />
         </View>
-        <Text style={{ color: Colors.muted }}>{migrationStatus}</Text>
+        <Text style={{ color: Colors.muted, fontSize: 12 }}>{migStatus}</Text>
       </Card>
 
+      {/* MMKV Migration */}
       <Card title="MMKV Migration" subtitle="migrateFromMMKV">
         <View style={styles.row}>
           <Button
             title="Seed Fake MMKV"
-            onPress={seedFakeMMKV}
+            onPress={() => {
+              fakeStore.current.set(mmkvTarget.key, "legacy-mmkv-value");
+              setMmkvStatus("Seeded");
+            }}
             variant="secondary"
             style={styles.flex1}
           />
           <Button
-            title="Run Migration"
-            onPress={runMmkvMigration}
+            title="Migrate"
+            onPress={() => {
+              const ok = migrateFromMMKV(fakeMMKV, mmkvTarget, true);
+              setMmkvStatus(
+                ok
+                  ? `Migrated (removed from MMKV=${!fakeMMKV.contains(mmkvTarget.key)})`
+                  : "No key found",
+              );
+            }}
             style={styles.flex1}
           />
         </View>
-        <Text style={{ color: Colors.text, fontWeight: "700" }}>
-          Target value: {mmkvValue || "(empty)"}
-        </Text>
-        <Text style={{ color: Colors.muted }}>{mmkvStatus}</Text>
+        <StatusRow label="Target" value={mmkvVal || "(empty)"} />
+        <Text style={{ color: Colors.muted, fontSize: 12 }}>{mmkvStatus}</Text>
       </Card>
 
-      <Card title="Advanced Config" subtitle="custom codec / readCache / coalesced secure writes">
+      {/* Custom Codec */}
+      <Card
+        title="Custom Codec"
+        subtitle="serialize / deserialize"
+        indicatorColor={Colors.purple}
+      >
         <View style={styles.row}>
           <Badge
-            label={customCodecValue.enabled ? "ENABLED" : "DISABLED"}
-            color={customCodecValue.enabled ? Colors.success : Colors.warning}
+            label={codecVal.enabled ? "ENABLED" : "DISABLED"}
+            color={codecVal.enabled ? Colors.success : Colors.warning}
           />
           <Text style={{ color: Colors.text, fontWeight: "700" }}>
-            id: {customCodecValue.id}
+            id: {codecVal.id}
           </Text>
         </View>
         <Input
-          label="Custom Codec ID"
-          value={customCodecId}
-          onChangeText={setCustomCodecId}
-          placeholder="Set custom id"
+          label="ID"
+          value={codecId}
+          onChangeText={setCodecId}
+          placeholder="Custom id"
         />
         <View style={styles.row}>
           <Button
-            title="Save Codec Value"
-            onPress={() =>
-              setCustomCodecValue((prev) => ({ ...prev, id: customCodecId || "item-1" }))
-            }
+            title="Save"
+            onPress={() => {
+              setCodecVal((p) => ({ ...p, id: codecId || "item-1" }));
+            }}
             style={styles.flex1}
           />
           <Button
-            title="Toggle Enabled"
-            onPress={() =>
-              setCustomCodecValue((prev) => ({ ...prev, enabled: !prev.enabled }))
-            }
+            title="Toggle"
+            onPress={() => {
+              setCodecVal((p) => ({ ...p, enabled: !p.enabled }));
+            }}
             variant="secondary"
             style={styles.flex1}
           />
         </View>
+      </Card>
+
+      {/* readCache / coalesced writes */}
+      <Card title="Advanced Config" subtitle="readCache / coalesceSecureWrites">
         <Button
-          title="Run readCache comparison"
-          onPress={runReadCacheComparison}
+          title="readCache Benchmark"
+          onPress={() => {
+            const payload = `v-${Date.now()}`;
+            cachedRead.set(payload);
+            uncachedRead.set(payload);
+            const loops = 30_000;
+            const t1 = performance.now();
+            for (let i = 0; i < loops; i++) cachedRead.get();
+            const cached = performance.now() - t1;
+            const t2 = performance.now();
+            for (let i = 0; i < loops; i++) uncachedRead.get();
+            const uncached = performance.now() - t2;
+            setCacheResult(
+              `cached: ${cached.toFixed(1)}ms | uncached: ${uncached.toFixed(1)}ms`,
+            );
+          }}
           variant="ghost"
         />
-        <Text style={{ color: Colors.muted }}>{readCacheResult}</Text>
+        <Text style={{ color: Colors.muted, fontSize: 12 }}>{cacheResult}</Text>
+
         <Input
           label="Secure Burst Base"
-          value={secureInput}
-          onChangeText={setSecureInput}
-          placeholder="Optional base text"
+          value={secInput}
+          onChangeText={setSecInput}
+          placeholder="Optional text"
         />
         <View style={styles.row}>
           <Button
-            title="Single Secure Set"
-            onPress={() => setSecureBurstValue(secureInput || "secure")}
+            title="Single Set"
+            onPress={() => {
+              setBurstVal(secInput || "secure");
+            }}
             variant="secondary"
             style={styles.flex1}
           />
-          <Button title="Burst x3" onPress={runSecureBurst} style={styles.flex1} />
+          <Button
+            title="Burst ×3"
+            onPress={() => {
+              const b = secInput || "secure";
+              secureBurst.set(`${b}-1`);
+              secureBurst.set(`${b}-2`);
+              secureBurst.set(`${b}-3`);
+            }}
+            style={styles.flex1}
+          />
         </View>
-        <Text style={{ color: Colors.muted }}>Secure value: {secureBurstValue || "(empty)"}</Text>
+        <StatusRow label="Secure value" value={burstVal || "(empty)"} />
       </Card>
     </Page>
   );

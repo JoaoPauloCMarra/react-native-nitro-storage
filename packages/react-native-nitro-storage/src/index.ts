@@ -1,7 +1,7 @@
 import { useRef, useSyncExternalStore } from "react";
 import { NitroModules } from "react-native-nitro-modules";
 import type { Storage } from "./Storage.nitro";
-import { StorageScope } from "./Storage.types";
+import { StorageScope, AccessControl, BiometricLevel } from "./Storage.types";
 import {
   MIGRATION_VERSION_KEY,
   type StoredEnvelope,
@@ -11,9 +11,11 @@ import {
   decodeNativeBatchValue,
   serializeWithPrimitiveFastPath,
   deserializeWithPrimitiveFastPath,
+  prefixKey,
+  isNamespaced,
 } from "./internal";
 
-export { StorageScope } from "./Storage.types";
+export { StorageScope, AccessControl, BiometricLevel } from "./Storage.types";
 export type { Storage } from "./Storage.nitro";
 export { migrateFromMMKV } from "./migration";
 
@@ -37,15 +39,26 @@ export type TransactionContext = {
   setRaw: (key: string, value: string) => void;
   removeRaw: (key: string) => void;
   getItem: <T>(item: Pick<StorageItem<T>, "scope" | "key" | "get">) => T;
-  setItem: <T>(item: Pick<StorageItem<T>, "scope" | "key" | "set">, value: T) => void;
-  removeItem: (item: Pick<StorageItem<unknown>, "scope" | "key" | "delete">) => void;
+  setItem: <T>(
+    item: Pick<StorageItem<T>, "scope" | "key" | "set">,
+    value: T,
+  ) => void;
+  removeItem: (
+    item: Pick<StorageItem<unknown>, "scope" | "key" | "delete">,
+  ) => void;
 };
 
 type KeyListenerRegistry = Map<string, Set<() => void>>;
 type RawBatchPathItem = {
   _hasValidation?: boolean;
   _hasExpiration?: boolean;
+  _isBiometric?: boolean;
+  _secureAccessControl?: AccessControl;
 };
+
+function asInternal(item: StorageItem<any>): StorageItemInternal<any> {
+  return item as unknown as StorageItemInternal<any>;
+}
 type NonMemoryScope = StorageScope.Disk | StorageScope.Secure;
 type PendingSecureWrite = { key: string; value: string | undefined };
 
@@ -73,28 +86,37 @@ const scopedListeners = new Map<NonMemoryScope, KeyListenerRegistry>([
   [StorageScope.Secure, new Map()],
 ]);
 const scopedUnsubscribers = new Map<NonMemoryScope, () => void>();
-const scopedRawCache = new Map<NonMemoryScope, Map<string, string | undefined>>([
-  [StorageScope.Disk, new Map()],
-  [StorageScope.Secure, new Map()],
-]);
+const scopedRawCache = new Map<NonMemoryScope, Map<string, string | undefined>>(
+  [
+    [StorageScope.Disk, new Map()],
+    [StorageScope.Secure, new Map()],
+  ],
+);
 const pendingSecureWrites = new Map<string, PendingSecureWrite>();
 let secureFlushScheduled = false;
+let secureDefaultAccessControl: AccessControl = AccessControl.WhenUnlocked;
 
 function getScopedListeners(scope: NonMemoryScope): KeyListenerRegistry {
   return scopedListeners.get(scope)!;
 }
 
-function getScopeRawCache(scope: NonMemoryScope): Map<string, string | undefined> {
+function getScopeRawCache(
+  scope: NonMemoryScope,
+): Map<string, string | undefined> {
   return scopedRawCache.get(scope)!;
 }
 
-function cacheRawValue(scope: NonMemoryScope, key: string, value: string | undefined): void {
+function cacheRawValue(
+  scope: NonMemoryScope,
+  key: string,
+  value: string | undefined,
+): void {
   getScopeRawCache(scope).set(key, value);
 }
 
 function readCachedRawValue(
   scope: NonMemoryScope,
-  key: string
+  key: string,
 ): string | undefined {
   return getScopeRawCache(scope).get(key);
 }
@@ -120,7 +142,7 @@ function notifyAllListeners(registry: KeyListenerRegistry): void {
 function addKeyListener(
   registry: KeyListenerRegistry,
   key: string,
-  listener: () => void
+  listener: () => void,
 ): () => void {
   let listeners = registry.get(key);
   if (!listeners) {
@@ -177,6 +199,7 @@ function flushSecureWrites(): void {
   });
 
   const storageModule = getStorageModule();
+  storageModule.setSecureAccessControl(secureDefaultAccessControl);
   if (keysToSet.length > 0) {
     storageModule.setBatch(keysToSet, valuesToSet, StorageScope.Secure);
   }
@@ -260,6 +283,7 @@ function setRawValue(key: string, value: string, scope: StorageScope): void {
   if (scope === StorageScope.Secure) {
     flushSecureWrites();
     clearPendingSecureWrite(key);
+    getStorageModule().setSecureAccessControl(secureDefaultAccessControl);
   }
 
   getStorageModule().set(key, value, scope);
@@ -312,11 +336,87 @@ export const storage = {
 
     clearScopeRawCache(scope);
     getStorageModule().clear(scope);
+    if (scope === StorageScope.Secure) {
+      getStorageModule().clearSecureBiometric();
+    }
   },
   clearAll: () => {
     storage.clear(StorageScope.Memory);
     storage.clear(StorageScope.Disk);
     storage.clear(StorageScope.Secure);
+  },
+  clearNamespace: (namespace: string, scope: StorageScope) => {
+    assertValidScope(scope);
+    if (scope === StorageScope.Memory) {
+      for (const key of memoryStore.keys()) {
+        if (isNamespaced(key, namespace)) {
+          memoryStore.delete(key);
+        }
+      }
+      notifyAllListeners(memoryListeners);
+      return;
+    }
+    if (scope === StorageScope.Secure) {
+      flushSecureWrites();
+    }
+    const keys = getStorageModule().getAllKeys(scope);
+    const namespacedKeys = keys.filter((k) => isNamespaced(k, namespace));
+    if (namespacedKeys.length > 0) {
+      getStorageModule().removeBatch(namespacedKeys, scope);
+      namespacedKeys.forEach((k) => cacheRawValue(scope, k, undefined));
+      if (scope === StorageScope.Secure) {
+        namespacedKeys.forEach((k) => clearPendingSecureWrite(k));
+      }
+    }
+  },
+  clearBiometric: () => {
+    getStorageModule().clearSecureBiometric();
+  },
+  has: (key: string, scope: StorageScope): boolean => {
+    assertValidScope(scope);
+    if (scope === StorageScope.Memory) {
+      return memoryStore.has(key);
+    }
+    return getStorageModule().has(key, scope);
+  },
+  getAllKeys: (scope: StorageScope): string[] => {
+    assertValidScope(scope);
+    if (scope === StorageScope.Memory) {
+      return Array.from(memoryStore.keys());
+    }
+    return getStorageModule().getAllKeys(scope);
+  },
+  getAll: (scope: StorageScope): Record<string, string> => {
+    assertValidScope(scope);
+    const result: Record<string, string> = {};
+    if (scope === StorageScope.Memory) {
+      memoryStore.forEach((value, key) => {
+        if (typeof value === "string") result[key] = value;
+      });
+      return result;
+    }
+    const keys = getStorageModule().getAllKeys(scope);
+    if (keys.length === 0) return result;
+    const values = getStorageModule().getBatch(keys, scope);
+    keys.forEach((key, idx) => {
+      const val = decodeNativeBatchValue(values[idx]);
+      if (val !== undefined) result[key] = val;
+    });
+    return result;
+  },
+  size: (scope: StorageScope): number => {
+    assertValidScope(scope);
+    if (scope === StorageScope.Memory) {
+      return memoryStore.size;
+    }
+    return getStorageModule().size(scope);
+  },
+  setAccessControl: (level: AccessControl) => {
+    secureDefaultAccessControl = level;
+    getStorageModule().setSecureAccessControl(level);
+  },
+  setKeychainAccessGroup: (group: string) => {
+    getStorageModule().setKeychainAccessGroup(group);
   },
 };
 
@@ -329,27 +429,42 @@ export interface StorageItemConfig<T> {
   validate?: Validator<T>;
   onValidationError?: (invalidValue: unknown) => T;
   expiration?: ExpirationConfig;
+  onExpired?: (key: string) => void;
   readCache?: boolean;
   coalesceSecureWrites?: boolean;
+  namespace?: string;
+  biometric?: boolean;
+  accessControl?: AccessControl;
 }
 
 export interface StorageItem<T> {
   get: () => T;
   set: (value: T | ((prev: T) => T)) => void;
   delete: () => void;
+  has: () => boolean;
   subscribe: (callback: () => void) => () => void;
   serialize: (value: T) => string;
   deserialize: (value: string) => T;
-  _triggerListeners: () => void;
-  _hasValidation?: boolean;
-  _hasExpiration?: boolean;
-  _readCacheEnabled?: boolean;
   scope: StorageScope;
   key: string;
 }
 
+type StorageItemInternal<T> = StorageItem<T> & {
+  _triggerListeners: () => void;
+  _hasValidation: boolean;
+  _hasExpiration: boolean;
+  _readCacheEnabled: boolean;
+  _isBiometric: boolean;
+  _secureAccessControl?: AccessControl;
+};
+
 function canUseRawBatchPath(item: RawBatchPathItem): boolean {
-  return item._hasExpiration === false && item._hasValidation === false;
+  return (
+    item._hasExpiration === false &&
+    item._hasValidation === false &&
+    item._isBiometric !== true &&
+    item._secureAccessControl === undefined
+  );
 }
 
 function defaultSerialize<T>(value: T): string {
@@ -361,19 +476,28 @@ function defaultDeserialize<T>(value: string): T {
 }
 
 export function createStorageItem<T = undefined>(
-  config: StorageItemConfig<T>
+  config: StorageItemConfig<T>,
 ): StorageItem<T> {
+  const storageKey = prefixKey(config.namespace, config.key);
   const serialize = config.serialize ?? defaultSerialize;
   const deserialize = config.deserialize ?? defaultDeserialize;
   const isMemory = config.scope === StorageScope.Memory;
+  const isBiometric =
+    config.biometric === true && config.scope === StorageScope.Secure;
+  const secureAccessControl = config.accessControl;
   const validate = config.validate;
   const onValidationError = config.onValidationError;
   const expiration = config.expiration;
+  const onExpired = config.onExpired;
   const expirationTtlMs = expiration?.ttlMs;
-  const memoryExpiration = expiration && isMemory ? new Map<string, number>() : null;
+  const memoryExpiration =
+    expiration && isMemory ? new Map<string, number>() : null;
   const readCache = !isMemory && config.readCache === true;
   const coalesceSecureWrites =
-    config.scope === StorageScope.Secure && config.coalesceSecureWrites === true;
+    config.scope === StorageScope.Secure &&
+    config.coalesceSecureWrites === true &&
+    !isBiometric &&
+    secureAccessControl === undefined;
   const nonMemoryScope: NonMemoryScope | null =
     config.scope === StorageScope.Disk
       ? StorageScope.Disk
@@ -408,80 +532,106 @@ export function createStorageItem<T = undefined>(
     };
 
     if (isMemory) {
-      unsubscribe = addKeyListener(memoryListeners, config.key, listener);
+      unsubscribe = addKeyListener(memoryListeners, storageKey, listener);
       return;
     }
 
     ensureNativeScopeSubscription(nonMemoryScope!);
-    unsubscribe = addKeyListener(getScopedListeners(nonMemoryScope!), config.key, listener);
+    unsubscribe = addKeyListener(
+      getScopedListeners(nonMemoryScope!),
+      storageKey,
+      listener,
+    );
   };
 
   const readStoredRaw = (): unknown => {
     if (isMemory) {
       if (memoryExpiration) {
-        const expiresAt = memoryExpiration.get(config.key);
+        const expiresAt = memoryExpiration.get(storageKey);
         if (expiresAt !== undefined && expiresAt <= Date.now()) {
-          memoryExpiration.delete(config.key);
-          memoryStore.delete(config.key);
-          notifyKeyListeners(memoryListeners, config.key);
+          memoryExpiration.delete(storageKey);
+          memoryStore.delete(storageKey);
+          notifyKeyListeners(memoryListeners, storageKey);
+          onExpired?.(storageKey);
           return undefined;
         }
       }
-      return memoryStore.get(config.key) as T | undefined;
+      return memoryStore.get(storageKey) as T | undefined;
     }
 
-    if (nonMemoryScope === StorageScope.Secure && hasPendingSecureWrite(config.key)) {
-      return readPendingSecureWrite(config.key);
+    if (
+      nonMemoryScope === StorageScope.Secure &&
+      !isBiometric &&
+      hasPendingSecureWrite(storageKey)
+    ) {
+      return readPendingSecureWrite(storageKey);
     }
 
     if (readCache) {
-      if (hasCachedRawValue(nonMemoryScope!, config.key)) {
-        return readCachedRawValue(nonMemoryScope!, config.key);
+      if (hasCachedRawValue(nonMemoryScope!, storageKey)) {
+        return readCachedRawValue(nonMemoryScope!, storageKey);
       }
     }
 
-    const raw = getStorageModule().get(config.key, config.scope);
-    cacheRawValue(nonMemoryScope!, config.key, raw);
+    if (isBiometric) {
+      return getStorageModule().getSecureBiometric(storageKey);
+    }
+
+    const raw = getStorageModule().get(storageKey, config.scope);
+    cacheRawValue(nonMemoryScope!, storageKey, raw);
     return raw;
   };
 
   const writeStoredRaw = (rawValue: string): void => {
-    cacheRawValue(nonMemoryScope!, config.key, rawValue);
+    if (isBiometric) {
+      getStorageModule().setSecureBiometric(storageKey, rawValue);
+      return;
+    }
+
+    cacheRawValue(nonMemoryScope!, storageKey, rawValue);
 
     if (coalesceSecureWrites) {
-      scheduleSecureWrite(config.key, rawValue);
+      scheduleSecureWrite(storageKey, rawValue);
       return;
     }
 
     if (nonMemoryScope === StorageScope.Secure) {
-      clearPendingSecureWrite(config.key);
+      clearPendingSecureWrite(storageKey);
+      getStorageModule().setSecureAccessControl(
+        secureAccessControl ?? secureDefaultAccessControl,
+      );
     }
 
-    getStorageModule().set(config.key, rawValue, config.scope);
+    getStorageModule().set(storageKey, rawValue, config.scope);
   };
 
   const removeStoredRaw = (): void => {
-    cacheRawValue(nonMemoryScope!, config.key, undefined);
+    if (isBiometric) {
+      getStorageModule().deleteSecureBiometric(storageKey);
+      return;
+    }
+
+    cacheRawValue(nonMemoryScope!, storageKey, undefined);
 
     if (coalesceSecureWrites) {
-      scheduleSecureWrite(config.key, undefined);
+      scheduleSecureWrite(storageKey, undefined);
       return;
     }
 
     if (nonMemoryScope === StorageScope.Secure) {
-      clearPendingSecureWrite(config.key);
+      clearPendingSecureWrite(storageKey);
     }
 
-    getStorageModule().remove(config.key, config.scope);
+    getStorageModule().remove(storageKey, config.scope);
   };
 
   const writeValueWithoutValidation = (value: T): void => {
     if (isMemory) {
       if (memoryExpiration) {
-        memoryExpiration.set(config.key, Date.now() + (expirationTtlMs ?? 0));
+        memoryExpiration.set(storageKey, Date.now() + (expirationTtlMs ?? 0));
       }
-      memoryStore.set(config.key, value);
-      notifyKeyListeners(memoryListeners, config.key);
+      memoryStore.set(storageKey, value);
+      notifyKeyListeners(memoryListeners, storageKey);
       return;
     }
 
@@ -509,7 +659,7 @@ export function createStorageItem<T = undefined>(
 
   const ensureValidatedValue = (
     candidate: unknown,
-    hadStoredValue: boolean
+    hadStoredValue: boolean,
   ): T => {
     if (!validate || validate(candidate)) {
       return candidate as T;
@@ -556,6 +706,7 @@ export function createStorageItem<T = undefined>(
           if (parsed.expiresAt <= Date.now()) {
             removeStoredRaw();
             invalidateParsedCache();
+            onExpired?.(storageKey);
             lastValue = ensureValidatedValue(config.defaultValue, false);
             hasLastValue = true;
             return lastValue;
@@ -584,7 +735,7 @@ export function createStorageItem<T = undefined>(
 
     if (validate && !validate(newValue)) {
       throw new Error(
-        `Validation failed for key "${config.key}" in scope "${StorageScope[config.scope]}".`
+        `Validation failed for key "${storageKey}" in scope "${StorageScope[config.scope]}".`,
       );
     }
 
@@ -596,14 +747,20 @@ export function createStorageItem<T = undefined>(
 
     if (isMemory) {
       if (memoryExpiration) {
-        memoryExpiration.delete(config.key);
+        memoryExpiration.delete(storageKey);
       }
-      memoryStore.delete(config.key);
-      notifyKeyListeners(memoryListeners, config.key);
+      memoryStore.delete(storageKey);
+      notifyKeyListeners(memoryListeners, storageKey);
       return;
     }
 
     removeStoredRaw();
+  };
+
+  const hasItem = (): boolean => {
+    if (isMemory) return memoryStore.has(storageKey);
+    if (isBiometric) return getStorageModule().hasSecureBiometric(storageKey);
+    return getStorageModule().has(storageKey, config.scope);
   };
 
   const subscribe = (callback: () => void): (() => void) => {
@@ -621,10 +778,11 @@ export function createStorageItem<T = undefined>(
     };
   };
 
-  const storageItem: StorageItem<T> = {
+  const storageItem: StorageItemInternal<T> = {
     get,
     set,
     delete: deleteItem,
+    has: hasItem,
     subscribe,
     serialize,
     deserialize,
@@ -635,15 +793,17 @@ export function createStorageItem<T = undefined>(
     _hasValidation: validate !== undefined,
     _hasExpiration: expiration !== undefined,
     _readCacheEnabled: readCache,
+    _isBiometric: isBiometric,
+    _secureAccessControl: secureAccessControl,
     scope: config.scope,
-    key: config.key,
+    key: storageKey,
   };
 
-  return storageItem;
+  return storageItem as StorageItem<T>;
 }
 
 export function useStorage<T>(
-  item: StorageItem<T>
+  item: StorageItem<T>,
 ): [T, (value: T | ((prev: T) => T)) => void] {
   const value = useSyncExternalStore(item.subscribe, item.get, item.get);
   return [value, item.set];
@@ -652,9 +812,11 @@ export function useStorage<T>(
 export function useStorageSelector<T, TSelected>(
   item: StorageItem<T>,
   selector: (value: T) => TSelected,
-  isEqual: (prev: TSelected, next: TSelected) => boolean = Object.is
+  isEqual: (prev: TSelected, next: TSelected) => boolean = Object.is,
 ): [TSelected, (value: T | ((prev: T) => T)) => void] {
-  const selectedRef = useRef<{ hasValue: false } | { hasValue: true; value: TSelected }>({
+  const selectedRef = useRef<
+    { hasValue: false } | { hasValue: true; value: TSelected }
+  >({
     hasValue: false,
   });
 
@@ -672,7 +834,7 @@ export function useStorageSelector<T, TSelected>(
   const selectedValue = useSyncExternalStore(
     item.subscribe,
     getSelectedSnapshot,
-    getSelectedSnapshot
+    getSelectedSnapshot,
   );
   return [selectedValue, item.set];
 }
@@ -683,14 +845,14 @@ export function useSetStorage<T>(item: StorageItem<T>) {
 
 type BatchReadItem<T> = Pick<
   StorageItem<T>,
-  | "key"
-  | "scope"
-  | "get"
-  | "deserialize"
-  | "_hasValidation"
-  | "_hasExpiration"
-  | "_readCacheEnabled"
->;
+  "key" | "scope" | "get" | "deserialize"
+> & {
+  _hasValidation?: boolean;
+  _hasExpiration?: boolean;
+  _readCacheEnabled?: boolean;
+  _isBiometric?: boolean;
+  _secureAccessControl?: AccessControl;
+};
 type BatchRemoveItem = Pick<StorageItem<unknown>, "key" | "scope" | "delete">;
 
 export type StorageBatchSetItem<T> = {
@@ -700,7 +862,7 @@ export type StorageBatchSetItem<T> = {
 
 export function getBatch(
   items: readonly BatchReadItem<unknown>[],
-  scope: StorageScope
+  scope: StorageScope,
 ): unknown[] {
   assertBatchScope(items, scope);
 
@@ -761,11 +923,11 @@ export function getBatch(
 
 export function setBatch<T>(
   items: readonly StorageBatchSetItem<T>[],
-  scope: StorageScope
+  scope: StorageScope,
 ): void {
   assertBatchScope(
     items.map((batchEntry) => batchEntry.item),
-    scope
+    scope,
   );
 
   if (scope === StorageScope.Memory) {
@@ -773,7 +935,9 @@ export function setBatch<T>(
     return;
   }
 
-  const useRawBatchPath = items.every(({ item }) => canUseRawBatchPath(item));
+  const useRawBatchPath = items.every(({ item }) =>
+    canUseRawBatchPath(asInternal(item)),
+  );
   if (!useRawBatchPath) {
     items.forEach(({ item, value }) => item.set(value));
     return;
@@ -784,6 +948,7 @@ export function setBatch<T>(
 
   if (scope === StorageScope.Secure) {
     flushSecureWrites();
+    getStorageModule().setSecureAccessControl(secureDefaultAccessControl);
   }
   getStorageModule().setBatch(keys, values, scope);
   keys.forEach((key, index) => cacheRawValue(scope, key, values[index]));
@@ -791,7 +956,7 @@ export function setBatch<T>(
 
 export function removeBatch(
   items: readonly BatchRemoveItem[],
-  scope: StorageScope
+  scope: StorageScope,
 ): void {
   assertBatchScope(items, scope);
 
@@ -820,7 +985,9 @@ export function registerMigration(version: number, migration: Migration): void {
   registeredMigrations.set(version, migration);
 }
 
-export function migrateToLatest(scope: StorageScope = StorageScope.Disk): number {
+export function migrateToLatest(
+  scope: StorageScope = StorageScope.Disk,
+): number {
   assertValidScope(scope);
   const currentVersion = readMigrationVersion(scope);
   const versions = Array.from(registeredMigrations.keys())
@@ -850,7 +1017,7 @@ export function migrateToLatest(scope: StorageScope = StorageScope.Disk): number
 
 export function runTransaction<T>(
   scope: StorageScope,
-  transaction: (context: TransactionContext) => T
+  transaction: (context: TransactionContext) => T,
 ): T {
   assertValidScope(scope);
   if (scope === StorageScope.Secure) {
@@ -907,4 +1074,36 @@ export function runTransaction<T>(
       });
     throw error;
   }
+}
+
+export type SecureAuthStorageConfig<K extends string = string> = Record<
+  K,
+  {
+    ttlMs?: number;
+    biometric?: boolean;
+    accessControl?: AccessControl;
+  }
+>;
+
+export function createSecureAuthStorage<K extends string>(
+  config: SecureAuthStorageConfig<K>,
+  options?: { namespace?: string },
+): Record<K, StorageItem<string>> {
+  const ns = options?.namespace ?? "auth";
+  const result = {} as Record<K, StorageItem<string>>;
+
+  for (const key of Object.keys(config) as K[]) {
+    const itemConfig = config[key];
+    result[key] = createStorageItem<string>({
+      key,
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      namespace: ns,
+      biometric: itemConfig.biometric,
+      accessControl: itemConfig.accessControl,
+      expiration: itemConfig.ttlMs ? { ttlMs: itemConfig.ttlMs } : undefined,
+    });
+  }
+
+  return result;
 }

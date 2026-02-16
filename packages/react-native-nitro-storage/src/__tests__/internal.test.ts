@@ -6,6 +6,8 @@ import {
   decodeNativeBatchValue,
   deserializeWithPrimitiveFastPath,
   isStoredEnvelope,
+  prefixKey,
+  isNamespaced,
   serializeWithPrimitiveFastPath,
 } from "../internal";
 
@@ -18,14 +20,14 @@ describe("internal helpers", () => {
         __nitroStorageEnvelope: true,
         expiresAt: 1234,
         payload: "value",
-      })
+      }),
     ).toBe(true);
     expect(
       isStoredEnvelope({
         __nitroStorageEnvelope: true,
         expiresAt: "1234",
         payload: "value",
-      })
+      }),
     ).toBe(false);
   });
 
@@ -33,7 +35,9 @@ describe("internal helpers", () => {
     expect(() => assertValidScope(StorageScope.Memory)).not.toThrow();
     expect(() => assertValidScope(StorageScope.Disk)).not.toThrow();
     expect(() => assertValidScope(StorageScope.Secure)).not.toThrow();
-    expect(() => assertValidScope(999 as StorageScope)).toThrow(/Invalid storage scope/);
+    expect(() => assertValidScope(999 as StorageScope)).toThrow(
+      /Invalid storage scope/,
+    );
   });
 
   it("validates batch item scopes and reports scope names", () => {
@@ -43,64 +47,122 @@ describe("internal helpers", () => {
           { key: "a", scope: StorageScope.Disk },
           { key: "b", scope: StorageScope.Disk },
         ],
-        StorageScope.Disk
-      )
+        StorageScope.Disk,
+      ),
     ).not.toThrow();
 
     expect(() =>
       assertBatchScope(
         [{ key: "bad-key", scope: 999 as StorageScope }],
-        StorageScope.Disk
-      )
+        StorageScope.Disk,
+      ),
     ).toThrow(/expected Disk, received 999/);
   });
 
   it("decodes native missing sentinel", () => {
-    expect(decodeNativeBatchValue(NATIVE_BATCH_MISSING_SENTINEL)).toBeUndefined();
+    expect(
+      decodeNativeBatchValue(NATIVE_BATCH_MISSING_SENTINEL),
+    ).toBeUndefined();
     expect(decodeNativeBatchValue("raw")).toBe("raw");
   });
 
   it("serializes primitives via fast path and falls back to JSON", () => {
-    expect(serializeWithPrimitiveFastPath("hello")).toBe("__nitro_storage_primitive__:s:hello");
-    expect(serializeWithPrimitiveFastPath(42)).toBe("__nitro_storage_primitive__:n:42");
-    expect(serializeWithPrimitiveFastPath(true)).toBe("__nitro_storage_primitive__:b:1");
-    expect(serializeWithPrimitiveFastPath(false)).toBe("__nitro_storage_primitive__:b:0");
-    expect(serializeWithPrimitiveFastPath(undefined)).toBe("__nitro_storage_primitive__:u");
-    expect(serializeWithPrimitiveFastPath(null)).toBe("__nitro_storage_primitive__:l");
-    expect(serializeWithPrimitiveFastPath(Number.POSITIVE_INFINITY)).toBe("null");
-    expect(serializeWithPrimitiveFastPath({ nested: "ok" })).toBe('{"nested":"ok"}');
+    expect(serializeWithPrimitiveFastPath("hello")).toBe(
+      "__nitro_storage_primitive__:s:hello",
+    );
+    expect(serializeWithPrimitiveFastPath(42)).toBe(
+      "__nitro_storage_primitive__:n:42",
+    );
+    expect(serializeWithPrimitiveFastPath(true)).toBe(
+      "__nitro_storage_primitive__:b:1",
+    );
+    expect(serializeWithPrimitiveFastPath(false)).toBe(
+      "__nitro_storage_primitive__:b:0",
+    );
+    expect(serializeWithPrimitiveFastPath(undefined)).toBe(
+      "__nitro_storage_primitive__:u",
+    );
+    expect(serializeWithPrimitiveFastPath(null)).toBe(
+      "__nitro_storage_primitive__:l",
+    );
+    expect(serializeWithPrimitiveFastPath(Number.POSITIVE_INFINITY)).toBe(
+      "null",
+    );
+    expect(serializeWithPrimitiveFastPath({ nested: "ok" })).toBe(
+      '{"nested":"ok"}',
+    );
   });
 
   it("throws when default serialization cannot produce a string", () => {
     expect(() => serializeWithPrimitiveFastPath(() => undefined)).toThrow(
-      /Unable to serialize value/
+      /Unable to serialize value/,
     );
   });
 
   it("deserializes fast-path values and JSON fallback values", () => {
-    expect(deserializeWithPrimitiveFastPath<string>("__nitro_storage_primitive__:s:value")).toBe(
-      "value"
-    );
-    expect(deserializeWithPrimitiveFastPath<number>("__nitro_storage_primitive__:n:123")).toBe(
-      123
-    );
-    expect(deserializeWithPrimitiveFastPath<boolean>("__nitro_storage_primitive__:b:1")).toBe(
-      true
-    );
-    expect(deserializeWithPrimitiveFastPath<boolean>("__nitro_storage_primitive__:b:0")).toBe(
-      false
-    );
     expect(
-      deserializeWithPrimitiveFastPath<undefined>("__nitro_storage_primitive__:u")
+      deserializeWithPrimitiveFastPath<string>(
+        "__nitro_storage_primitive__:s:value",
+      ),
+    ).toBe("value");
+    expect(
+      deserializeWithPrimitiveFastPath<number>(
+        "__nitro_storage_primitive__:n:123",
+      ),
+    ).toBe(123);
+    expect(
+      deserializeWithPrimitiveFastPath<boolean>(
+        "__nitro_storage_primitive__:b:1",
+      ),
+    ).toBe(true);
+    expect(
+      deserializeWithPrimitiveFastPath<boolean>(
+        "__nitro_storage_primitive__:b:0",
+      ),
+    ).toBe(false);
+    expect(
+      deserializeWithPrimitiveFastPath<undefined>(
+        "__nitro_storage_primitive__:u",
+      ),
     ).toBeUndefined();
-    expect(deserializeWithPrimitiveFastPath<null>("__nitro_storage_primitive__:l")).toBeNull();
+    expect(
+      deserializeWithPrimitiveFastPath<null>("__nitro_storage_primitive__:l"),
+    ).toBeNull();
 
     expect(
-      deserializeWithPrimitiveFastPath<string>("__nitro_storage_primitive__:n:not-a-number")
+      deserializeWithPrimitiveFastPath<string>(
+        "__nitro_storage_primitive__:n:not-a-number",
+      ),
     ).toBe("__nitro_storage_primitive__:n:not-a-number");
-    expect(deserializeWithPrimitiveFastPath<{ ok: boolean }>('{"ok":true}')).toEqual({
+    expect(
+      deserializeWithPrimitiveFastPath<{ ok: boolean }>('{"ok":true}'),
+    ).toEqual({
       ok: true,
     });
-    expect(deserializeWithPrimitiveFastPath<string>("legacy-raw-value")).toBe("legacy-raw-value");
+    expect(deserializeWithPrimitiveFastPath<string>("legacy-raw-value")).toBe(
+      "legacy-raw-value",
+    );
+  });
+
+  it("prefixes key with namespace separator", () => {
+    expect(prefixKey("auth", "token")).toBe("auth:token");
+    expect(prefixKey("deep", "nested")).toBe("deep:nested");
+  });
+
+  it("returns key unchanged when namespace is undefined or empty", () => {
+    expect(prefixKey(undefined, "key")).toBe("key");
+    expect(prefixKey("", "key")).toBe("key");
+  });
+
+  it("detects namespaced keys", () => {
+    expect(isNamespaced("auth:token", "auth")).toBe(true);
+    expect(isNamespaced("auth:refresh", "auth")).toBe(true);
+    expect(isNamespaced("other:token", "auth")).toBe(false);
+    expect(isNamespaced("token", "auth")).toBe(false);
+  });
+
+  it("does not false-positive on partial namespace matches", () => {
+    expect(isNamespaced("auth2:token", "auth")).toBe(false);
+    expect(isNamespaced("authentication:token", "auth")).toBe(false);
   });
 });

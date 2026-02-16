@@ -9,7 +9,7 @@
     "android": "expo run:android",
     "prebuild": "expo prebuild",
     "prebuild:clean": "expo prebuild --clean",
-    "lint": "eslint ."
+    "lint": "bunx eslint app components --max-warnings=0 --fix"
   },
   "dependencies": {
     "@babel/runtime": "^7.28.6",

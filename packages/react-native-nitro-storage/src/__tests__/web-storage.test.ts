@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react-hooks";
 import {
   createStorageItem,
+  createSecureAuthStorage,
   getBatch,
   migrateFromMMKV,
   migrateToLatest,
@@ -10,11 +11,16 @@ import {
   setBatch,
   storage,
   StorageScope,
+  AccessControl,
   useSetStorage,
   useStorageSelector,
   useStorage,
 } from "../index.web";
-import { MIGRATION_VERSION_KEY, serializeWithPrimitiveFastPath } from "../internal";
+import type { StorageItem } from "../index.web";
+import {
+  MIGRATION_VERSION_KEY,
+  serializeWithPrimitiveFastPath,
+} from "../internal";
 
 function createStorageMock(): Storage {
   const store = new Map<string, string>();
@@ -50,11 +56,7 @@ describe("Web Storage", () => {
       configurable: true,
       writable: true,
     });
-    Object.defineProperty(globalThis, "sessionStorage", {
-      value: createStorageMock(),
-      configurable: true,
-      writable: true,
-    });
+
     storage.clearAll();
   });
 
@@ -71,7 +73,7 @@ describe("Web Storage", () => {
     expect(diskItem.get()).toBe("value");
     expect(setSpy).toHaveBeenCalledWith(
       "disk-key",
-      serializeWithPrimitiveFastPath("value")
+      serializeWithPrimitiveFastPath("value"),
     );
   });
 
@@ -81,14 +83,14 @@ describe("Web Storage", () => {
       scope: StorageScope.Secure,
       defaultValue: "default",
     });
-    const setSpy = jest.spyOn(globalThis.sessionStorage, "setItem");
+    const setSpy = jest.spyOn(globalThis.localStorage, "setItem");
 
     secureItem.set("value");
 
     expect(secureItem.get()).toBe("value");
     expect(setSpy).toHaveBeenCalledWith(
-      "secure-key",
-      serializeWithPrimitiveFastPath("value")
+      "__secure_secure-key",
+      serializeWithPrimitiveFastPath("value"),
     );
   });
 
@@ -103,19 +105,44 @@ describe("Web Storage", () => {
       scope: StorageScope.Secure,
       defaultValue: "secure-default",
     });
-    const diskClearSpy = jest.spyOn(globalThis.localStorage, "clear");
-    const secureClearSpy = jest.spyOn(globalThis.sessionStorage, "clear");
-
     diskItem.set("disk-value");
     secureItem.set("secure-value");
 
+    expect(globalThis.localStorage.getItem("disk-clear")).toBe(
+      serializeWithPrimitiveFastPath("disk-value"),
+    );
+    expect(globalThis.localStorage.getItem("__secure_secure-clear")).toBe(
+      serializeWithPrimitiveFastPath("secure-value"),
+    );
+
     storage.clear(StorageScope.Disk);
+    expect(globalThis.localStorage.getItem("disk-clear")).toBeNull();
+    expect(globalThis.localStorage.getItem("__secure_secure-clear")).toBe(
+      serializeWithPrimitiveFastPath("secure-value"),
+    );
+
     storage.clear(StorageScope.Secure);
+    expect(globalThis.localStorage.getItem("__secure_secure-clear")).toBeNull();
 
     expect(diskItem.get()).toBe("disk-default");
     expect(secureItem.get()).toBe("secure-default");
-    expect(diskClearSpy).toHaveBeenCalledTimes(1);
-    expect(secureClearSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("clearAll removes biometric secure values", () => {
+    const biometric = createStorageItem({
+      key: "clear-all-bio",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+    biometric.set("secret");
+    expect(globalThis.localStorage.getItem("__bio_clear-all-bio")).toBe(
+      serializeWithPrimitiveFastPath("secret"),
+    );
+
+    storage.clearAll();
+    expect(globalThis.localStorage.getItem("__bio_clear-all-bio")).toBeNull();
+    expect(biometric.get()).toBe("");
   });
 
   it("notifies memory subscribers when clearAll runs", () => {
@@ -170,7 +197,7 @@ describe("Web Storage", () => {
       return useStorageSelector(
         item,
         (value) => ({ count: value.count }),
-        (prev, next) => prev.count === next.count
+        (prev, next) => prev.count === next.count,
       );
     });
 
@@ -194,7 +221,7 @@ describe("Web Storage", () => {
     const getSpy = jest.spyOn(globalThis.localStorage, "getItem");
     globalThis.localStorage.setItem(
       "web-cache-default",
-      serializeWithPrimitiveFastPath("cached")
+      serializeWithPrimitiveFastPath("cached"),
     );
 
     const item = createStorageItem({
@@ -213,7 +240,7 @@ describe("Web Storage", () => {
     const getSpy = jest.spyOn(globalThis.localStorage, "getItem");
     globalThis.localStorage.setItem(
       "web-cache-disabled",
-      serializeWithPrimitiveFastPath("cached")
+      serializeWithPrimitiveFastPath("cached"),
     );
 
     const item = createStorageItem({
@@ -228,7 +255,7 @@ describe("Web Storage", () => {
   });
 
   it("coalesces secure writes on the same tick when enabled", async () => {
-    const setSpy = jest.spyOn(globalThis.sessionStorage, "setItem");
+    const setSpy = jest.spyOn(globalThis.localStorage, "setItem");
     const item = createStorageItem({
       key: "web-secure-coalesce",
       scope: StorageScope.Secure,
@@ -243,9 +270,9 @@ describe("Web Storage", () => {
     await Promise.resolve();
 
     expect(setSpy).toHaveBeenCalledTimes(1);
-    expect(globalThis.sessionStorage.getItem("web-secure-coalesce")).toBe(
-      serializeWithPrimitiveFastPath("second")
-    );
+    expect(
+      globalThis.localStorage.getItem("__secure_web-secure-coalesce"),
+    ).toBe(serializeWithPrimitiveFastPath("second"));
   });
 
   it("runs batch operations for disk scope", () => {
@@ -266,7 +293,7 @@ describe("Web Storage", () => {
         { item: item1, value: "v1" },
         { item: item2, value: "v2" },
       ],
-      StorageScope.Disk
+      StorageScope.Disk,
     );
 
     const values = getBatch([item1, item2], StorageScope.Disk);
@@ -288,20 +315,20 @@ describe("Web Storage", () => {
       defaultValue: "s",
     });
 
-    expect(() =>
-      getBatch([diskItem, secureItem], StorageScope.Disk)
-    ).toThrow(/Batch scope mismatch/);
+    expect(() => getBatch([diskItem, secureItem], StorageScope.Disk)).toThrow(
+      /Batch scope mismatch/,
+    );
     expect(() =>
       setBatch(
         [
           { item: diskItem, value: "v1" },
           { item: secureItem, value: "v2" },
         ],
-        StorageScope.Disk
-      )
+        StorageScope.Disk,
+      ),
     ).toThrow(/Batch scope mismatch/);
     expect(() =>
-      removeBatch([diskItem, secureItem], StorageScope.Disk)
+      removeBatch([diskItem, secureItem], StorageScope.Disk),
     ).toThrow(/Batch scope mismatch/);
   });
 
@@ -310,11 +337,12 @@ describe("Web Storage", () => {
       key: "batch-web-validated-set",
       scope: StorageScope.Disk,
       defaultValue: 1,
-      validate: (value): value is number => typeof value === "number" && value > 0,
+      validate: (value): value is number =>
+        typeof value === "number" && value > 0,
     });
 
     expect(() =>
-      setBatch([{ item: validatedItem, value: -1 }], StorageScope.Disk)
+      setBatch([{ item: validatedItem, value: -1 }], StorageScope.Disk),
     ).toThrow(/Validation failed/);
   });
 
@@ -323,10 +351,14 @@ describe("Web Storage", () => {
       key: "batch-web-validated-get",
       scope: StorageScope.Disk,
       defaultValue: 7,
-      validate: (value): value is number => typeof value === "number" && value > 10,
+      validate: (value): value is number =>
+        typeof value === "number" && value > 10,
     });
 
-    globalThis.localStorage.setItem("batch-web-validated-get", JSON.stringify(2));
+    globalThis.localStorage.setItem(
+      "batch-web-validated-get",
+      JSON.stringify(2),
+    );
     expect(getBatch([validatedItem], StorageScope.Disk)).toEqual([7]);
   });
 
@@ -358,14 +390,15 @@ describe("Web Storage", () => {
       key: "validated",
       scope: StorageScope.Disk,
       defaultValue: 0,
-      validate: (value): value is number => typeof value === "number" && value >= 0,
+      validate: (value): value is number =>
+        typeof value === "number" && value >= 0,
       onValidationError: () => 10,
     });
 
     globalThis.localStorage.setItem("validated", JSON.stringify(-1));
     expect(item.get()).toBe(10);
     expect(globalThis.localStorage.getItem("validated")).toBe(
-      serializeWithPrimitiveFastPath(10)
+      serializeWithPrimitiveFastPath(10),
     );
     expect(() => item.set(-2)).toThrow(/Validation failed/);
   });
@@ -402,7 +435,7 @@ describe("Web Storage", () => {
         tx.setItem(item, "during");
         tx.setRaw("another", JSON.stringify("x"));
         throw new Error("boom");
-      })
+      }),
     ).toThrow("boom");
 
     expect(item.get()).toBe("before");
@@ -422,18 +455,24 @@ describe("Web Storage", () => {
 
     const appliedVersion = migrateToLatest(StorageScope.Disk);
     expect(appliedVersion).toBe(v2);
-    expect(globalThis.localStorage.getItem("migrated-a")).toBe(JSON.stringify("a"));
-    expect(globalThis.localStorage.getItem("migrated-b")).toBe(JSON.stringify("b"));
-    expect(globalThis.localStorage.getItem("__nitro_storage_migration_version__")).toBe(
-      String(v2)
+    expect(globalThis.localStorage.getItem("migrated-a")).toBe(
+      JSON.stringify("a"),
     );
+    expect(globalThis.localStorage.getItem("migrated-b")).toBe(
+      JSON.stringify("b"),
+    );
+    expect(
+      globalThis.localStorage.getItem("__nitro_storage_migration_version__"),
+    ).toBe(String(v2));
   });
 
   it("throws on invalid scope for transaction and migration APIs", () => {
-    expect(() =>
-      runTransaction(99 as StorageScope, () => undefined)
-    ).toThrow(/Invalid storage scope/);
-    expect(() => migrateToLatest(99 as StorageScope)).toThrow(/Invalid storage scope/);
+    expect(() => runTransaction(99 as StorageScope, () => undefined)).toThrow(
+      /Invalid storage scope/,
+    );
+    expect(() => migrateToLatest(99 as StorageScope)).toThrow(
+      /Invalid storage scope/,
+    );
   });
 
   it("handles memory-scope batch operations", () => {
@@ -453,7 +492,7 @@ describe("Web Storage", () => {
         { item: mem1, value: "v1" },
         { item: mem2, value: "v2" },
       ],
-      StorageScope.Memory
+      StorageScope.Memory,
     );
     expect(getBatch([mem1, mem2], StorageScope.Memory)).toEqual(["v1", "v2"]);
 
@@ -468,7 +507,7 @@ describe("Web Storage", () => {
         key: "bad-ttl-web",
         scope: StorageScope.Disk,
         expiration: { ttlMs: -1 },
-      })
+      }),
     ).toThrow("expiration.ttlMs must be greater than 0.");
   });
 
@@ -477,12 +516,15 @@ describe("Web Storage", () => {
       key: "invalid-web",
       scope: StorageScope.Disk,
       defaultValue: 3,
-      validate: (value): value is number => typeof value === "number" && value > 10,
+      validate: (value): value is number =>
+        typeof value === "number" && value > 10,
     });
 
     globalThis.localStorage.setItem("invalid-web", JSON.stringify(1));
     expect(item.get()).toBe(3);
-    expect(globalThis.localStorage.getItem("invalid-web")).toBe(JSON.stringify(1));
+    expect(globalThis.localStorage.getItem("invalid-web")).toBe(
+      JSON.stringify(1),
+    );
   });
 
   it("falls back to default when validation handler returns invalid value", () => {
@@ -490,7 +532,8 @@ describe("Web Storage", () => {
       key: "invalid-handler-web",
       scope: StorageScope.Disk,
       defaultValue: 4,
-      validate: (value): value is number => typeof value === "number" && value > 10,
+      validate: (value): value is number =>
+        typeof value === "number" && value > 10,
       onValidationError: () => 1,
     });
 
@@ -548,7 +591,7 @@ describe("Web Storage", () => {
     expect(() =>
       runTransaction(StorageScope.Disk, (tx) => {
         tx.getItem(secureItem);
-      })
+      }),
     ).toThrow(/Batch scope mismatch/);
   });
 
@@ -591,7 +634,7 @@ describe("Web Storage", () => {
     expect(() =>
       runTransaction(StorageScope.Memory, (tx) => {
         tx.setItem(validatedMemoryItem, "bad");
-      })
+      }),
     ).toThrow(/Validation failed/);
   });
 
@@ -619,9 +662,9 @@ describe("Web Storage", () => {
     expect(item.get()).toBe("queued");
 
     await Promise.resolve();
-    expect(globalThis.sessionStorage.getItem("pending-secure-read")).toBe(
-      serializeWithPrimitiveFastPath("queued")
-    );
+    expect(
+      globalThis.localStorage.getItem("__secure_pending-secure-read"),
+    ).toBe(serializeWithPrimitiveFastPath("queued"));
   });
 
   it("keeps direct and coalesced secure write paths independent", async () => {
@@ -636,8 +679,8 @@ describe("Web Storage", () => {
       scope: StorageScope.Secure,
       defaultValue: "default",
     });
-    const setSpy = jest.spyOn(globalThis.sessionStorage, "setItem");
-    const removeSpy = jest.spyOn(globalThis.sessionStorage, "removeItem");
+    const setSpy = jest.spyOn(globalThis.localStorage, "setItem");
+    const removeSpy = jest.spyOn(globalThis.localStorage, "removeItem");
 
     coalesced.set("queued-1");
     direct.set("direct-1");
@@ -645,13 +688,13 @@ describe("Web Storage", () => {
     direct.delete();
 
     expect(setSpy).toHaveBeenCalledWith(
-      "direct-secure",
-      serializeWithPrimitiveFastPath("direct-1")
+      "__secure_direct-secure",
+      serializeWithPrimitiveFastPath("direct-1"),
     );
-    expect(removeSpy).toHaveBeenCalledWith("direct-secure");
+    expect(removeSpy).toHaveBeenCalledWith("__secure_direct-secure");
 
     await Promise.resolve();
-    expect(removeSpy).toHaveBeenCalledWith("queued-secure");
+    expect(removeSpy).toHaveBeenCalledWith("__secure_queued-secure");
   });
 
   it("handles memory TTL expiration and delete cleanup", () => {
@@ -721,7 +764,8 @@ describe("Web Storage", () => {
       key: "batch-web-fallback-valid",
       scope: StorageScope.Disk,
       defaultValue: 1,
-      validate: (value): value is number => typeof value === "number" && value > 0,
+      validate: (value): value is number =>
+        typeof value === "number" && value > 0,
     });
 
     setBatch([{ item: validatedItem, value: 9 }], StorageScope.Disk);
@@ -744,7 +788,7 @@ describe("Web Storage", () => {
       });
 
       expect(() =>
-        setBatch([{ item, value: "next" }], StorageScope.Disk)
+        setBatch([{ item, value: "next" }], StorageScope.Disk),
       ).not.toThrow();
       expect(() => removeBatch([item], StorageScope.Disk)).not.toThrow();
     } finally {
@@ -770,7 +814,10 @@ describe("Web Storage", () => {
     });
 
     coalesced.set("queued-before-batch");
-    setBatch([{ item: secureBatchItem, value: "batched" }], StorageScope.Secure);
+    setBatch(
+      [{ item: secureBatchItem, value: "batched" }],
+      StorageScope.Secure,
+    );
     expect(secureBatchItem.get()).toBe("batched");
 
     coalesced.set("queued-before-remove");
@@ -780,13 +827,13 @@ describe("Web Storage", () => {
 
   it("validates migration registration version rules", () => {
     expect(() => registerMigration(0, () => undefined)).toThrow(
-      /positive integer/
+      /positive integer/,
     );
 
     const version = migrationVersionSeed++;
     registerMigration(version, () => undefined);
     expect(() => registerMigration(version, () => undefined)).toThrow(
-      /already registered/
+      /already registered/,
     );
   });
 
@@ -833,9 +880,594 @@ describe("Web Storage", () => {
 
     item.subscribe(listenerA);
     item.subscribe(listenerB);
-    item._triggerListeners();
+    // _triggerListeners is internal-only, cast to access it
+    (item as unknown as { _triggerListeners: () => void })._triggerListeners();
 
     expect(listenerA).toHaveBeenCalledTimes(1);
     expect(listenerB).toHaveBeenCalledTimes(1);
+  });
+
+  // --- Namespace ---
+
+  it("prefixes key with namespace when provided", () => {
+    const item = createStorageItem({
+      key: "token",
+      scope: StorageScope.Disk,
+      defaultValue: "none",
+      namespace: "auth",
+    });
+
+    item.set("abc123");
+    expect(item.key).toBe("auth:token");
+    expect(globalThis.localStorage.getItem("auth:token")).toBe(
+      serializeWithPrimitiveFastPath("abc123"),
+    );
+    expect(item.get()).toBe("abc123");
+  });
+
+  it("works without namespace (no prefix)", () => {
+    const item = createStorageItem({
+      key: "plain",
+      scope: StorageScope.Disk,
+      defaultValue: "x",
+    });
+
+    item.set("val");
+    expect(item.key).toBe("plain");
+    expect(globalThis.localStorage.getItem("plain")).toBe(
+      serializeWithPrimitiveFastPath("val"),
+    );
+  });
+
+  it("namespaced items are independent from non-namespaced", () => {
+    const namespaced = createStorageItem({
+      key: "id",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+      namespace: "user",
+    });
+    const plain = createStorageItem({
+      key: "id",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    });
+
+    namespaced.set("ns-val");
+    plain.set("plain-val");
+
+    expect(namespaced.get()).toBe("ns-val");
+    expect(plain.get()).toBe("plain-val");
+    expect(namespaced.key).toBe("user:id");
+    expect(plain.key).toBe("id");
+  });
+
+  // --- has() ---
+
+  it("has() returns false for missing key, true after set", () => {
+    const item = createStorageItem({
+      key: "has-test",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+    });
+
+    expect(item.has()).toBe(false);
+    item.set("value");
+    expect(item.has()).toBe(true);
+    item.delete();
+    expect(item.has()).toBe(false);
+  });
+
+  it("has() works for memory scope", () => {
+    const item = createStorageItem({
+      key: "has-mem",
+      scope: StorageScope.Memory,
+      defaultValue: "default",
+    });
+
+    expect(item.has()).toBe(false);
+    item.set("val");
+    expect(item.has()).toBe(true);
+    item.delete();
+    expect(item.has()).toBe(false);
+  });
+
+  // --- onExpired ---
+
+  it("calls onExpired callback when TTL disk value expires", () => {
+    const onExpired = jest.fn();
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(1_000);
+    const item = createStorageItem<string>({
+      key: "expire-cb",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+      expiration: { ttlMs: 50 },
+      onExpired,
+    });
+
+    item.set("val");
+    nowSpy.mockReturnValue(1_060);
+    expect(item.get()).toBe("default");
+    expect(onExpired).toHaveBeenCalledWith("expire-cb");
+    nowSpy.mockRestore();
+  });
+
+  it("calls onExpired for namespaced key", () => {
+    const onExpired = jest.fn();
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(1_000);
+    const item = createStorageItem<string>({
+      key: "tok",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+      namespace: "auth",
+      expiration: { ttlMs: 50 },
+      onExpired,
+    });
+
+    item.set("token123");
+    nowSpy.mockReturnValue(1_060);
+    item.get();
+    expect(onExpired).toHaveBeenCalledWith("auth:tok");
+    nowSpy.mockRestore();
+  });
+
+  it("calls onExpired for memory TTL expiration", () => {
+    const onExpired = jest.fn();
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(1_000);
+    const item = createStorageItem<string>({
+      key: "mem-expire-cb",
+      scope: StorageScope.Memory,
+      defaultValue: "default",
+      expiration: { ttlMs: 30 },
+      onExpired,
+    });
+
+    item.set("live");
+    nowSpy.mockReturnValue(1_040);
+    expect(item.get()).toBe("default");
+    expect(onExpired).toHaveBeenCalledWith("mem-expire-cb");
+    nowSpy.mockRestore();
+  });
+
+  // --- Biometric fallback ---
+
+  it("biometric items use __bio_ prefix in localStorage on web", () => {
+    const item = createStorageItem({
+      key: "bio-key",
+      scope: StorageScope.Secure,
+      defaultValue: "none",
+      biometric: true,
+    });
+
+    item.set("secret");
+    expect(globalThis.localStorage.getItem("__bio_bio-key")).toBe(
+      serializeWithPrimitiveFastPath("secret"),
+    );
+    expect(item.get()).toBe("secret");
+  });
+
+  it("biometric has() checks __bio_ prefix", () => {
+    const item = createStorageItem({
+      key: "bio-has",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+
+    expect(item.has()).toBe(false);
+    item.set("val");
+    expect(item.has()).toBe(true);
+    item.delete();
+    expect(item.has()).toBe(false);
+  });
+
+  it("biometric items do not coalesce writes", async () => {
+    const setSpy = jest.spyOn(globalThis.localStorage, "setItem");
+    const item = createStorageItem({
+      key: "bio-no-coalesce",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+      coalesceSecureWrites: true, // should be ignored
+    });
+
+    item.set("now");
+    expect(setSpy).toHaveBeenCalledWith(
+      "__bio_bio-no-coalesce",
+      serializeWithPrimitiveFastPath("now"),
+    );
+  });
+
+  it("biometric with namespace combines both prefixes", () => {
+    const item = createStorageItem({
+      key: "pin",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+      namespace: "vault",
+    });
+
+    item.set("1234");
+    expect(item.key).toBe("vault:pin");
+    expect(globalThis.localStorage.getItem("__bio_vault:pin")).toBe(
+      serializeWithPrimitiveFastPath("1234"),
+    );
+    expect(item.get()).toBe("1234");
+  });
+
+  it("biometric updates notify subscribers", () => {
+    const item = createStorageItem({
+      key: "bio-listener",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+    const listener = jest.fn();
+    item.subscribe(listener);
+
+    item.set("secret");
+    item.delete();
+
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  // --- storage utility methods ---
+
+  it("storage.has checks existence per scope", () => {
+    const item = createStorageItem({
+      key: "exists-key",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    });
+    expect(storage.has("exists-key", StorageScope.Disk)).toBe(false);
+    item.set("val");
+    expect(storage.has("exists-key", StorageScope.Disk)).toBe(true);
+  });
+
+  it("storage.has works for memory scope", () => {
+    expect(storage.has("mem-check", StorageScope.Memory)).toBe(false);
+    const item = createStorageItem({
+      key: "mem-check",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    });
+    item.set("yes");
+    expect(storage.has("mem-check", StorageScope.Memory)).toBe(true);
+  });
+
+  it("storage.getAllKeys returns all keys for a scope", () => {
+    createStorageItem({
+      key: "k1",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    }).set("v1");
+    createStorageItem({
+      key: "k2",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    }).set("v2");
+
+    const keys = storage.getAllKeys(StorageScope.Disk);
+    expect(keys).toContain("k1");
+    expect(keys).toContain("k2");
+  });
+
+  it("storage.getAllKeys works for memory scope", () => {
+    createStorageItem({
+      key: "mk1",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    }).set("v");
+    createStorageItem({
+      key: "mk2",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    }).set("v");
+
+    const keys = storage.getAllKeys(StorageScope.Memory);
+    expect(keys).toContain("mk1");
+    expect(keys).toContain("mk2");
+  });
+
+  it("storage.getAll returns all key-value pairs", () => {
+    createStorageItem({
+      key: "ga1",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    }).set("a");
+    createStorageItem({
+      key: "ga2",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    }).set("b");
+
+    const all = storage.getAll(StorageScope.Disk);
+    expect(all["ga1"]).toBe(serializeWithPrimitiveFastPath("a"));
+    expect(all["ga2"]).toBe(serializeWithPrimitiveFastPath("b"));
+  });
+
+  it("storage.getAll works for memory scope (returns string values only)", () => {
+    const item = createStorageItem({
+      key: "ga-mem",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    });
+    item.set("stringval");
+
+    const all = storage.getAll(StorageScope.Memory);
+    expect(all["ga-mem"]).toBe("stringval");
+  });
+
+  it("storage.size returns count of entries", () => {
+    const before = storage.size(StorageScope.Disk);
+    createStorageItem({
+      key: "sz1",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    }).set("v");
+    createStorageItem({
+      key: "sz2",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    }).set("v");
+    expect(storage.size(StorageScope.Disk)).toBe(before + 2);
+  });
+
+  it("storage.size works for memory", () => {
+    const before = storage.size(StorageScope.Memory);
+    createStorageItem({
+      key: "msz1",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    }).set("v");
+    expect(storage.size(StorageScope.Memory)).toBe(before + 1);
+  });
+
+  // --- clearNamespace ---
+
+  it("storage.clearNamespace removes only namespaced keys", () => {
+    const nsItem = createStorageItem({
+      key: "t",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+      namespace: "session",
+    });
+    const plainItem = createStorageItem({
+      key: "other",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    });
+
+    nsItem.set("ns-val");
+    plainItem.set("plain-val");
+
+    storage.clearNamespace("session", StorageScope.Disk);
+
+    expect(globalThis.localStorage.getItem("session:t")).toBeNull();
+    expect(globalThis.localStorage.getItem("other")).toBe(
+      serializeWithPrimitiveFastPath("plain-val"),
+    );
+  });
+
+  it("storage.clearNamespace removes namespaced biometric keys in secure scope", () => {
+    const biometric = createStorageItem({
+      key: "token",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      namespace: "session",
+      biometric: true,
+    });
+    const regular = createStorageItem({
+      key: "token",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      namespace: "session",
+    });
+
+    biometric.set("bio");
+    regular.set("secure");
+    storage.clearNamespace("session", StorageScope.Secure);
+
+    expect(globalThis.localStorage.getItem("__bio_session:token")).toBeNull();
+    expect(
+      globalThis.localStorage.getItem("__secure_session:token"),
+    ).toBeNull();
+  });
+
+  it("storage.clearNamespace works for memory scope", () => {
+    const ns = createStorageItem({
+      key: "x",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+      namespace: "tmp",
+    });
+    const plain = createStorageItem({
+      key: "keep",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    });
+
+    ns.set("val");
+    plain.set("kept");
+
+    storage.clearNamespace("tmp", StorageScope.Memory);
+    expect(ns.get()).toBe("");
+    expect(plain.get()).toBe("kept");
+  });
+
+  // --- clearBiometric ---
+
+  it("storage.clearBiometric removes all __bio_ prefixed entries", () => {
+    globalThis.localStorage.setItem("__bio_a", "x");
+    globalThis.localStorage.setItem("__bio_b", "y");
+    globalThis.localStorage.setItem("normal", "z");
+
+    storage.clearBiometric();
+
+    expect(globalThis.localStorage.getItem("__bio_a")).toBeNull();
+    expect(globalThis.localStorage.getItem("__bio_b")).toBeNull();
+    expect(globalThis.localStorage.getItem("normal")).toBe("z");
+  });
+
+  // --- createSecureAuthStorage ---
+
+  it("creates multiple secure storage items with shared namespace", () => {
+    const auth = createSecureAuthStorage({
+      accessToken: { ttlMs: 3600_000 },
+      refreshToken: {},
+    });
+
+    expect(auth.accessToken.key).toBe("auth:accessToken");
+    expect(auth.refreshToken.key).toBe("auth:refreshToken");
+    expect(auth.accessToken.scope).toBe(StorageScope.Secure);
+
+    auth.accessToken.set("at-123");
+    auth.refreshToken.set("rt-456");
+    expect(auth.accessToken.get()).toBe("at-123");
+    expect(auth.refreshToken.get()).toBe("rt-456");
+  });
+
+  it("createSecureAuthStorage respects custom namespace", () => {
+    const tokens = createSecureAuthStorage(
+      { jwt: {} },
+      { namespace: "custom" },
+    );
+
+    expect(tokens.jwt.key).toBe("custom:jwt");
+    tokens.jwt.set("tok");
+    expect(tokens.jwt.get()).toBe("tok");
+  });
+
+  it("createSecureAuthStorage items have has() method", () => {
+    const auth = createSecureAuthStorage({ session: {} });
+    expect(auth.session.has()).toBe(false);
+    auth.session.set("active");
+    expect(auth.session.has()).toBe(true);
+  });
+
+  it("createSecureAuthStorage with biometric flag uses bio fallback", () => {
+    const auth = createSecureAuthStorage({
+      bioToken: { biometric: true },
+    });
+
+    auth.bioToken.set("bio-secured");
+    expect(globalThis.localStorage.getItem("__bio_auth:bioToken")).toBe(
+      serializeWithPrimitiveFastPath("bio-secured"),
+    );
+  });
+
+  it("createSecureAuthStorage with TTL expires correctly", () => {
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(10_000);
+    const auth = createSecureAuthStorage({
+      shortLived: { ttlMs: 100 },
+    });
+
+    auth.shortLived.set("temp");
+    expect(auth.shortLived.get()).toBe("temp");
+
+    nowSpy.mockReturnValue(10_200);
+    expect(auth.shortLived.get()).toBe("");
+    nowSpy.mockRestore();
+  });
+
+  // --- accessControl is a no-op on web ---
+
+  it("accessControl option does not throw on web", () => {
+    expect(() =>
+      createStorageItem({
+        key: "ac-test",
+        scope: StorageScope.Secure,
+        defaultValue: "",
+        accessControl: AccessControl.WhenUnlocked,
+      }),
+    ).not.toThrow();
+
+    // storage level no-op
+    expect(() =>
+      storage.setAccessControl(AccessControl.AfterFirstUnlock),
+    ).not.toThrow();
+    expect(() => storage.setKeychainAccessGroup("group.test")).not.toThrow();
+  });
+
+  // --- edge: biometric ignores memory scope ---
+
+  it("biometric flag is ignored for non-secure scopes", () => {
+    const item = createStorageItem({
+      key: "bio-disk",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+      biometric: true, // only relevant for Secure scope
+    });
+
+    item.set("val");
+    // Should use regular localStorage, not __bio_ prefix
+    expect(globalThis.localStorage.getItem("bio-disk")).toBe(
+      serializeWithPrimitiveFastPath("val"),
+    );
+  });
+
+  // --- batch with namespaced items ---
+
+  it("batch operations work with namespaced items", () => {
+    const item1 = createStorageItem({
+      key: "a",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+      namespace: "ns",
+    });
+    const item2 = createStorageItem({
+      key: "b",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+      namespace: "ns",
+    });
+
+    setBatch(
+      [
+        { item: item1, value: "v1" },
+        { item: item2, value: "v2" },
+      ],
+      StorageScope.Disk,
+    );
+
+    const values = getBatch([item1, item2], StorageScope.Disk);
+    expect(values).toEqual(["v1", "v2"]);
+    expect(item1.key).toBe("ns:a");
+    expect(item2.key).toBe("ns:b");
+  });
+
+  // --- transactions with namespaced items ---
+
+  it("transactions work with namespaced items", () => {
+    const item = createStorageItem({
+      key: "txn-ns",
+      scope: StorageScope.Disk,
+      defaultValue: "init",
+      namespace: "ctx",
+    });
+
+    runTransaction(StorageScope.Disk, (tx) => {
+      tx.setItem(item, "updated");
+    });
+
+    expect(item.get()).toBe("updated");
+  });
+
+  it("transaction rollback works with namespaced items", () => {
+    const item = createStorageItem({
+      key: "txn-ns-rb",
+      scope: StorageScope.Disk,
+      defaultValue: "init",
+      namespace: "ctx",
+    });
+    item.set("before");
+
+    expect(() =>
+      runTransaction(StorageScope.Disk, (tx) => {
+        tx.setItem(item, "during");
+        throw new Error("rollback");
+      }),
+    ).toThrow("rollback");
+
+    expect(item.get()).toBe("before");
   });
 });

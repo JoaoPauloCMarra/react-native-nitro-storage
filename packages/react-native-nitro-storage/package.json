@@ -1,6 +1,6 @@
 {
   "name": "react-native-nitro-storage",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "The fastest, most complete storage solution for React Native. Synchronous Memory, Disk, and Secure storage in one unified API. Built with Nitro Modules.",
   "main": "lib/commonjs/index.js",
   "module": "lib/module/index.js",
@@ -43,6 +43,9 @@
     "build": "bob build",
     "clean": "rimraf lib nitrogen/generated",
     "codegen": "nitrogen --logLevel=\"debug\"",
+    "lint": "bunx eslint src --max-warnings=0 --fix",
+    "format": "bunx prettier --write \"src/**/*.{ts,tsx}\" \"../../README.md\"",
+    "format:check": "bunx prettier --check \"src/**/*.{ts,tsx}\" \"../../README.md\"",
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:coverage": "jest --coverage",

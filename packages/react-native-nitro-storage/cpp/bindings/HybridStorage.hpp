@@ -20,6 +20,9 @@ public:
     std::optional<std::string> get(const std::string& key, double scope) override;
     void remove(const std::string& key, double scope) override;
     void clear(double scope) override;
+    bool has(const std::string& key, double scope) override;
+    std::vector<std::string> getAllKeys(double scope) override;
+    double size(double scope) override;
     void setBatch(const std::vector<std::string>& keys, const std::vector<std::string>& values, double scope) override;
     std::vector<std::string> getBatch(const std::vector<std::string>& keys, double scope) override;
     void removeBatch(const std::vector<std::string>& keys, double scope) override;
@@ -27,6 +30,13 @@ public:
         double scope,
         const std::function<void(const std::string&, const std::optional<std::string>&)>& callback
     ) override;
+    void setSecureAccessControl(double level) override;
+    void setKeychainAccessGroup(const std::string& group) override;
+    void setSecureBiometric(const std::string& key, const std::string& value) override;
+    std::optional<std::string> getSecureBiometric(const std::string& key) override;
+    void deleteSecureBiometric(const std::string& key) override;
+    bool hasSecureBiometric(const std::string& key) override;
+    void clearSecureBiometric() override;
 
 private:
     enum class Scope {

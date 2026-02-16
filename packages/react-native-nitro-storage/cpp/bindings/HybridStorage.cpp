@@ -143,6 +143,65 @@ void HybridStorage::remove(const std::string& key, double scope) {
     notifyListeners(static_cast<int>(s), key, std::nullopt);
 }
 
+bool HybridStorage::has(const std::string& key, double scope) {
+    Scope s = toScope(scope);
+
+    switch (s) {
+        case Scope::Memory: {
+            std::lock_guard<std::mutex> lock(memoryMutex_);
+            return memoryStore_.find(key) != memoryStore_.end();
+        }
+        case Scope::Disk:
+            ensureAdapter();
+            return nativeAdapter_->hasDisk(key);
+        case Scope::Secure:
+            ensureAdapter();
+            return nativeAdapter_->hasSecure(key);
+    }
+    return false;
+}
+
+std::vector<std::string> HybridStorage::getAllKeys(double scope) {
+    Scope s = toScope(scope);
+
+    switch (s) {
+        case Scope::Memory: {
+            std::lock_guard<std::mutex> lock(memoryMutex_);
+            std::vector<std::string> keys;
+            keys.reserve(memoryStore_.size());
+            for (const auto& pair : memoryStore_) {
+                keys.push_back(pair.first);
+            }
+            return keys;
+        }
+        case Scope::Disk:
+            ensureAdapter();
+            return nativeAdapter_->getAllKeysDisk();
+        case Scope::Secure:
+            ensureAdapter();
+            return nativeAdapter_->getAllKeysSecure();
+    }
+    return {};
+}
+
+double HybridStorage::size(double scope) {
+    Scope s = toScope(scope);
+
+    switch (s) {
+        case Scope::Memory: {
+            std::lock_guard<std::mutex> lock(memoryMutex_);
+            return static_cast<double>(memoryStore_.size());
+        }
+        case Scope::Disk:
+            ensureAdapter();
+            return static_cast<double>(nativeAdapter_->sizeDisk());
+        case Scope::Secure:
+            ensureAdapter();
+            return static_cast<double>(nativeAdapter_->sizeSecure());
+    }
+    return 0.0;
+}
+
 std::function<void()> HybridStorage::addOnChange(
     double scope,
     const std::function<void(const std::string&, const std::optional<std::string>&)>& callback
@@ -244,7 +303,6 @@ void HybridStorage::setBatch(const std::vector<std::string>& keys, const std::ve
     }
 }
 
-
 std::vector<std::string> HybridStorage::getBatch(const std::vector<std::string>& keys, double scope) {
     std::vector<std::string> results;
     results.reserve(keys.size());
@@ -276,11 +334,7 @@ std::vector<std::string> HybridStorage::getBatch(const std::vector<std::string>&
             }
 
             for (const auto& value : values) {
-                if (value.has_value()) {
-                    results.push_back(*value);
-                } else {
-                    results.push_back(kBatchMissingSentinel);
-                }
+                results.push_back(value.has_value() ? *value : std::string(kBatchMissingSentinel));
             }
             return results;
         }
@@ -296,11 +350,7 @@ std::vector<std::string> HybridStorage::getBatch(const std::vector<std::string>&
             }
 
             for (const auto& value : values) {
-                if (value.has_value()) {
-                    results.push_back(*value);
-                } else {
-                    results.push_back(kBatchMissingSentinel);
-                }
+                results.push_back(value.has_value() ? *value : std::string(kBatchMissingSentinel));
             }
             return results;
         }
@@ -308,7 +358,6 @@ std::vector<std::string> HybridStorage::getBatch(const std::vector<std::string>&
 
     return results;
 }
-
 
 void HybridStorage::removeBatch(const std::vector<std::string>& keys, double scope) {
     Scope s = toScope(scope);
@@ -347,6 +396,66 @@ void HybridStorage::removeBatch(const std::vector<std::string>& keys, double sco
         notifyListeners(static_cast<int>(s), key, std::nullopt);
     }
 }
+
+// --- Configuration ---
+
+void HybridStorage::setSecureAccessControl(double level) {
+    ensureAdapter();
+    nativeAdapter_->setSecureAccessControl(static_cast<int>(level));
+}
+
+void HybridStorage::setKeychainAccessGroup(const std::string& group) {
+    ensureAdapter();
+    nativeAdapter_->setKeychainAccessGroup(group);
+}
+
+// --- Biometric ---
+
+void HybridStorage::setSecureBiometric(const std::string& key, const std::string& value) {
+    ensureAdapter();
+    try {
+        nativeAdapter_->setSecureBiometric(key, value);
+        notifyListeners(static_cast<int>(Scope::Secure), key, value);
+    } catch (const std::exception& e) {
+        throw std::runtime_error(std::string("NitroStorage: Biometric set failed: ") + e.what());
+    }
+}
+
+std::optional<std::string> HybridStorage::getSecureBiometric(const std::string& key) {
+    ensureAdapter();
+    try {
+        return nativeAdapter_->getSecureBiometric(key);
+    } catch (const std::exception& e) {
+        throw std::runtime_error(std::string("NitroStorage: Biometric get failed: ") + e.what());
+    }
+}
+
+void HybridStorage::deleteSecureBiometric(const std::string& key) {
+    ensureAdapter();
+    try {
+        nativeAdapter_->deleteSecureBiometric(key);
+        notifyListeners(static_cast<int>(Scope::Secure), key, std::nullopt);
+    } catch (const std::exception& e) {
+        throw std::runtime_error(std::string("NitroStorage: Biometric delete failed: ") + e.what());
+    }
+}
+
+bool HybridStorage::hasSecureBiometric(const std::string& key) {
+    ensureAdapter();
+    return nativeAdapter_->hasSecureBiometric(key);
+}
+
+void HybridStorage::clearSecureBiometric() {
+    ensureAdapter();
+    try {
+        nativeAdapter_->clearSecureBiometric();
+        notifyListeners(static_cast<int>(Scope::Secure), "", std::nullopt);
+    } catch (const std::exception& e) {
+        throw std::runtime_error(std::string("NitroStorage: Biometric clear failed: ") + e.what());
+    }
+}
+
+// --- Internal ---
 
 void HybridStorage::notifyListeners(
     int scope,

@@ -5,10 +5,20 @@ const mockHybridObject = {
   get: jest.fn(),
   remove: jest.fn(),
   clear: jest.fn(),
+  has: jest.fn(),
+  getAllKeys: jest.fn(),
+  size: jest.fn(),
   setBatch: jest.fn(),
   getBatch: jest.fn(),
   removeBatch: jest.fn(),
   addOnChange: jest.fn(),
+  setSecureAccessControl: jest.fn(),
+  setKeychainAccessGroup: jest.fn(),
+  setSecureBiometric: jest.fn(),
+  getSecureBiometric: jest.fn(),
+  deleteSecureBiometric: jest.fn(),
+  hasSecureBiometric: jest.fn(),
+  clearSecureBiometric: jest.fn(),
 };
 
 jest.mock("react-native-nitro-modules", () => ({
@@ -22,6 +32,7 @@ import {
   useStorage,
   useStorageSelector,
   StorageScope,
+  AccessControl,
   getBatch,
   setBatch,
   removeBatch,
@@ -56,7 +67,9 @@ describe("createStorageItem", () => {
       defaultValue: "default",
     });
 
-    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("stored-value"));
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("stored-value"),
+    );
     expect(item.get()).toBe("stored-value");
   });
 
@@ -71,7 +84,72 @@ describe("createStorageItem", () => {
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "test-key",
       serializeWithPrimitiveFastPath("new-value"),
-      StorageScope.Disk
+      StorageScope.Disk,
+    );
+  });
+
+  it("applies per-item secure access control on write", () => {
+    const strict = createStorageItem({
+      key: "strict-key",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      accessControl: AccessControl.AfterFirstUnlock,
+    });
+    strict.set("token");
+
+    expect(mockHybridObject.setSecureAccessControl).toHaveBeenCalledWith(
+      AccessControl.AfterFirstUnlock,
+    );
+    expect(mockHybridObject.set).toHaveBeenCalledWith(
+      "strict-key",
+      serializeWithPrimitiveFastPath("token"),
+      StorageScope.Secure,
+    );
+  });
+
+  it("resets secure access control to default when omitted", () => {
+    const strict = createStorageItem({
+      key: "strict-reset",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      accessControl: AccessControl.AfterFirstUnlock,
+    });
+    strict.set("one");
+
+    const plain = createStorageItem({
+      key: "plain-reset",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+    });
+    plain.set("two");
+
+    expect(mockHybridObject.setSecureAccessControl).toHaveBeenNthCalledWith(
+      1,
+      AccessControl.AfterFirstUnlock,
+    );
+    expect(mockHybridObject.setSecureAccessControl).toHaveBeenNthCalledWith(
+      2,
+      AccessControl.WhenUnlocked,
+    );
+  });
+
+  it("uses storage-level secure access control when item access control is omitted", () => {
+    storage.setAccessControl(AccessControl.AfterFirstUnlock);
+
+    const plain = createStorageItem({
+      key: "global-access-control",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+    });
+    plain.set("value");
+
+    expect(mockHybridObject.setSecureAccessControl).toHaveBeenNthCalledWith(
+      1,
+      AccessControl.AfterFirstUnlock,
+    );
+    expect(mockHybridObject.setSecureAccessControl).toHaveBeenNthCalledWith(
+      2,
+      AccessControl.AfterFirstUnlock,
     );
   });
 
@@ -85,8 +163,15 @@ describe("createStorageItem", () => {
     item.delete();
     expect(mockHybridObject.remove).toHaveBeenCalledWith(
       "test-key",
-      StorageScope.Disk
+      StorageScope.Disk,
     );
+  });
+
+  it("clearing secure scope also clears biometric entries", () => {
+    mockHybridObject.clearSecureBiometric.mockClear();
+    storage.clear(StorageScope.Secure);
+    expect(mockHybridObject.clear).toHaveBeenCalledWith(StorageScope.Secure);
+    expect(mockHybridObject.clearSecureBiometric).toHaveBeenCalledTimes(1);
   });
 
   it("subscribes to changes", () => {
@@ -101,7 +186,7 @@ describe("createStorageItem", () => {
 
     expect(mockHybridObject.addOnChange).toHaveBeenCalledWith(
       StorageScope.Disk,
-      expect.any(Function)
+      expect.any(Function),
     );
 
     unsubscribe();
@@ -120,7 +205,7 @@ describe("createStorageItem", () => {
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "test-key",
       "42",
-      StorageScope.Disk
+      StorageScope.Disk,
     );
 
     mockHybridObject.get.mockReturnValue("99");
@@ -145,7 +230,7 @@ describe("createStorageItem", () => {
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "user",
       serializeWithPrimitiveFastPath(user),
-      StorageScope.Disk
+      StorageScope.Disk,
     );
 
     mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath(user));
@@ -162,7 +247,7 @@ describe("createStorageItem", () => {
     const listener = jest.fn();
     const unsubscribe = item.subscribe(listener);
 
-    item._triggerListeners();
+    (item as unknown as { _triggerListeners: () => void })._triggerListeners();
 
     expect(listener).toHaveBeenCalled();
     unsubscribe();
@@ -184,7 +269,7 @@ describe("createStorageItem", () => {
     unsub1();
     unsub2();
 
-    item._triggerListeners();
+    (item as unknown as { _triggerListeners: () => void })._triggerListeners();
     expect(listener1).not.toHaveBeenCalled();
     expect(listener2).not.toHaveBeenCalled();
   });
@@ -218,7 +303,9 @@ describe("createStorageItem", () => {
     mockHybridObject.get.mockReturnValue(undefined);
     expect(item.get()).toBe(undefined);
 
-    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("value"));
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("value"),
+    );
     expect(item.get()).toBe("value");
   });
 
@@ -247,7 +334,7 @@ describe("createStorageItem", () => {
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "memory-key",
       serializeWithPrimitiveFastPath("value"),
-      StorageScope.Disk
+      StorageScope.Disk,
     );
   });
 
@@ -262,7 +349,7 @@ describe("createStorageItem", () => {
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "disk-key",
       serializeWithPrimitiveFastPath("value"),
-      StorageScope.Disk
+      StorageScope.Disk,
     );
   });
 
@@ -277,7 +364,7 @@ describe("createStorageItem", () => {
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "secure-key",
       serializeWithPrimitiveFastPath("value"),
-      StorageScope.Secure
+      StorageScope.Secure,
     );
   });
 });
@@ -295,7 +382,9 @@ describe("useStorage", () => {
       defaultValue: "initial",
     });
 
-    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("initial"));
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("initial"),
+    );
 
     const { result } = renderHook(() => useStorage(item));
 
@@ -310,15 +399,19 @@ describe("useStorage", () => {
       defaultValue: "initial",
     });
 
-    // Initial render
-    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("initial"));
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("initial"),
+    );
     const { result } = renderHook(() => useStorage(item));
     expect(result.current[0]).toBe("initial");
 
-    // Change happens
-    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("updated"));
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("updated"),
+    );
     act(() => {
-      item._triggerListeners();
+      (
+        item as unknown as { _triggerListeners: () => void }
+      )._triggerListeners();
     });
 
     expect(result.current[0]).toBe("updated");
@@ -334,20 +427,17 @@ describe("useStorage", () => {
     const obj = { count: 1 };
     mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath(obj));
 
-    // First call deserializes
     const ref1 = item.get();
     expect(ref1).toEqual(obj);
 
-    // Second call with same underlying data should return SAME reference
-    // because mockHybridObject.get returns same string, and we cache
     const ref2 = item.get();
-    expect(ref2).toBe(ref1); // Strict equality check
+    expect(ref2).toBe(ref1);
 
-    // Simulate change
     const newObj = { count: 2 };
-    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath(newObj));
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath(newObj),
+    );
 
-    // Should get new reference
     const ref3 = item.get();
     expect(ref3).toEqual(newObj);
     expect(ref3).not.toBe(ref1);
@@ -365,7 +455,7 @@ describe("useStorage", () => {
     const unsub1 = item.subscribe(listener1);
     const unsub2 = item.subscribe(listener2);
 
-    item._triggerListeners();
+    (item as unknown as { _triggerListeners: () => void })._triggerListeners();
     expect(listener1).toHaveBeenCalledTimes(1);
     expect(listener2).toHaveBeenCalledTimes(1);
 
@@ -374,7 +464,7 @@ describe("useStorage", () => {
 
     listener1.mockClear();
     listener2.mockClear();
-    item._triggerListeners();
+    (item as unknown as { _triggerListeners: () => void })._triggerListeners();
     expect(listener1).not.toHaveBeenCalled();
     expect(listener2).not.toHaveBeenCalled();
   });
@@ -386,7 +476,9 @@ describe("useStorage", () => {
       defaultValue: "initial",
     });
 
-    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("initial"));
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("initial"),
+    );
 
     const { result } = renderHook(() => useStorage(item));
 
@@ -397,7 +489,7 @@ describe("useStorage", () => {
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "test-key",
       serializeWithPrimitiveFastPath("new-value"),
-      StorageScope.Disk
+      StorageScope.Disk,
     );
   });
 
@@ -414,7 +506,7 @@ describe("useStorage", () => {
       return useStorageSelector(
         item,
         (value) => ({ count: value.count }),
-        (prev, next) => prev.count === next.count
+        (prev, next) => prev.count === next.count,
       );
     });
 
@@ -442,7 +534,9 @@ describe("useStorage", () => {
       readCache: true,
     });
 
-    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("cached"));
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("cached"),
+    );
     expect(item.get()).toBe("cached");
     expect(item.get()).toBe("cached");
     expect(mockHybridObject.get).toHaveBeenCalledTimes(1);
@@ -455,7 +549,9 @@ describe("useStorage", () => {
       defaultValue: "default",
     });
 
-    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("cached"));
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("cached"),
+    );
     expect(item.get()).toBe("cached");
     expect(item.get()).toBe("cached");
     expect(mockHybridObject.get).toHaveBeenCalledTimes(2);
@@ -513,7 +609,7 @@ describe("useStorage", () => {
     expect(mockHybridObject.setBatch).toHaveBeenCalledWith(
       ["secure-coalesce"],
       [serializeWithPrimitiveFastPath("second")],
-      StorageScope.Secure
+      StorageScope.Secure,
     );
   });
 });
@@ -546,13 +642,31 @@ describe("Batch Operations", () => {
         { item: item1, value: "v1" },
         { item: item2, value: "v2" },
       ],
-      StorageScope.Disk
+      StorageScope.Disk,
     );
 
     expect(mockHybridObject.setBatch).toHaveBeenCalledWith(
       ["batch-1", "batch-2"],
-      [serializeWithPrimitiveFastPath("v1"), serializeWithPrimitiveFastPath("v2")],
-      StorageScope.Disk
+      [
+        serializeWithPrimitiveFastPath("v1"),
+        serializeWithPrimitiveFastPath("v2"),
+      ],
+      StorageScope.Disk,
+    );
+  });
+
+  it("applies storage-level access control for secure raw batch path", () => {
+    storage.setAccessControl(AccessControl.AfterFirstUnlock);
+
+    setBatch([{ item: secureItem, value: "secure-v1" }], StorageScope.Secure);
+
+    expect(mockHybridObject.setSecureAccessControl).toHaveBeenNthCalledWith(
+      1,
+      AccessControl.AfterFirstUnlock,
+    );
+    expect(mockHybridObject.setSecureAccessControl).toHaveBeenNthCalledWith(
+      2,
+      AccessControl.AfterFirstUnlock,
     );
   });
 
@@ -562,8 +676,6 @@ describe("Batch Operations", () => {
       serializeWithPrimitiveFastPath("v2"),
     ]);
 
-    // We also need to mock individual get calls because currently getBatch implementation in JS
-    // calls item.get() which checks the native side individually if cache is empty.
     mockHybridObject.get.mockImplementation((key) => {
       if (key === "batch-1") return serializeWithPrimitiveFastPath("v1");
       if (key === "batch-2") return serializeWithPrimitiveFastPath("v2");
@@ -574,7 +686,7 @@ describe("Batch Operations", () => {
 
     expect(mockHybridObject.getBatch).toHaveBeenCalledWith(
       ["batch-1", "batch-2"],
-      StorageScope.Disk
+      StorageScope.Disk,
     );
     expect(values).toEqual(["v1", "v2"]);
   });
@@ -584,15 +696,15 @@ describe("Batch Operations", () => {
 
     expect(mockHybridObject.removeBatch).toHaveBeenCalledWith(
       ["batch-1", "batch-2"],
-      StorageScope.Disk
+      StorageScope.Disk,
     );
     expect(mockHybridObject.remove).not.toHaveBeenCalled();
   });
 
   it("throws on scope mismatch for getBatch", () => {
-    expect(() =>
-      getBatch([item1, secureItem], StorageScope.Disk)
-    ).toThrow(/Batch scope mismatch/);
+    expect(() => getBatch([item1, secureItem], StorageScope.Disk)).toThrow(
+      /Batch scope mismatch/,
+    );
     expect(mockHybridObject.getBatch).not.toHaveBeenCalled();
   });
 
@@ -603,16 +715,16 @@ describe("Batch Operations", () => {
           { item: item1, value: "v1" },
           { item: secureItem, value: "v2" },
         ],
-        StorageScope.Disk
-      )
+        StorageScope.Disk,
+      ),
     ).toThrow(/Batch scope mismatch/);
     expect(mockHybridObject.setBatch).not.toHaveBeenCalled();
   });
 
   it("throws on scope mismatch for removeBatch", () => {
-    expect(() =>
-      removeBatch([item1, secureItem], StorageScope.Disk)
-    ).toThrow(/Batch scope mismatch/);
+    expect(() => removeBatch([item1, secureItem], StorageScope.Disk)).toThrow(
+      /Batch scope mismatch/,
+    );
     expect(mockHybridObject.removeBatch).not.toHaveBeenCalled();
   });
 
@@ -634,7 +746,7 @@ describe("Batch Operations", () => {
           { item: mem1, value: "mv1" },
           { item: mem2, value: "mv2" },
         ],
-        StorageScope.Memory
+        StorageScope.Memory,
       );
 
       expect(mem1.get()).toBe("mv1");
@@ -661,7 +773,9 @@ describe("Batch Operations", () => {
       undefined,
       serializeWithPrimitiveFastPath("v2"),
     ]);
-    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("v1-fallback"));
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("v1-fallback"),
+    );
 
     const item1WithFallback = createStorageItem({
       key: "fallback-1",
@@ -678,11 +792,12 @@ describe("Batch Operations", () => {
       key: "batch-validated-set",
       scope: StorageScope.Disk,
       defaultValue: 1,
-      validate: (value): value is number => typeof value === "number" && value > 0,
+      validate: (value): value is number =>
+        typeof value === "number" && value > 0,
     });
 
     expect(() =>
-      setBatch([{ item: validatedItem, value: -1 }], StorageScope.Disk)
+      setBatch([{ item: validatedItem, value: -1 }], StorageScope.Disk),
     ).toThrow(/Validation failed/);
 
     expect(mockHybridObject.setBatch).not.toHaveBeenCalled();
@@ -693,7 +808,8 @@ describe("Batch Operations", () => {
       key: "batch-validated-get",
       scope: StorageScope.Disk,
       defaultValue: 7,
-      validate: (value): value is number => typeof value === "number" && value > 10,
+      validate: (value): value is number =>
+        typeof value === "number" && value > 10,
     });
 
     mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath(2));
@@ -713,7 +829,9 @@ describe("Batch Operations", () => {
     mockHybridObject.getBatch.mockReturnValue([
       "__nitro_storage_batch_missing__::v1",
     ]);
-    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("fallback"));
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("fallback"),
+    );
 
     const values = getBatch([sentinelItem], StorageScope.Disk);
     expect(values).toEqual(["fallback"]);
@@ -729,7 +847,9 @@ describe("v0.2 features", () => {
     diskStore.clear();
     storage.clearAll();
 
-    mockHybridObject.get.mockImplementation((key: string) => diskStore.get(key));
+    mockHybridObject.get.mockImplementation((key: string) =>
+      diskStore.get(key),
+    );
     mockHybridObject.set.mockImplementation((key: string, value: string) => {
       diskStore.set(key, value);
     });
@@ -743,16 +863,19 @@ describe("v0.2 features", () => {
       key: "validated",
       scope: StorageScope.Disk,
       defaultValue: 0,
-      validate: (value): value is number => typeof value === "number" && value >= 0,
+      validate: (value): value is number =>
+        typeof value === "number" && value >= 0,
       onValidationError: () => 10,
     });
 
-    mockHybridObject.get.mockReturnValueOnce(serializeWithPrimitiveFastPath(-1));
+    mockHybridObject.get.mockReturnValueOnce(
+      serializeWithPrimitiveFastPath(-1),
+    );
     expect(item.get()).toBe(10);
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "validated",
       serializeWithPrimitiveFastPath(10),
-      StorageScope.Disk
+      StorageScope.Disk,
     );
 
     expect(() => item.set(-2)).toThrow(/Validation failed/);
@@ -773,7 +896,10 @@ describe("v0.2 features", () => {
 
     nowSpy.mockReturnValue(1_150);
     expect(item.get()).toBe("default");
-    expect(mockHybridObject.remove).toHaveBeenCalledWith("ttl-key", StorageScope.Disk);
+    expect(mockHybridObject.remove).toHaveBeenCalledWith(
+      "ttl-key",
+      StorageScope.Disk,
+    );
     nowSpy.mockRestore();
   });
 
@@ -790,7 +916,7 @@ describe("v0.2 features", () => {
         tx.setItem(item, "during");
         tx.setRaw("another", JSON.stringify("x"));
         throw new Error("boom");
-      })
+      }),
     ).toThrow("boom");
 
     expect(item.get()).toBe("before");
@@ -813,7 +939,9 @@ describe("v0.2 features", () => {
     expect(appliedVersion).toBe(v2);
     expect(diskStore.get("migrated-a")).toBe(JSON.stringify("a"));
     expect(diskStore.get("migrated-b")).toBe(JSON.stringify("b"));
-    expect(diskStore.get("__nitro_storage_migration_version__")).toBe(String(v2));
+    expect(diskStore.get("__nitro_storage_migration_version__")).toBe(
+      String(v2),
+    );
   });
 });
 
@@ -826,7 +954,9 @@ describe("v0.2 edge cases", () => {
     diskStore.clear();
     storage.clearAll();
 
-    mockHybridObject.get.mockImplementation((key: string) => diskStore.get(key));
+    mockHybridObject.get.mockImplementation((key: string) =>
+      diskStore.get(key),
+    );
     mockHybridObject.set.mockImplementation((key: string, value: string) => {
       diskStore.set(key, value);
     });
@@ -841,7 +971,7 @@ describe("v0.2 edge cases", () => {
         key: "invalid-ttl",
         scope: StorageScope.Disk,
         expiration: { ttlMs: 0 },
-      })
+      }),
     ).toThrow("expiration.ttlMs must be greater than 0.");
   });
 
@@ -850,7 +980,8 @@ describe("v0.2 edge cases", () => {
       key: "invalid-default",
       scope: StorageScope.Disk,
       defaultValue: 7,
-      validate: (value): value is number => typeof value === "number" && value > 10,
+      validate: (value): value is number =>
+        typeof value === "number" && value > 10,
     });
 
     diskStore.set("invalid-default", JSON.stringify(3));
@@ -863,7 +994,8 @@ describe("v0.2 edge cases", () => {
       key: "invalid-handler",
       scope: StorageScope.Disk,
       defaultValue: 11,
-      validate: (value): value is number => typeof value === "number" && value > 10,
+      validate: (value): value is number =>
+        typeof value === "number" && value > 10,
       onValidationError: () => 1,
     });
 
@@ -904,13 +1036,13 @@ describe("v0.2 edge cases", () => {
 
   it("throws for invalid migration versions and duplicates", () => {
     expect(() => registerMigration(0, () => undefined)).toThrow(
-      "Migration version must be a positive integer."
+      "Migration version must be a positive integer.",
     );
 
     const version = migrationVersionSeed++;
     registerMigration(version, () => undefined);
     expect(() => registerMigration(version, () => undefined)).toThrow(
-      `Migration version ${version} is already registered.`
+      `Migration version ${version} is already registered.`,
     );
   });
 
@@ -940,7 +1072,7 @@ describe("v0.2 edge cases", () => {
         tx.setRaw("tx-memory", JSON.stringify("step-2"));
         tx.removeRaw("tx-memory");
         throw new Error("rollback");
-      })
+      }),
     ).toThrow("rollback");
 
     expect(item.get()).toBe("initial");
@@ -968,7 +1100,7 @@ describe("v0.2 edge cases", () => {
     expect(() =>
       runTransaction(StorageScope.Disk, (tx) => {
         tx.getItem(otherScopeItem);
-      })
+      }),
     ).toThrow(/Batch scope mismatch/);
   });
 
@@ -1011,7 +1143,7 @@ describe("v0.2 edge cases", () => {
     expect(() =>
       runTransaction(StorageScope.Memory, (tx) => {
         tx.setItem(validatedMemoryItem, "bad");
-      })
+      }),
     ).toThrow(/Validation failed/);
   });
 });

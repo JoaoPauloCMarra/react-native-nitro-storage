@@ -12,7 +12,7 @@ export type MMKVLike = {
 export function migrateFromMMKV<T>(
   mmkv: MMKVLike,
   item: StorageItem<T>,
-  deleteFromMMKV = false
+  deleteFromMMKV = false,
 ): boolean {
   const key = item.key;
   if (!mmkv.contains(key)) {
