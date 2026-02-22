@@ -213,6 +213,10 @@ void AndroidStorageAdapterCpp::clearSecure() {
 // --- Config (no-ops on Android; access control / groups are iOS-specific) ---
 
 void AndroidStorageAdapterCpp::setSecureAccessControl(int /*level*/) {}
+void AndroidStorageAdapterCpp::setSecureWritesAsync(bool enabled) {
+    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<void(jboolean)>("setSecureWritesAsync");
+    method(AndroidStorageAdapterJava::javaClassStatic(), enabled);
+}
 void AndroidStorageAdapterCpp::setKeychainAccessGroup(const std::string& /*group*/) {}
 
 // --- Biometric ---

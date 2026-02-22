@@ -11,11 +11,13 @@ export interface Storage extends HybridObject<{ ios: "c++"; android: "c++" }> {
   setBatch(keys: string[], values: string[], scope: number): void;
   getBatch(keys: string[], scope: number): (string | undefined)[];
   removeBatch(keys: string[], scope: number): void;
+  removeByPrefix(prefix: string, scope: number): void;
   addOnChange(
     scope: number,
     callback: (key: string, value: string | undefined) => void,
   ): () => void;
   setSecureAccessControl(level: number): void;
+  setSecureWritesAsync(enabled: boolean): void;
   setKeychainAccessGroup(group: string): void;
   setSecureBiometric(key: string, value: string): void;
   getSecureBiometric(key: string): string | undefined;

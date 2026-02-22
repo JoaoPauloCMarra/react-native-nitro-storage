@@ -33,6 +33,9 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             encryptedPreferences
         }
     }
+
+    @Volatile
+    private var secureWritesAsync = false
     
     private fun initializeEncryptedPreferences(name: String, key: MasterKey): SharedPreferences {
         return try {
@@ -90,6 +93,14 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             }
         }
     }
+
+    private fun applySecureEditor(editor: SharedPreferences.Editor) {
+        if (secureWritesAsync) {
+            editor.apply()
+        } else {
+            editor.commit()
+        }
+    }
     
     companion object {
         @Volatile
@@ -116,6 +127,11 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         @JvmStatic
         fun getContext(): Context {
             return getInstanceOrThrow().context
+        }
+
+        @JvmStatic
+        fun setSecureWritesAsync(enabled: Boolean) {
+            getInstanceOrThrow().secureWritesAsync = enabled
         }
 
         // --- Disk ---
@@ -182,21 +198,24 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             getInstanceOrThrow().sharedPreferences.edit().clear().apply()
         }
 
-        // --- Secure (uses commit for reliability) ---
+        // --- Secure (sync commit by default, async apply when enabled) ---
         
         @JvmStatic
         fun setSecure(key: String, value: String) {
-            getInstanceOrThrow().encryptedPreferences.edit().putString(key, value).commit()
+            val inst = getInstanceOrThrow()
+            val editor = inst.encryptedPreferences.edit().putString(key, value)
+            inst.applySecureEditor(editor)
         }
 
         @JvmStatic
         fun setSecureBatch(keys: Array<String>, values: Array<String>) {
-            val editor = getInstanceOrThrow().encryptedPreferences.edit()
+            val inst = getInstanceOrThrow()
+            val editor = inst.encryptedPreferences.edit()
             val count = minOf(keys.size, values.size)
             for (index in 0 until count) {
                 editor.putString(keys[index], values[index])
             }
-            editor.commit()
+            inst.applySecureEditor(editor)
         }
         
         @JvmStatic
@@ -215,8 +234,8 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         @JvmStatic
         fun deleteSecure(key: String) {
             val inst = getInstanceOrThrow()
-            inst.encryptedPreferences.edit().remove(key).commit()
-            inst.biometricPreferences.edit().remove(key).commit()
+            inst.applySecureEditor(inst.encryptedPreferences.edit().remove(key))
+            inst.applySecureEditor(inst.biometricPreferences.edit().remove(key))
         }
 
         @JvmStatic
@@ -228,8 +247,8 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
                 secureEditor.remove(key)
                 biometricEditor.remove(key)
             }
-            secureEditor.commit()
-            biometricEditor.commit()
+            inst.applySecureEditor(secureEditor)
+            inst.applySecureEditor(biometricEditor)
         }
 
         @JvmStatic
@@ -255,15 +274,17 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         @JvmStatic
         fun clearSecure() {
             val inst = getInstanceOrThrow()
-            inst.encryptedPreferences.edit().clear().commit()
-            inst.biometricPreferences.edit().clear().commit()
+            inst.applySecureEditor(inst.encryptedPreferences.edit().clear())
+            inst.applySecureEditor(inst.biometricPreferences.edit().clear())
         }
 
         // --- Biometric (separate encrypted store, requires recent biometric auth on Android) ---
 
         @JvmStatic
         fun setSecureBiometric(key: String, value: String) {
-            getInstanceOrThrow().biometricPreferences.edit().putString(key, value).commit()
+            val inst = getInstanceOrThrow()
+            val editor = inst.biometricPreferences.edit().putString(key, value)
+            inst.applySecureEditor(editor)
         }
 
         @JvmStatic
@@ -273,7 +294,8 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
 
         @JvmStatic
         fun deleteSecureBiometric(key: String) {
-            getInstanceOrThrow().biometricPreferences.edit().remove(key).commit()
+            val inst = getInstanceOrThrow()
+            inst.applySecureEditor(inst.biometricPreferences.edit().remove(key))
         }
 
         @JvmStatic
@@ -283,7 +305,8 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
 
         @JvmStatic
         fun clearSecureBiometric() {
-            getInstanceOrThrow().biometricPreferences.edit().clear().commit()
+            val inst = getInstanceOrThrow()
+            inst.applySecureEditor(inst.biometricPreferences.edit().clear())
         }
     }
 }

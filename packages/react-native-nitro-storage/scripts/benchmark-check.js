@@ -29,6 +29,40 @@ const {
   storage,
 } = storageModule;
 
+function ensureLocalStorage() {
+  if (typeof globalThis.localStorage !== "undefined") {
+    return;
+  }
+
+  const store = new Map();
+  const localStorageMock = {
+    clear() {
+      store.clear();
+    },
+    getItem(key) {
+      return store.has(key) ? store.get(key) : null;
+    },
+    key(index) {
+      return Array.from(store.keys())[index] ?? null;
+    },
+    removeItem(key) {
+      store.delete(key);
+    },
+    setItem(key, value) {
+      store.set(key, String(value));
+    },
+    get length() {
+      return store.size;
+    },
+  };
+
+  Object.defineProperty(globalThis, "localStorage", {
+    value: localStorageMock,
+    configurable: true,
+    writable: true,
+  });
+}
+
 function measure(label, operations, run) {
   const start = performance.now();
   run();
@@ -44,11 +78,16 @@ function printMetric(metric) {
 }
 
 const thresholds = {
-  memorySetOpsPerSecond: 20_000,
-  memoryGetOpsPerSecond: 40_000,
-  memoryBatchOpsPerSecond: 15_000,
+  memorySetOpsPerSecond: 2_000_000,
+  memoryGetOpsPerSecond: 8_000_000,
+  memoryBatchOpsPerSecond: 1_000_000,
+  diskSetOpsPerSecond: 200_000,
+  diskGetOpsPerSecond: 250_000,
+  secureSetOpsPerSecond: 120_000,
+  secureGetOpsPerSecond: 150_000,
 };
 
+ensureLocalStorage();
 storage.clearAll();
 
 const memoryCounter = createStorageItem({
@@ -93,7 +132,55 @@ const batchMetric = measure(
   }
 );
 
-const metrics = [setMetric, getMetric, batchMetric];
+const diskCounter = createStorageItem({
+  key: "__benchmark_disk_counter__",
+  scope: StorageScope.Disk,
+  defaultValue: 0,
+});
+
+const diskSetIterations = 25_000;
+const diskSetMetric = measure("disk:set", diskSetIterations, () => {
+  for (let index = 0; index < diskSetIterations; index += 1) {
+    diskCounter.set(index);
+  }
+});
+
+const diskGetIterations = 25_000;
+const diskGetMetric = measure("disk:get", diskGetIterations, () => {
+  for (let index = 0; index < diskGetIterations; index += 1) {
+    diskCounter.get();
+  }
+});
+
+const secureCounter = createStorageItem({
+  key: "__benchmark_secure_counter__",
+  scope: StorageScope.Secure,
+  defaultValue: 0,
+});
+
+const secureSetIterations = 15_000;
+const secureSetMetric = measure("secure:set", secureSetIterations, () => {
+  for (let index = 0; index < secureSetIterations; index += 1) {
+    secureCounter.set(index);
+  }
+});
+
+const secureGetIterations = 15_000;
+const secureGetMetric = measure("secure:get", secureGetIterations, () => {
+  for (let index = 0; index < secureGetIterations; index += 1) {
+    secureCounter.get();
+  }
+});
+
+const metrics = [
+  setMetric,
+  getMetric,
+  batchMetric,
+  diskSetMetric,
+  diskGetMetric,
+  secureSetMetric,
+  secureGetMetric,
+];
 metrics.forEach(printMetric);
 
 const failures = [];
@@ -110,6 +197,26 @@ if (getMetric.opsPerSecond < thresholds.memoryGetOpsPerSecond) {
 if (batchMetric.opsPerSecond < thresholds.memoryBatchOpsPerSecond) {
   failures.push(
     `memory:batch dropped below ${thresholds.memoryBatchOpsPerSecond.toLocaleString()} ops/s`
+  );
+}
+if (diskSetMetric.opsPerSecond < thresholds.diskSetOpsPerSecond) {
+  failures.push(
+    `disk:set dropped below ${thresholds.diskSetOpsPerSecond.toLocaleString()} ops/s`
+  );
+}
+if (diskGetMetric.opsPerSecond < thresholds.diskGetOpsPerSecond) {
+  failures.push(
+    `disk:get dropped below ${thresholds.diskGetOpsPerSecond.toLocaleString()} ops/s`
+  );
+}
+if (secureSetMetric.opsPerSecond < thresholds.secureSetOpsPerSecond) {
+  failures.push(
+    `secure:set dropped below ${thresholds.secureSetOpsPerSecond.toLocaleString()} ops/s`
+  );
+}
+if (secureGetMetric.opsPerSecond < thresholds.secureGetOpsPerSecond) {
+  failures.push(
+    `secure:get dropped below ${thresholds.secureGetOpsPerSecond.toLocaleString()} ops/s`
   );
 }
 

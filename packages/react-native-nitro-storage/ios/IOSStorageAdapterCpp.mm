@@ -3,6 +3,7 @@
 #import <Security/Security.h>
 #import <LocalAuthentication/LocalAuthentication.h>
 #include <algorithm>
+#include <unordered_set>
 
 namespace NitroStorage {
 
@@ -222,9 +223,10 @@ bool IOSStorageAdapterCpp::hasSecure(const std::string& key) {
 std::vector<std::string> IOSStorageAdapterCpp::getAllKeysSecure() {
     NSString* group = keychainAccessGroup_.empty() ? nil : [NSString stringWithUTF8String:keychainAccessGroup_.c_str()];
     std::vector<std::string> keys = keychainAccountsForService(kKeychainService, group);
+    std::unordered_set<std::string> seen(keys.begin(), keys.end());
     const std::vector<std::string> biometricKeys = keychainAccountsForService(kBiometricKeychainService, group);
     for (const auto& key : biometricKeys) {
-        if (std::find(keys.begin(), keys.end(), key) == keys.end()) {
+        if (seen.insert(key).second) {
             keys.push_back(key);
         }
     }
@@ -286,6 +288,10 @@ void IOSStorageAdapterCpp::clearSecure() {
 
 void IOSStorageAdapterCpp::setSecureAccessControl(int level) {
     accessControlLevel_ = level;
+}
+
+void IOSStorageAdapterCpp::setSecureWritesAsync(bool /*enabled*/) {
+    // iOS writes are synchronous by design; keep behavior unchanged.
 }
 
 void IOSStorageAdapterCpp::setKeychainAccessGroup(const std::string& group) {

@@ -168,6 +168,8 @@ public:
         accessControlLevel_ = level;
     }
 
+    void setSecureWritesAsync(bool /*enabled*/) override {}
+
     void setKeychainAccessGroup(const std::string& group) override {
         keychainGroup_ = group;
     }

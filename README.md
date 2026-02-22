@@ -19,6 +19,24 @@ Synchronous Memory, Disk, and Secure storage in one unified API — powered by [
 - **MMKV migration** — drop-in `migrateFromMMKV` for painless migration from MMKV
 - **Cross-platform** — iOS, Android, and web (`localStorage` fallback)
 
+## Feature Coverage
+
+Every feature in this package is documented with at least one runnable example in this README:
+
+- Core item API (`createStorageItem`, `get/set/delete/has/subscribe`) — see Quick Start and Low-level subscription use case
+- Hooks (`useStorage`, `useStorageSelector`, `useSetStorage`) — see Quick Start and Persisted User Preferences
+- Scopes (`Memory`, `Disk`, `Secure`) — see Storage Scopes and multiple use cases
+- Namespaces — see Multi-Tenant / Namespaced Storage
+- TTL expiration + callbacks — see OTP / Temporary Codes
+- Validation + recovery — see Feature Flags with Validation
+- Biometric + access control — see Biometric-protected Secrets
+- Global storage utilities (`clear*`, `has`, `getAll*`, `size`, secure write settings) — see Global utility examples and Storage Snapshots and Cleanup
+- Batch APIs (`getBatch`, `setBatch`, `removeBatch`) — see Batch Operations and Bulk Bootstrap with Batch APIs
+- Transactions — see Transactions and Atomic Balance Transfer
+- Migrations (`registerMigration`, `migrateToLatest`) — see Migrations
+- MMKV migration (`migrateFromMMKV`) — see MMKV Migration and Migrating From MMKV
+- Auth storage factory (`createSecureAuthStorage`) — see Auth Token Management
+
 ## Requirements
 
 | Dependency                   | Version     |
@@ -183,6 +201,17 @@ function createStorageItem<T = undefined>(
 | `scope`           | `StorageScope`                           | The item's scope                                   |
 | `key`             | `string`                                 | The resolved key (includes namespace prefix)       |
 
+**Non-React subscription example:**
+
+```ts
+const unsubscribe = sessionItem.subscribe(() => {
+  console.log("session changed:", sessionItem.get());
+});
+
+sessionItem.set("next-session");
+unsubscribe();
+```
+
 ---
 
 ### React Hooks
@@ -231,9 +260,48 @@ import { storage, StorageScope } from "react-native-nitro-storage";
 | `storage.getAll(scope)`                 | Get all key-value pairs as `Record<string, string>`                          |
 | `storage.size(scope)`                   | Number of stored keys                                                        |
 | `storage.setAccessControl(level)`       | Set default secure access control for subsequent secure writes (native only) |
+| `storage.setSecureWritesAsync(enabled)` | Toggle async secure writes on Android (`false` by default)                   |
+| `storage.flushSecureWrites()`           | Force flush of queued secure writes when coalescing is enabled               |
 | `storage.setKeychainAccessGroup(group)` | Set keychain access group for app sharing (native only)                      |
 
 > `storage.getAll(StorageScope.Secure)` returns regular secure entries. Biometric-protected values are not included in this snapshot API.
+
+#### Global utility examples
+
+```ts
+import { AccessControl, storage, StorageScope } from "react-native-nitro-storage";
+
+storage.has("session", StorageScope.Disk);
+storage.getAllKeys(StorageScope.Disk);
+storage.getAll(StorageScope.Disk);
+storage.size(StorageScope.Disk);
+
+storage.clearNamespace("user-42", StorageScope.Disk);
+storage.clearBiometric();
+
+storage.setAccessControl(AccessControl.WhenUnlockedThisDeviceOnly);
+storage.setKeychainAccessGroup("group.com.example.shared");
+
+storage.clear(StorageScope.Memory);
+storage.clearAll();
+```
+
+#### Android secure write mode
+
+`storage.setSecureWritesAsync(true)` switches secure writes from synchronous `commit()` to asynchronous `apply()` on Android.  
+Use this for non-critical secure writes when lower latency matters more than immediate durability.
+
+Call `storage.flushSecureWrites()` when you need deterministic persistence boundaries (for example before namespace clears, process handoff, or strict test assertions).
+
+```ts
+import { storage } from "react-native-nitro-storage";
+
+storage.setSecureWritesAsync(true);
+
+// ...multiple secure writes happen (including coalesced item writes)
+
+storage.flushSecureWrites(); // deterministic durability boundary
+```
 
 ---
 
@@ -398,11 +466,11 @@ enum BiometricLevel {
 ### Persisted User Preferences
 
 ```ts
-interface UserPreferences {
+type UserPreferences = {
   theme: "light" | "dark" | "system";
   language: string;
   notifications: boolean;
-}
+};
 
 const prefsItem = createStorageItem<UserPreferences>({
   key: "prefs",
@@ -446,21 +514,29 @@ storage.clearNamespace("myapp-auth", StorageScope.Secure);
 ### Feature Flags with Validation
 
 ```ts
-interface FeatureFlags {
+type FeatureFlags = {
   darkMode: boolean;
   betaFeature: boolean;
   maxUploadMb: number;
-}
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const isFeatureFlags = (value: unknown): value is FeatureFlags => {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.darkMode === "boolean" &&
+    typeof value.betaFeature === "boolean" &&
+    typeof value.maxUploadMb === "number"
+  );
+};
 
 const flagsItem = createStorageItem<FeatureFlags>({
   key: "feature-flags",
   scope: StorageScope.Disk,
   defaultValue: { darkMode: false, betaFeature: false, maxUploadMb: 10 },
-  validate: (v): v is FeatureFlags =>
-    typeof v === "object" &&
-    v !== null &&
-    typeof (v as any).darkMode === "boolean" &&
-    typeof (v as any).maxUploadMb === "number",
+  validate: isFeatureFlags,
   onValidationError: () => ({
     darkMode: false,
     betaFeature: false,
@@ -469,6 +545,24 @@ const flagsItem = createStorageItem<FeatureFlags>({
   expiration: { ttlMs: 60 * 60_000 }, // refresh from server every hour
   onExpired: () => fetchAndStoreFlags(),
 });
+```
+
+### Biometric-protected Secrets
+
+```ts
+import { AccessControl, createStorageItem, StorageScope } from "react-native-nitro-storage";
+
+const paymentPin = createStorageItem<string>({
+  key: "payment-pin",
+  scope: StorageScope.Secure,
+  defaultValue: "",
+  biometric: true,
+  accessControl: AccessControl.WhenPasscodeSetThisDeviceOnly,
+});
+
+paymentPin.set("4829");
+const pin = paymentPin.get();
+paymentPin.delete();
 ```
 
 ### Multi-Tenant / Namespaced Storage
@@ -515,6 +609,40 @@ otpItem.set("482917");
 const code = otpItem.get();
 ```
 
+### Bulk Bootstrap with Batch APIs
+
+```ts
+import {
+  createStorageItem,
+  getBatch,
+  removeBatch,
+  setBatch,
+  StorageScope,
+} from "react-native-nitro-storage";
+
+const firstName = createStorageItem({
+  key: "first-name",
+  scope: StorageScope.Disk,
+  defaultValue: "",
+});
+const lastName = createStorageItem({
+  key: "last-name",
+  scope: StorageScope.Disk,
+  defaultValue: "",
+});
+
+setBatch(
+  [
+    { item: firstName, value: "Ada" },
+    { item: lastName, value: "Lovelace" },
+  ],
+  StorageScope.Disk,
+);
+
+const [first, last] = getBatch([firstName, lastName], StorageScope.Disk);
+removeBatch([firstName, lastName], StorageScope.Disk);
+```
+
 ### Atomic Balance Transfer
 
 ```ts
@@ -553,6 +681,60 @@ const compactItem = createStorageItem<{ id: number; active: boolean }>({
     return { id: Number(id), active: flag === "1" };
   },
 });
+```
+
+### Coalesced Secure Writes with Deterministic Flush
+
+```ts
+import { createStorageItem, storage, StorageScope } from "react-native-nitro-storage";
+
+const sessionToken = createStorageItem<string>({
+  key: "session-token",
+  scope: StorageScope.Secure,
+  defaultValue: "",
+  coalesceSecureWrites: true,
+});
+
+sessionToken.set("token-v1");
+sessionToken.set("token-v2");
+
+// force pending secure writes to native persistence
+storage.flushSecureWrites();
+```
+
+### Storage Snapshots and Cleanup
+
+```ts
+import { storage, StorageScope } from "react-native-nitro-storage";
+
+const diskKeys = storage.getAllKeys(StorageScope.Disk);
+const diskValues = storage.getAll(StorageScope.Disk);
+const secureCount = storage.size(StorageScope.Secure);
+
+if (storage.has("legacy-flag", StorageScope.Disk)) {
+  storage.clearNamespace("legacy", StorageScope.Disk);
+}
+
+storage.clearBiometric();
+```
+
+### Low-level Subscription (outside React)
+
+```ts
+import { createStorageItem, StorageScope } from "react-native-nitro-storage";
+
+const notificationsItem = createStorageItem<boolean>({
+  key: "notifications-enabled",
+  scope: StorageScope.Disk,
+  defaultValue: true,
+});
+
+const unsubscribe = notificationsItem.subscribe(() => {
+  console.log("notifications changed:", notificationsItem.get());
+});
+
+notificationsItem.set(false);
+unsubscribe();
 ```
 
 ### Migrating From MMKV
@@ -600,7 +782,11 @@ From repository root:
 
 ```bash
 bun run test -- --filter=react-native-nitro-storage
+bun run lint -- --filter=react-native-nitro-storage
+bun run format:check -- --filter=react-native-nitro-storage
 bun run typecheck -- --filter=react-native-nitro-storage
+bun run test:types -- --filter=react-native-nitro-storage
+bun run test:cpp -- --filter=react-native-nitro-storage
 bun run build -- --filter=react-native-nitro-storage
 ```
 
@@ -612,7 +798,10 @@ bun run test:coverage   # run tests with coverage
 bun run lint            # eslint (expo-magic rules)
 bun run format:check    # prettier check
 bun run typecheck       # tsc --noEmit
-bun run build           # tsup build
+bun run test:types      # public type-level API tests
+bun run test:cpp        # C++ binding/core tests
+bun run check:pack      # npm pack content guard
+bun run build           # bob build
 bun run benchmark       # performance benchmarks
 ```
 

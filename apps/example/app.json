@@ -17,7 +17,14 @@
     },
     "plugins": [
       "expo-router",
-      "expo-build-properties",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "buildReactNativeFromSource": true
+          }
+        }
+      ],
       "react-native-nitro-storage"
     ],
     "experiments": {

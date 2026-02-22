@@ -77,6 +77,22 @@ describe("Web Storage", () => {
     );
   });
 
+  it("does not read current value when setting a direct value", () => {
+    const item = createStorageItem({
+      key: "web-set-no-read",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+    });
+    const getSpy = jest.spyOn(globalThis.localStorage, "getItem");
+
+    item.set("next");
+
+    expect(getSpy).not.toHaveBeenCalled();
+    expect(globalThis.localStorage.getItem("web-set-no-read")).toBe(
+      serializeWithPrimitiveFastPath("next"),
+    );
+  });
+
   it("stores and retrieves secure values", () => {
     const secureItem = createStorageItem({
       key: "secure-key",
@@ -275,6 +291,26 @@ describe("Web Storage", () => {
     ).toBe(serializeWithPrimitiveFastPath("second"));
   });
 
+  it("flushes pending secure writes on demand", () => {
+    const item = createStorageItem({
+      key: "web-secure-flush",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      coalesceSecureWrites: true,
+    });
+
+    item.set("queued");
+    expect(
+      globalThis.localStorage.getItem("__secure_web-secure-flush"),
+    ).toBeNull();
+
+    storage.flushSecureWrites();
+
+    expect(globalThis.localStorage.getItem("__secure_web-secure-flush")).toBe(
+      serializeWithPrimitiveFastPath("queued"),
+    );
+  });
+
   it("runs batch operations for disk scope", () => {
     const item1 = createStorageItem({
       key: "batch-1",
@@ -301,6 +337,62 @@ describe("Web Storage", () => {
 
     removeBatch([item1, item2], StorageScope.Disk);
     expect(removeSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("removeBatch on secure scope removes secure and biometric entries", () => {
+    const removeSpy = jest.spyOn(globalThis.localStorage, "removeItem");
+    const secureItem = createStorageItem({
+      key: "secure-remove-both",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+    });
+    const biometricItem = createStorageItem({
+      key: "secure-remove-both",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+
+    secureItem.set("plain");
+    biometricItem.set("bio");
+    removeSpy.mockClear();
+
+    removeBatch([secureItem], StorageScope.Secure);
+
+    expect(removeSpy).toHaveBeenCalledWith("__secure_secure-remove-both");
+    expect(removeSpy).toHaveBeenCalledWith("__bio_secure-remove-both");
+    expect(secureItem.get()).toBe("");
+    expect(biometricItem.get()).toBe("");
+  });
+
+  it("groups secure raw batch writes by access control", () => {
+    const strictItem = createStorageItem({
+      key: "web-secure-ac-1",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      accessControl: AccessControl.AfterFirstUnlock,
+    });
+    const passcodeItem = createStorageItem({
+      key: "web-secure-ac-2",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      accessControl: AccessControl.WhenPasscodeSetThisDeviceOnly,
+    });
+
+    setBatch(
+      [
+        { item: strictItem, value: "v1" },
+        { item: passcodeItem, value: "v2" },
+      ],
+      StorageScope.Secure,
+    );
+
+    expect(globalThis.localStorage.getItem("__secure_web-secure-ac-1")).toBe(
+      serializeWithPrimitiveFastPath("v1"),
+    );
+    expect(globalThis.localStorage.getItem("__secure_web-secure-ac-2")).toBe(
+      serializeWithPrimitiveFastPath("v2"),
+    );
   });
 
   it("throws for mixed scope batch operations", () => {
@@ -419,6 +511,30 @@ describe("Web Storage", () => {
     nowSpy.mockReturnValue(1_150);
     expect(item.get()).toBe("default");
     expect(globalThis.localStorage.getItem("ttl-key")).toBeNull();
+    nowSpy.mockRestore();
+  });
+
+  it("reuses TTL parse cache while value is still valid", () => {
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(1_000);
+    const parseSpy = jest.spyOn(JSON, "parse");
+    const item = createStorageItem<string>({
+      key: "ttl-parse-cache-web",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+      expiration: { ttlMs: 200 },
+    });
+    const envelope = JSON.stringify({
+      __nitroStorageEnvelope: true,
+      expiresAt: 1_100,
+      payload: serializeWithPrimitiveFastPath("cached"),
+    });
+    globalThis.localStorage.setItem("ttl-parse-cache-web", envelope);
+
+    expect(item.get()).toBe("cached");
+    expect(item.get()).toBe("cached");
+    expect(parseSpy).toHaveBeenCalledTimes(1);
+
+    parseSpy.mockRestore();
     nowSpy.mockRestore();
   });
 
@@ -1151,6 +1267,30 @@ describe("Web Storage", () => {
     expect(keys).toContain("k2");
   });
 
+  it("reuses web key index for repeated key and size lookups", () => {
+    createStorageItem({
+      key: "idx-1",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    }).set("v1");
+    createStorageItem({
+      key: "idx-2",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    }).set("v2");
+
+    const keySpy = jest.spyOn(globalThis.localStorage, "key");
+    storage.getAllKeys(StorageScope.Disk);
+    keySpy.mockClear();
+
+    const keys = storage.getAllKeys(StorageScope.Disk);
+    const size = storage.size(StorageScope.Disk);
+
+    expect(keys).toEqual(expect.arrayContaining(["idx-1", "idx-2"]));
+    expect(size).toBeGreaterThanOrEqual(2);
+    expect(keySpy).not.toHaveBeenCalled();
+  });
+
   it("storage.getAllKeys works for memory scope", () => {
     createStorageItem({
       key: "mk1",
@@ -1246,6 +1386,30 @@ describe("Web Storage", () => {
     expect(globalThis.localStorage.getItem("other")).toBe(
       serializeWithPrimitiveFastPath("plain-val"),
     );
+  });
+
+  it("storage.clearNamespace uses indexed keys without localStorage scans", () => {
+    createStorageItem({
+      key: "a",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+      namespace: "session",
+    }).set("v");
+    createStorageItem({
+      key: "keep",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    }).set("v");
+
+    storage.getAllKeys(StorageScope.Disk);
+    const keySpy = jest.spyOn(globalThis.localStorage, "key");
+    keySpy.mockClear();
+
+    storage.clearNamespace("session", StorageScope.Disk);
+
+    expect(keySpy).not.toHaveBeenCalled();
+    expect(globalThis.localStorage.getItem("session:a")).toBeNull();
+    expect(globalThis.localStorage.getItem("keep")).not.toBeNull();
   });
 
   it("storage.clearNamespace removes namespaced biometric keys in secure scope", () => {
@@ -1385,6 +1549,7 @@ describe("Web Storage", () => {
     expect(() =>
       storage.setAccessControl(AccessControl.AfterFirstUnlock),
     ).not.toThrow();
+    expect(() => storage.setSecureWritesAsync(true)).not.toThrow();
     expect(() => storage.setKeychainAccessGroup("group.test")).not.toThrow();
   });
 

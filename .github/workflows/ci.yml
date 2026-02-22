@@ -37,6 +37,9 @@ jobs:
       - name: Run type checking
         run: bun run typecheck
 
+      - name: Run type-level API tests
+        run: bun run test:types
+
       - name: Run JavaScript tests
         run: bun run test
 
@@ -71,6 +74,4 @@ jobs:
       - name: Test package packaging
         run: |
           cd packages/react-native-nitro-storage
-          # Test that npm pack works (dry run)
-          npm pack --dry-run > /dev/null 2>&1 || exit 1
-          echo "✅ Package can be packed for publishing"
+          bun run check:pack

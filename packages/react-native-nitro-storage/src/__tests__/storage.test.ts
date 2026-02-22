@@ -11,8 +11,10 @@ const mockHybridObject = {
   setBatch: jest.fn(),
   getBatch: jest.fn(),
   removeBatch: jest.fn(),
+  removeByPrefix: jest.fn(),
   addOnChange: jest.fn(),
   setSecureAccessControl: jest.fn(),
+  setSecureWritesAsync: jest.fn(),
   setKeychainAccessGroup: jest.fn(),
   setSecureBiometric: jest.fn(),
   getSecureBiometric: jest.fn(),
@@ -84,6 +86,23 @@ describe("createStorageItem", () => {
     expect(mockHybridObject.set).toHaveBeenCalledWith(
       "test-key",
       serializeWithPrimitiveFastPath("new-value"),
+      StorageScope.Disk,
+    );
+  });
+
+  it("does not read current value when setting a direct value", () => {
+    const item = createStorageItem({
+      key: "set-no-read",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+    });
+
+    item.set("next");
+
+    expect(mockHybridObject.get).not.toHaveBeenCalled();
+    expect(mockHybridObject.set).toHaveBeenCalledWith(
+      "set-no-read",
+      serializeWithPrimitiveFastPath("next"),
       StorageScope.Disk,
     );
   });
@@ -171,7 +190,42 @@ describe("createStorageItem", () => {
     mockHybridObject.clearSecureBiometric.mockClear();
     storage.clear(StorageScope.Secure);
     expect(mockHybridObject.clear).toHaveBeenCalledWith(StorageScope.Secure);
-    expect(mockHybridObject.clearSecureBiometric).toHaveBeenCalledTimes(1);
+    expect(mockHybridObject.clearSecureBiometric).not.toHaveBeenCalled();
+  });
+
+  it("forwards secure write mode configuration to native storage", () => {
+    storage.setSecureWritesAsync(true);
+    expect(mockHybridObject.setSecureWritesAsync).toHaveBeenCalledWith(true);
+  });
+
+  it("flushes pending secure writes on demand", () => {
+    const item = createStorageItem({
+      key: "flush-secure",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      coalesceSecureWrites: true,
+    });
+
+    item.set("queued");
+    expect(mockHybridObject.setBatch).not.toHaveBeenCalled();
+
+    storage.flushSecureWrites();
+
+    expect(mockHybridObject.setBatch).toHaveBeenCalledWith(
+      ["flush-secure"],
+      [serializeWithPrimitiveFastPath("queued")],
+      StorageScope.Secure,
+    );
+  });
+
+  it("clears namespace through native prefix removal", () => {
+    storage.clearNamespace("session", StorageScope.Disk);
+
+    expect(mockHybridObject.removeByPrefix).toHaveBeenCalledWith(
+      "session:",
+      StorageScope.Disk,
+    );
+    expect(mockHybridObject.getAllKeys).not.toHaveBeenCalled();
   });
 
   it("subscribes to changes", () => {
@@ -670,6 +724,69 @@ describe("Batch Operations", () => {
     );
   });
 
+  it("groups secure raw batch writes by access control", () => {
+    storage.setAccessControl(AccessControl.WhenUnlocked);
+    mockHybridObject.setSecureAccessControl.mockClear();
+
+    const strictItem = createStorageItem({
+      key: "secure-ac-1",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      accessControl: AccessControl.AfterFirstUnlock,
+    });
+    const passcodeItem = createStorageItem({
+      key: "secure-ac-2",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      accessControl: AccessControl.WhenPasscodeSetThisDeviceOnly,
+    });
+    const plainItem = createStorageItem({
+      key: "secure-ac-3",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+    });
+
+    setBatch(
+      [
+        { item: strictItem, value: "v1" },
+        { item: passcodeItem, value: "v2" },
+        { item: plainItem, value: "v3" },
+      ],
+      StorageScope.Secure,
+    );
+
+    expect(mockHybridObject.setSecureAccessControl).toHaveBeenNthCalledWith(
+      1,
+      AccessControl.AfterFirstUnlock,
+    );
+    expect(mockHybridObject.setSecureAccessControl).toHaveBeenNthCalledWith(
+      2,
+      AccessControl.WhenPasscodeSetThisDeviceOnly,
+    );
+    expect(mockHybridObject.setSecureAccessControl).toHaveBeenNthCalledWith(
+      3,
+      AccessControl.WhenUnlocked,
+    );
+    expect(mockHybridObject.setBatch).toHaveBeenNthCalledWith(
+      1,
+      ["secure-ac-1"],
+      [serializeWithPrimitiveFastPath("v1")],
+      StorageScope.Secure,
+    );
+    expect(mockHybridObject.setBatch).toHaveBeenNthCalledWith(
+      2,
+      ["secure-ac-2"],
+      [serializeWithPrimitiveFastPath("v2")],
+      StorageScope.Secure,
+    );
+    expect(mockHybridObject.setBatch).toHaveBeenNthCalledWith(
+      3,
+      ["secure-ac-3"],
+      [serializeWithPrimitiveFastPath("v3")],
+      StorageScope.Secure,
+    );
+  });
+
   it("gets multiple items at once", () => {
     mockHybridObject.getBatch.mockReturnValue([
       serializeWithPrimitiveFastPath("v1"),
@@ -819,6 +936,28 @@ describe("Batch Operations", () => {
     expect(mockHybridObject.getBatch).not.toHaveBeenCalled();
   });
 
+  it("uses native secure batch read path for access-control items", () => {
+    const strictItem = createStorageItem({
+      key: "batch-secure-ac-get",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      accessControl: AccessControl.AfterFirstUnlock,
+    });
+
+    mockHybridObject.getBatch.mockReturnValue([
+      serializeWithPrimitiveFastPath("secure"),
+    ]);
+
+    const values = getBatch([strictItem], StorageScope.Secure);
+
+    expect(values).toEqual(["secure"]);
+    expect(mockHybridObject.getBatch).toHaveBeenCalledWith(
+      ["batch-secure-ac-get"],
+      StorageScope.Secure,
+    );
+    expect(mockHybridObject.get).not.toHaveBeenCalled();
+  });
+
   it("treats native batch missing sentinel as undefined", () => {
     const sentinelItem = createStorageItem({
       key: "batch-native-sentinel",
@@ -900,6 +1039,30 @@ describe("v0.2 features", () => {
       "ttl-key",
       StorageScope.Disk,
     );
+    nowSpy.mockRestore();
+  });
+
+  it("reuses TTL parse cache while value is still valid", () => {
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(1_000);
+    const parseSpy = jest.spyOn(JSON, "parse");
+    const item = createStorageItem<string>({
+      key: "ttl-parse-cache",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+      expiration: { ttlMs: 200 },
+    });
+    const envelope = JSON.stringify({
+      __nitroStorageEnvelope: true,
+      expiresAt: 1_100,
+      payload: serializeWithPrimitiveFastPath("cached"),
+    });
+    mockHybridObject.get.mockReturnValue(envelope);
+
+    expect(item.get()).toBe("cached");
+    expect(item.get()).toBe("cached");
+    expect(parseSpy).toHaveBeenCalledTimes(1);
+
+    parseSpy.mockRestore();
     nowSpy.mockRestore();
   });
 

@@ -1,27 +1,25 @@
 import { useState } from "react";
-import { View, Text } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import {
-  createStorageItem,
   createSecureAuthStorage,
-  useStorage,
-  StorageScope,
+  createStorageItem,
   storage,
+  StorageScope,
+  useStorage,
 } from "react-native-nitro-storage";
 import {
+  Badge,
   Button,
-  Page,
   Card,
+  Chip,
+  CodeBlock,
   Colors,
   Input,
-  Badge,
-  Chip,
-  StatusRow,
-  CodeBlock,
+  Page,
   Section,
+  StatusRow,
   styles,
 } from "../components/shared";
-
-// --- Storage items ---
 
 const memoryCounter = createStorageItem({
   key: "counter",
@@ -64,8 +62,6 @@ const authTokens = createSecureAuthStorage({
   refreshToken: {},
 });
 
-// --- Screen ---
-
 export default function ShowcaseScreen() {
   const [counter, setCounter] = useStorage(memoryCounter);
   const [username, setUsername] = useStorage(diskUsername);
@@ -81,47 +77,33 @@ export default function ShowcaseScreen() {
   return (
     <Page
       title="Nitro Storage"
-      subtitle="Ultra-fast native storage for React Native — powered by JSI"
+      subtitle="Synchronous memory, disk, and secure storage with a single API"
     >
-      {/* Memory */}
+      <Card
+        title="Quick Snapshot"
+        subtitle="Runtime overview"
+        indicatorColor={Colors.primary}
+      >
+        <View style={styles.row}>
+          <Chip label="JSI Native Path" active color={Colors.primary} />
+          <Chip label="No Async Await" active color={Colors.primary} />
+          <Chip label="Type Safe" active color={Colors.primary} />
+        </View>
+      </Card>
+
       <Card
         title="Memory Scope"
         subtitle="In-memory global state"
         indicatorColor={Colors.memory}
       >
-        <View style={styles.row}>
-          <Chip label="Synchronous" active color={Colors.memory} />
-          <Chip label="Zero Bridge" active color={Colors.memory} />
-        </View>
-
-        <View
-          style={{
-            backgroundColor: Colors.background,
-            borderRadius: 14,
-            paddingVertical: 22,
-            alignItems: "center",
-            borderWidth: 1,
-            borderColor: Colors.border,
-          }}
-        >
-          <Text style={{ color: Colors.muted, fontSize: 11, marginBottom: 4 }}>
-            COUNTER VALUE
-          </Text>
-          <Text
-            style={{
-              fontSize: 56,
-              fontWeight: "900",
-              color: Colors.text,
-              fontVariant: ["tabular-nums"],
-            }}
-          >
-            {counter}
-          </Text>
+        <View style={styles.panel}>
+          <Text style={styles.panelTitle}>Counter value</Text>
+          <Text style={styles.panelValue}>{counter}</Text>
         </View>
 
         <View style={styles.row}>
           <Button
-            title="−"
+            title="-"
             onPress={() => {
               setCounter(counter - 1);
             }}
@@ -141,20 +123,18 @@ export default function ShowcaseScreen() {
             onPress={() => {
               setCounter(counter + 1);
             }}
-            variant="primary"
             style={styles.flex1}
           />
         </View>
       </Card>
 
-      {/* Disk */}
       <Card
         title="Disk Scope"
         subtitle="Persistent storage"
         indicatorColor={Colors.disk}
       >
         <Input
-          label="Display Name"
+          label="Display name"
           value={tempName}
           onChangeText={setTempName}
           placeholder="Enter a name"
@@ -190,14 +170,13 @@ export default function ShowcaseScreen() {
         />
       </Card>
 
-      {/* Secure */}
       <Card
         title="Secure Scope"
         subtitle="Hardware encrypted"
         indicatorColor={Colors.secure}
       >
         <Input
-          label="Secret Value"
+          label="Secret value"
           value={tempToken}
           onChangeText={setTempToken}
           placeholder="Paste a token or secret"
@@ -226,24 +205,23 @@ export default function ShowcaseScreen() {
         {token ? (
           <StatusRow
             label="Encrypted"
-            value={`${token.substring(0, 6)}••••`}
+            value={`${token.slice(0, 6)}....`}
             color={Colors.secure}
           />
         ) : null}
       </Card>
 
-      {/* Namespace */}
       <Card
         title="Namespaces"
         subtitle="Scoped key isolation"
-        indicatorColor={Colors.purple}
+        indicatorColor={Colors.accent}
       >
-        <Text style={{ color: Colors.muted, fontSize: 13 }}>
-          Keys are prefixed with a namespace separator. Isolated from
-          non-namespaced keys.
+        <Text style={styles.helperText}>
+          Namespace prefixes keep feature keys isolated without manual key
+          naming.
         </Text>
         <Input
-          label="Preference Value"
+          label="Preference value"
           value={tempPref}
           onChangeText={setTempPref}
           placeholder="Set a namespaced value"
@@ -259,7 +237,7 @@ export default function ShowcaseScreen() {
             disabled={!tempPref.trim()}
           />
           <Button
-            title="Clear Namespace"
+            title="Clear namespace"
             variant="secondary"
             onPress={() => {
               storage.clearNamespace("settings", StorageScope.Disk);
@@ -270,89 +248,62 @@ export default function ShowcaseScreen() {
         <StatusRow
           label="Key"
           value={namespacedItem.key}
-          color={Colors.purple}
+          color={Colors.accent}
         />
         <StatusRow label="Value" value={nsPref || "(empty)"} />
       </Card>
 
-      {/* Complex Object */}
       <Card
         title="JSON Objects"
-        subtitle="Type-safe serialization"
+        subtitle="Typed serialization"
         indicatorColor={Colors.primary}
       >
-        <View style={{ gap: 8 }}>
-          <View
-            style={[
-              styles.row,
-              {
-                justifyContent: "space-between",
-                backgroundColor: Colors.card,
-                padding: 12,
-                borderRadius: 10,
-                borderWidth: 1,
-                borderColor: Colors.border,
-              },
-            ]}
-          >
-            <Text style={{ color: Colors.text, fontWeight: "700" }}>Theme</Text>
-            <Button
-              title={config.theme.toUpperCase()}
-              onPress={() => {
-                setConfig((p) => ({
-                  ...p,
-                  theme: p.theme === "dark" ? "light" : "dark",
-                }));
-              }}
-              variant="secondary"
-              size="sm"
-            />
-          </View>
-          <View
-            style={[
-              styles.row,
-              {
-                justifyContent: "space-between",
-                backgroundColor: Colors.card,
-                padding: 12,
-                borderRadius: 10,
-                borderWidth: 1,
-                borderColor: Colors.border,
-              },
-            ]}
-          >
-            <Text style={{ color: Colors.text, fontWeight: "700" }}>
-              Notifications
-            </Text>
-            <Button
-              title={config.notifications ? "ON" : "OFF"}
-              onPress={() => {
-                setConfig((p) => ({ ...p, notifications: !p.notifications }));
-              }}
-              variant={config.notifications ? "success" : "secondary"}
-              size="sm"
-            />
-          </View>
+        <View style={s.toggleRow}>
+          <Text style={s.toggleLabel}>Theme</Text>
+          <Button
+            title={config.theme.toUpperCase()}
+            onPress={() => {
+              setConfig((prev) => ({
+                ...prev,
+                theme: prev.theme === "dark" ? "light" : "dark",
+              }));
+            }}
+            variant="secondary"
+            size="sm"
+          />
+        </View>
+        <View style={s.toggleRow}>
+          <Text style={s.toggleLabel}>Notifications</Text>
+          <Button
+            title={config.notifications ? "ON" : "OFF"}
+            onPress={() => {
+              setConfig((prev) => ({
+                ...prev,
+                notifications: !prev.notifications,
+              }));
+            }}
+            variant={config.notifications ? "success" : "secondary"}
+            size="sm"
+          />
         </View>
         <CodeBlock>{JSON.stringify(config, null, 2)}</CodeBlock>
       </Card>
 
-      {/* createSecureAuthStorage */}
       <Card
         title="Auth Storage Factory"
         subtitle="createSecureAuthStorage"
         indicatorColor={Colors.secure}
       >
-        <Text style={{ color: Colors.muted, fontSize: 13 }}>
-          One-liner factory for multiple encrypted tokens with TTL and biometric
-          support.
+        <Text style={styles.helperText}>
+          Multi-token secure storage with TTL support in one factory call.
         </Text>
         <View style={styles.row}>
           <Button
             title="Set Tokens"
             onPress={() => {
-              authTokens.accessToken.set(`at_${Date.now().toString(36)}`);
-              authTokens.refreshToken.set(`rt_${Date.now().toString(36)}`);
+              const now = Date.now().toString(36);
+              authTokens.accessToken.set(`at_${now}`);
+              authTokens.refreshToken.set(`rt_${now}`);
             }}
             style={styles.flex1}
           />
@@ -365,24 +316,15 @@ export default function ShowcaseScreen() {
             }}
           />
         </View>
-        <StatusRow
-          label="accessToken"
-          value={atValue || "(empty)"}
-          color={atValue ? Colors.secure : undefined}
-        />
-        <StatusRow
-          label="refreshToken"
-          value={rtValue || "(empty)"}
-          color={rtValue ? Colors.secure : undefined}
-        />
+        <StatusRow label="accessToken" value={atValue || "(empty)"} />
+        <StatusRow label="refreshToken" value={rtValue || "(empty)"} />
         <View style={styles.row}>
-          <Badge label="Secure Scope" color={Colors.secure} />
-          <Badge label="60s TTL" color={Colors.warning} />
-          <Badge label={`ns: auth`} color={Colors.purple} />
+          <Badge label="Secure" color={Colors.secure} />
+          <Badge label="TTL 60s" color={Colors.warning} />
+          <Badge label="Namespace auth" color={Colors.accent} />
         </View>
       </Card>
 
-      {/* Storage Utilities */}
       <Card title="Storage Utilities" subtitle="Introspection helpers">
         <Section title="Disk">
           <StatusRow
@@ -390,26 +332,28 @@ export default function ShowcaseScreen() {
             value={String(storage.size(StorageScope.Disk))}
           />
           <StatusRow
-            label="getAllKeys()"
+            label="keys"
             value={
-              storage.getAllKeys(StorageScope.Disk).slice(0, 5).join(", ") ||
+              storage.getAllKeys(StorageScope.Disk).slice(0, 4).join(", ") ||
               "(none)"
             }
           />
         </Section>
+
         <Section title="Memory">
           <StatusRow
             label="size()"
             value={String(storage.size(StorageScope.Memory))}
           />
           <StatusRow
-            label="getAllKeys()"
+            label="keys"
             value={
-              storage.getAllKeys(StorageScope.Memory).slice(0, 5).join(", ") ||
+              storage.getAllKeys(StorageScope.Memory).slice(0, 4).join(", ") ||
               "(none)"
             }
           />
         </Section>
+
         <Section title="Actions">
           <View style={styles.grid}>
             <Button
@@ -444,3 +388,21 @@ export default function ShowcaseScreen() {
     </Page>
   );
 }
+
+const s = StyleSheet.create({
+  toggleRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: Colors.card,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 12,
+  },
+  toggleLabel: {
+    color: Colors.text,
+    fontWeight: "700",
+    fontSize: 13,
+  },
+});

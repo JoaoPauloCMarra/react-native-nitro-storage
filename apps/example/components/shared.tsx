@@ -16,21 +16,40 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 const { width } = Dimensions.get("window");
 const isWeb = Platform.OS === "web";
 
+const fontSans = Platform.select({
+  ios: "Avenir Next",
+  android: "sans-serif",
+  default: "system",
+});
+
+const fontDisplay = Platform.select({
+  ios: "Avenir Next Condensed",
+  android: "sans-serif-medium",
+  default: "system",
+});
+
+const fontMono = Platform.select({
+  ios: "Menlo",
+  android: "monospace",
+  default: "monospace",
+});
+
 export const Colors = {
-  background: "#060910",
-  surface: "#0C1220",
-  card: "#101828",
-  border: "#1E2D48",
-  text: "#F1F5FF",
-  muted: "#8899B4",
-  primary: "#6B8AFF",
-  success: "#2DD4A8",
-  danger: "#F06565",
-  warning: "#FBBF24",
-  memory: "#F5A623",
-  disk: "#5B9CF5",
-  secure: "#34D399",
-  purple: "#A78BFA",
+  background: "#eef3f9",
+  surface: "#ffffff",
+  card: "#f6f9fc",
+  border: "#dbe5ef",
+  text: "#0f172a",
+  muted: "#475569",
+  primary: "#0f766e",
+  success: "#15803d",
+  danger: "#b91c1c",
+  warning: "#b45309",
+  memory: "#c2410c",
+  disk: "#1d4ed8",
+  secure: "#0d9488",
+  accent: "#334155",
+  purple: "#334155",
 };
 
 type ButtonVariant = "primary" | "danger" | "secondary" | "ghost" | "success";
@@ -45,12 +64,20 @@ type ButtonProps = {
   size?: ButtonSize;
 };
 
-const buttonBg: Record<ButtonVariant, string> = {
+const buttonBackground: Record<ButtonVariant, string> = {
   primary: Colors.primary,
   danger: Colors.danger,
   success: Colors.success,
   secondary: Colors.card,
   ghost: "transparent",
+};
+
+const buttonTextColor: Record<ButtonVariant, string> = {
+  primary: "#f8fafc",
+  danger: "#f8fafc",
+  success: "#f8fafc",
+  secondary: Colors.text,
+  ghost: Colors.muted,
 };
 
 export const Button = ({
@@ -65,7 +92,7 @@ export const Button = ({
     hitSlop={6}
     style={({ pressed }) => [
       styles.button,
-      { backgroundColor: buttonBg[variant] },
+      { backgroundColor: buttonBackground[variant] },
       size === "sm" && styles.buttonSm,
       size === "lg" && styles.buttonLg,
       variant === "ghost" && styles.buttonGhost,
@@ -79,9 +106,9 @@ export const Button = ({
     <Text
       style={[
         styles.buttonText,
+        { color: buttonTextColor[variant] },
         size === "sm" && styles.buttonTextSm,
         size === "lg" && styles.buttonTextLg,
-        variant === "ghost" && styles.buttonGhostText,
       ]}
     >
       {title}
@@ -101,19 +128,21 @@ export const Card = ({
   children,
   title,
   subtitle,
-  indicatorColor,
+  indicatorColor = Colors.primary,
   style,
 }: CardProps) => (
   <View style={[styles.card, style]}>
-    {title || indicatorColor ? (
+    {title ? (
       <View style={styles.cardHeader}>
-        {indicatorColor ? (
+        <View
+          style={[styles.indicator, { backgroundColor: `${indicatorColor}33` }]}
+        >
           <View
-            style={[styles.indicator, { backgroundColor: indicatorColor }]}
+            style={[styles.indicatorDot, { backgroundColor: indicatorColor }]}
           />
-        ) : null}
+        </View>
         <View style={styles.cardTitleWrap}>
-          {title ? <Text style={styles.cardTitle}>{title}</Text> : null}
+          <Text style={styles.cardTitle}>{title}</Text>
           {subtitle ? (
             <Text style={styles.cardSubtitle}>{subtitle}</Text>
           ) : null}
@@ -162,7 +191,7 @@ export const Badge = ({ label, color = Colors.primary }: BadgeProps) => (
   <View
     style={[
       styles.badge,
-      { backgroundColor: `${color}18`, borderColor: `${color}40` },
+      { borderColor: `${color}55`, backgroundColor: `${color}14` },
     ]}
   >
     <Text style={[styles.badgeText, { color }]}>{label}</Text>
@@ -182,14 +211,14 @@ export const Chip = ({
     style={[
       styles.chip,
       active
-        ? { backgroundColor: `${color}22`, borderColor: `${color}55` }
-        : { backgroundColor: Colors.card, borderColor: Colors.border },
+        ? { backgroundColor: `${color}14`, borderColor: `${color}4f` }
+        : styles.chipInactive,
     ]}
   >
     <View
       style={[
         styles.chipDot,
-        { backgroundColor: active ? color : Colors.muted },
+        { backgroundColor: active ? color : Colors.border },
       ]}
     />
     <Text style={[styles.chipText, { color: active ? color : Colors.muted }]}>
@@ -239,6 +268,16 @@ type PageProps = {
   scroll?: boolean;
 };
 
+function Atmosphere() {
+  return (
+    <View pointerEvents="none" style={styles.atmosphere}>
+      <View style={styles.orbTopLeft} />
+      <View style={styles.orbTopRight} />
+      <View style={styles.orbBottom} />
+    </View>
+  );
+}
+
 function Header({ title, subtitle }: { title?: string; subtitle?: string }) {
   if (!title && !subtitle) return null;
 
@@ -257,11 +296,12 @@ export const Page = ({
   scroll = true,
 }: PageProps) => {
   const insets = useSafeAreaInsets();
-  const contentPaddingTop = insets.top + (isWeb ? 20 : 8);
+  const contentPaddingTop = insets.top + (isWeb ? 18 : 10);
 
   if (scroll) {
     return (
       <View style={styles.container}>
+        <Atmosphere />
         <ScrollView
           contentContainerStyle={[
             styles.scrollContent,
@@ -279,6 +319,7 @@ export const Page = ({
 
   return (
     <View style={styles.container}>
+      <Atmosphere />
       <View
         style={[
           styles.scrollContent,
@@ -298,68 +339,111 @@ export const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
+  atmosphere: {
+    ...StyleSheet.absoluteFillObject,
+    overflow: "hidden",
+  },
+  orbTopLeft: {
+    position: "absolute",
+    width: 260,
+    height: 260,
+    borderRadius: 200,
+    backgroundColor: "#99f6e433",
+    top: -70,
+    left: -60,
+  },
+  orbTopRight: {
+    position: "absolute",
+    width: 240,
+    height: 240,
+    borderRadius: 200,
+    backgroundColor: "#93c5fd33",
+    top: 10,
+    right: -80,
+  },
+  orbBottom: {
+    position: "absolute",
+    width: 220,
+    height: 220,
+    borderRadius: 200,
+    backgroundColor: "#fcd34d2a",
+    bottom: -70,
+    left: 70,
+  },
   pageBody: {
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 18,
-    paddingBottom: 110,
+    paddingHorizontal: 16,
+    paddingBottom: 108,
     gap: 14,
-    maxWidth: isWeb ? 720 : width,
+    maxWidth: isWeb ? 860 : width,
     alignSelf: "center",
     width: "100%",
   },
   header: {
-    marginBottom: 8,
-    gap: 4,
+    marginBottom: 6,
+    gap: 5,
   },
   headerTitle: {
-    fontSize: 32,
-    fontWeight: "900",
+    fontSize: 34,
+    lineHeight: 38,
+    fontWeight: "800",
+    fontFamily: fontDisplay,
     color: Colors.text,
-    letterSpacing: -1,
+    letterSpacing: -0.6,
   },
   headerSubtitle: {
     fontSize: 14,
     lineHeight: 20,
+    fontFamily: fontSans,
     color: Colors.muted,
     fontWeight: "500",
   },
   card: {
     backgroundColor: Colors.surface,
     borderRadius: 18,
-    padding: 18,
+    padding: 16,
     borderWidth: 1,
     borderColor: Colors.border,
-    boxShadow: "0 6px 20px rgba(0,0,0,0.32)",
+    boxShadow: "0 12px 28px rgba(15, 23, 42, 0.09)",
+    gap: 12,
   },
   cardHeader: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 14,
+    gap: 10,
+  },
+  indicator: {
+    width: 18,
+    height: 18,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  indicatorDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
   cardTitleWrap: {
     flexShrink: 1,
     gap: 2,
   },
-  indicator: {
-    width: 4,
-    height: 20,
-    borderRadius: 999,
-    marginRight: 10,
-  },
   cardTitle: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: "800",
+    fontFamily: fontSans,
     color: Colors.text,
-    letterSpacing: -0.3,
+    letterSpacing: -0.2,
   },
   cardSubtitle: {
     fontSize: 11,
     color: Colors.muted,
     fontWeight: "700",
+    fontFamily: fontSans,
     textTransform: "uppercase",
-    letterSpacing: 0.9,
+    letterSpacing: 0.8,
   },
   cardContent: {
     gap: 12,
@@ -371,6 +455,7 @@ export const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
+    boxShadow: "0 6px 16px rgba(15, 23, 42, 0.08)",
   },
   buttonSm: {
     minHeight: 34,
@@ -386,19 +471,20 @@ export const styles = StyleSheet.create({
   buttonGhost: {
     borderWidth: 1,
     borderColor: Colors.border,
+    boxShadow: "none",
   },
   buttonPressed: {
-    transform: [{ scale: 0.97 }],
-    opacity: 0.88,
+    transform: [{ scale: 0.98 }],
+    opacity: 0.9,
   },
   buttonDisabled: {
-    opacity: 0.4,
+    opacity: 0.45,
   },
   buttonText: {
     fontSize: 14,
     fontWeight: "700",
-    color: Colors.text,
-    letterSpacing: 0.1,
+    fontFamily: fontSans,
+    letterSpacing: 0.2,
   },
   buttonTextSm: {
     fontSize: 12,
@@ -406,29 +492,28 @@ export const styles = StyleSheet.create({
   buttonTextLg: {
     fontSize: 16,
   },
-  buttonGhostText: {
-    color: Colors.muted,
-  },
   inputGroup: {
     gap: 6,
   },
   label: {
     fontSize: 11,
     fontWeight: "700",
+    fontFamily: fontSans,
     color: Colors.muted,
     textTransform: "uppercase",
-    letterSpacing: 1,
+    letterSpacing: 0.9,
   },
   textInput: {
     minHeight: 42,
     backgroundColor: Colors.card,
     borderWidth: 1,
     borderColor: Colors.border,
-    borderRadius: 10,
+    borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
     color: Colors.text,
     fontSize: 14,
+    fontFamily: fontSans,
   },
   badge: {
     alignSelf: "flex-start",
@@ -441,27 +526,33 @@ export const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "800",
     textTransform: "uppercase",
-    letterSpacing: 0.7,
+    letterSpacing: 0.6,
+    fontFamily: fontSans,
   },
   chip: {
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: 5,
     paddingHorizontal: 10,
-    borderRadius: 8,
+    borderRadius: 9,
     borderWidth: 1,
     gap: 6,
   },
+  chipInactive: {
+    backgroundColor: Colors.card,
+    borderColor: Colors.border,
+  },
   chipDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
   },
   chipText: {
     fontSize: 11,
     fontWeight: "700",
     textTransform: "uppercase",
-    letterSpacing: 0.5,
+    letterSpacing: 0.4,
+    fontFamily: fontSans,
   },
   statusRow: {
     flexDirection: "row",
@@ -473,30 +564,40 @@ export const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: Colors.border,
+    gap: 10,
   },
   statusLabel: {
     fontSize: 12,
     fontWeight: "600",
+    fontFamily: fontSans,
     color: Colors.muted,
   },
   statusValue: {
+    flexShrink: 1,
+    textAlign: "right",
     fontSize: 13,
     fontWeight: "700",
     color: Colors.text,
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    fontFamily: fontMono,
   },
   codeBlock: {
-    backgroundColor: "#000",
+    backgroundColor: "#0f172a",
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: "#1e293b",
     padding: 14,
   },
   codeBlockText: {
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    fontFamily: fontMono,
     fontSize: 12,
     lineHeight: 18,
-    color: Colors.muted,
+    color: "#cbd5e1",
+  },
+  codeText: {
+    fontFamily: fontMono,
+    fontSize: 12,
+    lineHeight: 18,
+    color: Colors.text,
   },
   section: {
     gap: 10,
@@ -504,9 +605,66 @@ export const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 12,
     fontWeight: "800",
+    fontFamily: fontSans,
     color: Colors.muted,
     textTransform: "uppercase",
-    letterSpacing: 1.2,
+    letterSpacing: 1,
     marginTop: 4,
   },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  grid: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  flex1: {
+    flex: 1,
+  },
+  panel: {
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 12,
+    padding: 12,
+    gap: 8,
+  },
+  panelTitle: {
+    color: Colors.muted,
+    fontFamily: fontSans,
+    fontWeight: "700",
+    fontSize: 11,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  panelValue: {
+    color: Colors.text,
+    fontFamily: fontDisplay,
+    fontWeight: "800",
+    fontSize: 42,
+    lineHeight: 44,
+    textAlign: "center",
+  },
+  helperText: {
+    color: Colors.muted,
+    fontFamily: fontSans,
+    fontSize: 12,
+    lineHeight: 18,
+  },
 });
+
+const sharedStyleKeysForLint = [
+  styles.codeText,
+  styles.row,
+  styles.grid,
+  styles.flex1,
+  styles.panel,
+  styles.panelTitle,
+  styles.panelValue,
+  styles.helperText,
+];
+void sharedStyleKeysForLint;
