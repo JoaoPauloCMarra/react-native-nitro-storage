@@ -61,8 +61,10 @@ namespace margelo::nitro::NitroStorage {
       virtual void setBatch(const std::vector<std::string>& keys, const std::vector<std::string>& values, double scope) = 0;
       virtual std::vector<std::string> getBatch(const std::vector<std::string>& keys, double scope) = 0;
       virtual void removeBatch(const std::vector<std::string>& keys, double scope) = 0;
+      virtual void removeByPrefix(const std::string& prefix, double scope) = 0;
       virtual std::function<void()> addOnChange(double scope, const std::function<void(const std::string& /* key */, const std::optional<std::string>& /* value */)>& callback) = 0;
       virtual void setSecureAccessControl(double level) = 0;
+      virtual void setSecureWritesAsync(bool enabled) = 0;
       virtual void setKeychainAccessGroup(const std::string& group) = 0;
       virtual void setSecureBiometric(const std::string& key, const std::string& value) = 0;
       virtual std::optional<std::string> getSecureBiometric(const std::string& key) = 0;

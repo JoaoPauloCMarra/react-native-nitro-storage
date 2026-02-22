@@ -15,11 +15,9 @@ console.log("🛠️  Preparing C++ test environment...");
 
 // Locate Dependencies
 const nodeModules = path.join(__dirname, "..", "node_modules");
-const rnDir = path.join(nodeModules, "react-native");
-const jsiDir = path.join(rnDir, "ReactCommon", "jsi");
 const nitroDir = path.join(nodeModules, "react-native-nitro-modules", "cpp");
 
-if (!fs.existsSync(rnDir) || !fs.existsSync(nitroDir)) {
+if (!fs.existsSync(nitroDir)) {
   console.error("❌ Dependencies not found. Run 'bun install' first.");
   process.exit(1);
 }
@@ -56,48 +54,99 @@ nitroSubdirs.forEach((subdir) => {
   }
 });
 
-// Paths
-const testFile = path.join(cppDir, "core", "StorageTest.cpp");
-const outputFile = path.join(buildDir, "storage_test");
+// Test-only lightweight NitroModules stub for HybridStorage unit tests.
+const hybridObjectStubPath = path.join(nitroVirtualDir, "HybridObject.hpp");
+fs.writeFileSync(
+  hybridObjectStubPath,
+  `#pragma once
+#include <utility>
 
-// Basic JSI compilation (mocked or real)
-// We link JSI sources to properly resolve HostObject symbols
-const jsiSources = [
-  path.join(jsiDir, "jsi", "jsi.cpp"),
-  // path.join(jsiDir, "jsi", "JSIDynamic.cpp") // Optional
-];
-const jsiImpl = jsiSources.filter((f) => fs.existsSync(f)).join(" ");
+namespace margelo::nitro {
+
+class Prototype {
+public:
+  template <typename... Args>
+  void registerHybridMethod(const char*, Args...) {}
+};
+
+class HybridObject {
+public:
+  explicit HybridObject(const char* = "") {}
+  virtual ~HybridObject() = default;
+  virtual void loadHybridMethods() {}
+
+protected:
+  template <typename Fn>
+  void registerHybrids(HybridObject*, Fn&& fn) {
+    Prototype prototype;
+    fn(prototype);
+  }
+};
+
+} // namespace margelo::nitro
+`,
+  "utf8",
+);
+
+// Paths
+const storageTestFile = path.join(cppDir, "core", "StorageTest.cpp");
+const storageOutputFile = path.join(buildDir, "storage_test");
+const hybridTestFile = path.join(cppDir, "bindings", "HybridStorageTest.cpp");
+const hybridSourceFile = path.join(cppDir, "bindings", "HybridStorage.cpp");
+const hybridSpecFile = path.join(
+  __dirname,
+  "..",
+  "nitrogen",
+  "generated",
+  "shared",
+  "c++",
+  "HybridStorageSpec.cpp",
+);
+const hybridOutputFile = path.join(buildDir, "hybrid_storage_test");
 
 console.log("⚙️  Compiling...");
 
-const compileCmd = [
+const commonFlags = [
   "clang++",
   "-std=c++17",
   "-g",
-  // Includes
-  `-I${path.join(cppDir, "core")}`,
-  // Sources
-  testFile,
-  // Output
-  `-o ${outputFile}`,
-
-  // Linker flags (must come after sources)
-  process.platform === "darwin" ? "-stdlib=libc++" : "-lpthread",
-].join(" ");
+  process.platform === "darwin" ? "-stdlib=libc++" : "",
+];
+const linkFlags = process.platform === "darwin" ? "" : "-lpthread";
 
 try {
-  execSync(compileCmd, { stdio: "inherit" });
-  console.log("✅ Compilation successful.");
+  const compileStorageCmd = [
+    ...commonFlags,
+    `-I${path.join(cppDir, "core")}`,
+    storageTestFile,
+    `-o ${storageOutputFile}`,
+    linkFlags,
+  ].join(" ");
+  execSync(compileStorageCmd, { stdio: "inherit" });
 
+  const compileHybridCmd = [
+    ...commonFlags,
+    "-DNITRO_STORAGE_DISABLE_PLATFORM_ADAPTER",
+    "-DNITRO_STORAGE_USE_ORDERED_MAP_FOR_TESTS",
+    `-I${path.join(cppDir, "core")}`,
+    `-I${path.join(cppDir, "bindings")}`,
+    `-I${includeRoot}`,
+    `-I${path.join(__dirname, "..", "nitrogen", "generated", "shared", "c++")}`,
+    hybridTestFile,
+    hybridSourceFile,
+    hybridSpecFile,
+    `-o ${hybridOutputFile}`,
+    linkFlags,
+  ].join(" ");
+  execSync(compileHybridCmd, { stdio: "inherit" });
+
+  console.log("✅ Compilation successful.");
   console.log("🚀 Running tests...");
-  try {
-    execSync(outputFile, { stdio: "inherit" });
-    console.log("✅ C++ tests passed!");
-  } catch (e) {
-    console.error("❌ C++ tests failed.");
-    process.exit(1);
-  }
+
+  execSync(storageOutputFile, { stdio: "inherit" });
+  execSync(hybridOutputFile, { stdio: "inherit" });
+  console.log("✅ C++ tests passed!");
 } catch (error) {
-  console.error("❌ C++ compilation failed.");
+  console.error("❌ C++ tests failed.");
   process.exit(1);
 }

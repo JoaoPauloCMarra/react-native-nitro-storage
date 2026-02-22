@@ -49,6 +49,7 @@ public:
     void clearSecure() override;
 
     void setSecureAccessControl(int level) override;
+    void setSecureWritesAsync(bool enabled) override;
     void setKeychainAccessGroup(const std::string& group) override;
 
     void setSecureBiometric(const std::string& key, const std::string& value) override;

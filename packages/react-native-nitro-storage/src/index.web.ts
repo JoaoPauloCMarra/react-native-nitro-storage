@@ -1,4 +1,3 @@
-import { useRef, useSyncExternalStore } from "react";
 import { StorageScope, AccessControl, BiometricLevel } from "./Storage.types";
 import {
   MIGRATION_VERSION_KEY,
@@ -52,8 +51,18 @@ type RawBatchPathItem = {
   _secureAccessControl?: AccessControl;
 };
 
-function asInternal(item: StorageItem<any>): StorageItemInternal<any> {
-  return item as unknown as StorageItemInternal<any>;
+function asInternal<T>(item: StorageItem<T>): StorageItemInternal<T> {
+  return item as StorageItemInternal<T>;
+}
+
+function isUpdater<T>(
+  valueOrFn: T | ((prev: T) => T),
+): valueOrFn is (prev: T) => T {
+  return typeof valueOrFn === "function";
+}
+
+function typedKeys<K extends string, V>(record: Record<K, V>): K[] {
+  return Object.keys(record) as K[];
 }
 type NonMemoryScope = StorageScope.Disk | StorageScope.Secure;
 type PendingSecureWrite = { key: string; value: string | undefined };
@@ -88,11 +97,13 @@ export interface Storage {
   setBatch(keys: string[], values: string[], scope: number): void;
   getBatch(keys: string[], scope: number): (string | undefined)[];
   removeBatch(keys: string[], scope: number): void;
+  removeByPrefix(prefix: string, scope: number): void;
   addOnChange(
     scope: number,
     callback: (key: string, value: string | undefined) => void,
   ): () => void;
   setSecureAccessControl(level: number): void;
+  setSecureWritesAsync(enabled: boolean): void;
   setKeychainAccessGroup(group: string): void;
   setSecureBiometric(key: string, value: string): void;
   getSecureBiometric(key: string): string | undefined;
@@ -113,6 +124,11 @@ const scopedRawCache = new Map<NonMemoryScope, Map<string, string | undefined>>(
     [StorageScope.Secure, new Map()],
   ],
 );
+const webScopeKeyIndex = new Map<NonMemoryScope, Set<string>>([
+  [StorageScope.Disk, new Set()],
+  [StorageScope.Secure, new Set()],
+]);
+const hydratedWebScopeKeyIndex = new Set<NonMemoryScope>();
 const pendingSecureWrites = new Map<string, PendingSecureWrite>();
 let secureFlushScheduled = false;
 const SECURE_WEB_PREFIX = "__secure_";
@@ -143,6 +159,51 @@ function toBiometricStorageKey(key: string): string {
 
 function fromBiometricStorageKey(key: string): string {
   return key.slice(BIOMETRIC_WEB_PREFIX.length);
+}
+
+function getWebScopeKeyIndex(scope: NonMemoryScope): Set<string> {
+  return webScopeKeyIndex.get(scope)!;
+}
+
+function hydrateWebScopeKeyIndex(scope: NonMemoryScope): void {
+  if (hydratedWebScopeKeyIndex.has(scope)) {
+    return;
+  }
+
+  const storage = getBrowserStorage(scope);
+  const keyIndex = getWebScopeKeyIndex(scope);
+  keyIndex.clear();
+  if (storage) {
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (!key) {
+        continue;
+      }
+      if (scope === StorageScope.Disk) {
+        if (
+          !key.startsWith(SECURE_WEB_PREFIX) &&
+          !key.startsWith(BIOMETRIC_WEB_PREFIX)
+        ) {
+          keyIndex.add(key);
+        }
+        continue;
+      }
+
+      if (key.startsWith(SECURE_WEB_PREFIX)) {
+        keyIndex.add(fromSecureStorageKey(key));
+        continue;
+      }
+      if (key.startsWith(BIOMETRIC_WEB_PREFIX)) {
+        keyIndex.add(fromBiometricStorageKey(key));
+      }
+    }
+  }
+  hydratedWebScopeKeyIndex.add(scope);
+}
+
+function ensureWebScopeKeyIndex(scope: NonMemoryScope): Set<string> {
+  hydrateWebScopeKeyIndex(scope);
+  return getWebScopeKeyIndex(scope);
 }
 
 function getScopedListeners(scope: NonMemoryScope): KeyListenerRegistry {
@@ -277,6 +338,7 @@ const WebStorage: Storage = {
       scope === StorageScope.Secure ? toSecureStorageKey(key) : key;
     storage.setItem(storageKey, value);
     if (scope === StorageScope.Disk || scope === StorageScope.Secure) {
+      ensureWebScopeKeyIndex(scope).add(key);
       notifyKeyListeners(getScopedListeners(scope), key);
     }
   },
@@ -298,6 +360,7 @@ const WebStorage: Storage = {
       storage.removeItem(key);
     }
     if (scope === StorageScope.Disk || scope === StorageScope.Secure) {
+      ensureWebScopeKeyIndex(scope).delete(key);
       notifyKeyListeners(getScopedListeners(scope), key);
     }
   },
@@ -335,6 +398,7 @@ const WebStorage: Storage = {
       storage.clear();
     }
     if (scope === StorageScope.Disk || scope === StorageScope.Secure) {
+      ensureWebScopeKeyIndex(scope).clear();
       notifyAllListeners(getScopedListeners(scope));
     }
   },
@@ -345,11 +409,17 @@ const WebStorage: Storage = {
     }
 
     keys.forEach((key, index) => {
+      const value = values[index];
+      if (value === undefined) {
+        return;
+      }
       const storageKey =
         scope === StorageScope.Secure ? toSecureStorageKey(key) : key;
-      storage.setItem(storageKey, values[index]);
+      storage.setItem(storageKey, value);
     });
     if (scope === StorageScope.Disk || scope === StorageScope.Secure) {
+      const keyIndex = ensureWebScopeKeyIndex(scope);
+      keys.forEach((key) => keyIndex.add(key));
       const listeners = getScopedListeners(scope);
       keys.forEach((key) => notifyKeyListeners(listeners, key));
     }
@@ -363,9 +433,41 @@ const WebStorage: Storage = {
     });
   },
   removeBatch: (keys: string[], scope: number) => {
-    keys.forEach((key) => {
-      WebStorage.remove(key, scope);
-    });
+    const storage = getBrowserStorage(scope);
+    if (!storage) {
+      return;
+    }
+
+    if (scope === StorageScope.Secure) {
+      keys.forEach((key) => {
+        storage.removeItem(toSecureStorageKey(key));
+        storage.removeItem(toBiometricStorageKey(key));
+      });
+    } else {
+      keys.forEach((key) => {
+        storage.removeItem(key);
+      });
+    }
+
+    if (scope === StorageScope.Disk || scope === StorageScope.Secure) {
+      const keyIndex = ensureWebScopeKeyIndex(scope);
+      keys.forEach((key) => keyIndex.delete(key));
+      const listeners = getScopedListeners(scope);
+      keys.forEach((key) => notifyKeyListeners(listeners, key));
+    }
+  },
+  removeByPrefix: (prefix: string, scope: number) => {
+    if (scope !== StorageScope.Disk && scope !== StorageScope.Secure) {
+      return;
+    }
+
+    const keyIndex = ensureWebScopeKeyIndex(scope);
+    const keys = Array.from(keyIndex).filter((key) => key.startsWith(prefix));
+    if (keys.length === 0) {
+      return;
+    }
+
+    WebStorage.removeBatch(keys, scope);
   },
   addOnChange: (
     _scope: number,
@@ -384,36 +486,19 @@ const WebStorage: Storage = {
     return storage?.getItem(key) !== null;
   },
   getAllKeys: (scope: number) => {
-    const storage = getBrowserStorage(scope);
-    if (!storage) return [];
-    const keys = new Set<string>();
-    for (let i = 0; i < storage.length; i++) {
-      const k = storage.key(i);
-      if (!k) {
-        continue;
-      }
-      if (scope === StorageScope.Secure) {
-        if (k.startsWith(SECURE_WEB_PREFIX)) {
-          keys.add(fromSecureStorageKey(k));
-        } else if (k.startsWith(BIOMETRIC_WEB_PREFIX)) {
-          keys.add(fromBiometricStorageKey(k));
-        }
-        continue;
-      }
-      if (
-        k.startsWith(SECURE_WEB_PREFIX) ||
-        k.startsWith(BIOMETRIC_WEB_PREFIX)
-      ) {
-        continue;
-      }
-      keys.add(k);
+    if (scope !== StorageScope.Disk && scope !== StorageScope.Secure) {
+      return [];
     }
-    return Array.from(keys);
+    return Array.from(ensureWebScopeKeyIndex(scope));
   },
   size: (scope: number) => {
-    return WebStorage.getAllKeys(scope).length;
+    if (scope === StorageScope.Disk || scope === StorageScope.Secure) {
+      return ensureWebScopeKeyIndex(scope).size;
+    }
+    return 0;
   },
   setSecureAccessControl: () => {},
+  setSecureWritesAsync: (_enabled: boolean) => {},
   setKeychainAccessGroup: () => {},
   setSecureBiometric: (key: string, value: string) => {
     if (
@@ -427,6 +512,7 @@ const WebStorage: Storage = {
       );
     }
     globalThis.localStorage?.setItem(toBiometricStorageKey(key), value);
+    ensureWebScopeKeyIndex(StorageScope.Secure).add(key);
     notifyKeyListeners(getScopedListeners(StorageScope.Secure), key);
   },
   getSecureBiometric: (key: string) => {
@@ -435,7 +521,11 @@ const WebStorage: Storage = {
     );
   },
   deleteSecureBiometric: (key: string) => {
-    globalThis.localStorage?.removeItem(toBiometricStorageKey(key));
+    const storage = globalThis.localStorage;
+    storage?.removeItem(toBiometricStorageKey(key));
+    if (storage?.getItem(toSecureStorageKey(key)) === null) {
+      ensureWebScopeKeyIndex(StorageScope.Secure).delete(key);
+    }
     notifyKeyListeners(getScopedListeners(StorageScope.Secure), key);
   },
   hasSecureBiometric: (key: string) => {
@@ -456,6 +546,12 @@ const WebStorage: Storage = {
       }
     }
     toRemove.forEach((k) => storage.removeItem(k));
+    const keyIndex = ensureWebScopeKeyIndex(StorageScope.Secure);
+    keysToNotify.forEach((key) => {
+      if (storage.getItem(toSecureStorageKey(key)) === null) {
+        keyIndex.delete(key);
+      }
+    });
     const listeners = getScopedListeners(StorageScope.Secure);
     keysToNotify.forEach((key) => notifyKeyListeners(listeners, key));
   },
@@ -538,9 +634,6 @@ export const storage = {
 
     clearScopeRawCache(scope);
     WebStorage.clear(scope);
-    if (scope === StorageScope.Secure) {
-      WebStorage.clearSecureBiometric();
-    }
   },
   clearAll: () => {
     storage.clear(StorageScope.Memory);
@@ -558,18 +651,12 @@ export const storage = {
       notifyAllListeners(memoryListeners);
       return;
     }
+    const keyPrefix = prefixKey(namespace, "");
     if (scope === StorageScope.Secure) {
       flushSecureWrites();
     }
-    const keys = WebStorage.getAllKeys(scope);
-    const namespacedKeys = keys.filter((k) => isNamespaced(k, namespace));
-    if (namespacedKeys.length > 0) {
-      WebStorage.removeBatch(namespacedKeys, scope);
-      namespacedKeys.forEach((k) => cacheRawValue(scope, k, undefined));
-      if (scope === StorageScope.Secure) {
-        namespacedKeys.forEach((k) => clearPendingSecureWrite(k));
-      }
-    }
+    clearScopeRawCache(scope);
+    WebStorage.removeByPrefix(keyPrefix, scope);
   },
   clearBiometric: () => {
     WebStorage.clearSecureBiometric();
@@ -606,6 +693,10 @@ export const storage = {
     return WebStorage.size(scope);
   },
   setAccessControl: (_level: AccessControl) => {},
+  setSecureWritesAsync: (_enabled: boolean) => {},
+  flushSecureWrites: () => {
+    flushSecureWrites();
+  },
   setKeychainAccessGroup: (_group: string) => {},
 };
 
@@ -656,6 +747,14 @@ function canUseRawBatchPath(item: RawBatchPathItem): boolean {
   );
 }
 
+function canUseSecureRawBatchPath(item: RawBatchPathItem): boolean {
+  return (
+    item._hasExpiration === false &&
+    item._hasValidation === false &&
+    item._isBiometric !== true
+  );
+}
+
 function defaultSerialize<T>(value: T): string {
   return serializeWithPrimitiveFastPath(value);
 }
@@ -687,6 +786,7 @@ export function createStorageItem<T = undefined>(
     config.coalesceSecureWrites === true &&
     !isBiometric &&
     secureAccessControl === undefined;
+  const defaultValue = config.defaultValue as T;
   const nonMemoryScope: NonMemoryScope | null =
     config.scope === StorageScope.Disk
       ? StorageScope.Disk
@@ -703,11 +803,13 @@ export function createStorageItem<T = undefined>(
   let lastRaw: unknown = undefined;
   let lastValue: T | undefined;
   let hasLastValue = false;
+  let lastExpiresAt: number | null | undefined = undefined;
 
   const invalidateParsedCache = () => {
     lastRaw = undefined;
     lastValue = undefined;
     hasLastValue = false;
+    lastExpiresAt = undefined;
   };
 
   const ensureSubscription = () => {
@@ -744,7 +846,7 @@ export function createStorageItem<T = undefined>(
           return undefined;
         }
       }
-      return memoryStore.get(storageKey) as T | undefined;
+      return memoryStore.get(storageKey);
     }
 
     if (
@@ -839,7 +941,7 @@ export function createStorageItem<T = undefined>(
       return onValidationError(invalidValue);
     }
 
-    return config.defaultValue as T;
+    return defaultValue;
   };
 
   const ensureValidatedValue = (
@@ -852,7 +954,7 @@ export function createStorageItem<T = undefined>(
 
     const resolved = resolveInvalidValue(candidate);
     if (validate && !validate(resolved)) {
-      return config.defaultValue as T;
+      return defaultValue;
     }
     if (hadStoredValue) {
       writeValueWithoutValidation(resolved);
@@ -863,36 +965,61 @@ export function createStorageItem<T = undefined>(
   const get = (): T => {
     const raw = readStoredRaw();
 
-    const canUseCachedValue = !expiration && !memoryExpiration;
-    if (canUseCachedValue && raw === lastRaw && hasLastValue) {
-      return lastValue as T;
+    if (!memoryExpiration && raw === lastRaw && hasLastValue) {
+      if (!expiration || lastExpiresAt === null) {
+        return lastValue as T;
+      }
+
+      if (typeof lastExpiresAt === "number") {
+        if (lastExpiresAt > Date.now()) {
+          return lastValue as T;
+        }
+
+        removeStoredRaw();
+        invalidateParsedCache();
+        onExpired?.(storageKey);
+        lastValue = ensureValidatedValue(defaultValue, false);
+        hasLastValue = true;
+        return lastValue;
+      }
     }
 
     lastRaw = raw;
 
     if (raw === undefined) {
-      lastValue = ensureValidatedValue(config.defaultValue, false);
+      lastExpiresAt = undefined;
+      lastValue = ensureValidatedValue(defaultValue, false);
       hasLastValue = true;
       return lastValue;
     }
 
     if (isMemory) {
+      lastExpiresAt = undefined;
       lastValue = ensureValidatedValue(raw, true);
       hasLastValue = true;
       return lastValue;
     }
 
-    let deserializableRaw = raw as string;
+    if (typeof raw !== "string") {
+      lastExpiresAt = undefined;
+      lastValue = ensureValidatedValue(defaultValue, false);
+      hasLastValue = true;
+      return lastValue;
+    }
+
+    let deserializableRaw = raw;
 
     if (expiration) {
+      let envelopeExpiresAt: number | null = null;
       try {
-        const parsed = JSON.parse(raw as string) as unknown;
+        const parsed = JSON.parse(raw) as unknown;
         if (isStoredEnvelope(parsed)) {
+          envelopeExpiresAt = parsed.expiresAt;
           if (parsed.expiresAt <= Date.now()) {
             removeStoredRaw();
             invalidateParsedCache();
             onExpired?.(storageKey);
-            lastValue = ensureValidatedValue(config.defaultValue, false);
+            lastValue = ensureValidatedValue(defaultValue, false);
             hasLastValue = true;
             return lastValue;
           }
@@ -902,6 +1029,9 @@ export function createStorageItem<T = undefined>(
       } catch {
         // Keep backward compatibility with legacy raw values.
       }
+      lastExpiresAt = envelopeExpiresAt;
+    } else {
+      lastExpiresAt = undefined;
     }
 
     lastValue = ensureValidatedValue(deserialize(deserializableRaw), true);
@@ -910,11 +1040,7 @@ export function createStorageItem<T = undefined>(
   };
 
   const set = (valueOrFn: T | ((prev: T) => T)): void => {
-    const currentValue = get();
-    const newValue =
-      typeof valueOrFn === "function"
-        ? (valueOrFn as (prev: T) => T)(currentValue)
-        : valueOrFn;
+    const newValue = isUpdater(valueOrFn) ? valueOrFn(get()) : valueOrFn;
 
     invalidateParsedCache();
 
@@ -976,54 +1102,17 @@ export function createStorageItem<T = undefined>(
     _hasExpiration: expiration !== undefined,
     _readCacheEnabled: readCache,
     _isBiometric: isBiometric,
-    _secureAccessControl: secureAccessControl,
+    ...(secureAccessControl !== undefined
+      ? { _secureAccessControl: secureAccessControl }
+      : {}),
     scope: config.scope,
     key: storageKey,
   };
 
-  return storageItem as StorageItem<T>;
+  return storageItem;
 }
 
-export function useStorage<T>(
-  item: StorageItem<T>,
-): [T, (value: T | ((prev: T) => T)) => void] {
-  const value = useSyncExternalStore(item.subscribe, item.get, item.get);
-  return [value, item.set];
-}
-
-export function useStorageSelector<T, TSelected>(
-  item: StorageItem<T>,
-  selector: (value: T) => TSelected,
-  isEqual: (prev: TSelected, next: TSelected) => boolean = Object.is,
-): [TSelected, (value: T | ((prev: T) => T)) => void] {
-  const selectedRef = useRef<
-    { hasValue: false } | { hasValue: true; value: TSelected }
-  >({
-    hasValue: false,
-  });
-
-  const getSelectedSnapshot = () => {
-    const nextSelected = selector(item.get());
-    const current = selectedRef.current;
-    if (current.hasValue && isEqual(current.value, nextSelected)) {
-      return current.value;
-    }
-
-    selectedRef.current = { hasValue: true, value: nextSelected };
-    return nextSelected;
-  };
-
-  const selectedValue = useSyncExternalStore(
-    item.subscribe,
-    getSelectedSnapshot,
-    getSelectedSnapshot,
-  );
-  return [selectedValue, item.set];
-}
-
-export function useSetStorage<T>(item: StorageItem<T>) {
-  return item.set;
-}
+export { useStorage, useStorageSelector, useSetStorage } from "./storage-hooks";
 
 type BatchReadItem<T> = Pick<
   StorageItem<T>,
@@ -1052,7 +1141,11 @@ export function getBatch(
     return items.map((item) => item.get());
   }
 
-  const useRawBatchPath = items.every((item) => canUseRawBatchPath(item));
+  const useRawBatchPath = items.every((item) =>
+    scope === StorageScope.Secure
+      ? canUseSecureRawBatchPath(item)
+      : canUseRawBatchPath(item),
+  );
   if (!useRawBatchPath) {
     return items.map((item) => item.get());
   }
@@ -1086,6 +1179,9 @@ export function getBatch(
     fetchedValues.forEach((value, index) => {
       const key = keysToFetch[index];
       const targetIndex = keyIndexes[index];
+      if (key === undefined || targetIndex === undefined) {
+        return;
+      }
       rawValues[targetIndex] = value;
       cacheRawValue(scope, key, value);
     });
@@ -1114,6 +1210,48 @@ export function setBatch<T>(
     return;
   }
 
+  if (scope === StorageScope.Secure) {
+    const secureEntries = items.map(({ item, value }) => ({
+      item,
+      value,
+      internal: asInternal(item),
+    }));
+    const canUseSecureBatchPath = secureEntries.every(({ internal }) =>
+      canUseSecureRawBatchPath(internal),
+    );
+    if (!canUseSecureBatchPath) {
+      items.forEach(({ item, value }) => item.set(value));
+      return;
+    }
+
+    flushSecureWrites();
+    const groupedByAccessControl = new Map<
+      number,
+      { keys: string[]; values: string[] }
+    >();
+
+    secureEntries.forEach(({ item, value, internal }) => {
+      const accessControl =
+        internal._secureAccessControl ?? AccessControl.WhenUnlocked;
+      const existingGroup = groupedByAccessControl.get(accessControl);
+      const group = existingGroup ?? { keys: [], values: [] };
+      group.keys.push(item.key);
+      group.values.push(item.serialize(value));
+      if (!existingGroup) {
+        groupedByAccessControl.set(accessControl, group);
+      }
+    });
+
+    groupedByAccessControl.forEach((group, accessControl) => {
+      WebStorage.setSecureAccessControl(accessControl);
+      WebStorage.setBatch(group.keys, group.values, scope);
+      group.keys.forEach((key, index) =>
+        cacheRawValue(scope, key, group.values[index]),
+      );
+    });
+    return;
+  }
+
   const useRawBatchPath = items.every(({ item }) =>
     canUseRawBatchPath(asInternal(item)),
   );
@@ -1124,9 +1262,6 @@ export function setBatch<T>(
 
   const keys = items.map((entry) => entry.item.key);
   const values = items.map((entry) => entry.item.serialize(entry.value));
-  if (scope === StorageScope.Secure) {
-    flushSecureWrites();
-  }
   WebStorage.setBatch(keys, values, scope);
   keys.forEach((key, index) => cacheRawValue(scope, key, values[index]));
 }
@@ -1267,20 +1402,28 @@ export function createSecureAuthStorage<K extends string>(
   options?: { namespace?: string },
 ): Record<K, StorageItem<string>> {
   const ns = options?.namespace ?? "auth";
-  const result = {} as Record<K, StorageItem<string>>;
+  const result: Partial<Record<K, StorageItem<string>>> = {};
 
-  for (const key of Object.keys(config) as K[]) {
+  for (const key of typedKeys(config)) {
     const itemConfig = config[key];
+    const expirationConfig =
+      itemConfig.ttlMs !== undefined ? { ttlMs: itemConfig.ttlMs } : undefined;
     result[key] = createStorageItem<string>({
       key,
       scope: StorageScope.Secure,
       defaultValue: "",
       namespace: ns,
-      biometric: itemConfig.biometric,
-      accessControl: itemConfig.accessControl,
-      expiration: itemConfig.ttlMs ? { ttlMs: itemConfig.ttlMs } : undefined,
+      ...(itemConfig.biometric !== undefined
+        ? { biometric: itemConfig.biometric }
+        : {}),
+      ...(itemConfig.accessControl !== undefined
+        ? { accessControl: itemConfig.accessControl }
+        : {}),
+      ...(expirationConfig !== undefined
+        ? { expiration: expirationConfig }
+        : {}),
     });
   }
 
-  return result;
+  return result as Record<K, StorageItem<string>>;
 }

@@ -9,85 +9,61 @@ import { Tabs } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { Colors } from "../components/shared";
 
-function TabIcon({
-  glyph,
+function TabGlyph({
+  label,
   color,
   focused,
-  size = 16,
 }: {
-  glyph: string;
+  label: string;
   color: string;
   focused: boolean;
-  size?: number;
 }) {
   return (
-    <Text style={{ fontSize: size, color, opacity: focused ? 1 : 0.7 }}>
-      {glyph}
-    </Text>
+    <View
+      style={[
+        s.tabGlyph,
+        {
+          borderColor: focused ? `${color}66` : `${Colors.border}88`,
+          backgroundColor: focused ? `${color}12` : Colors.card,
+        },
+      ]}
+    >
+      <Text
+        style={[
+          s.tabGlyphText,
+          {
+            color,
+            opacity: focused ? 1 : 0.8,
+          },
+        ]}
+      >
+        {label}
+      </Text>
+    </View>
   );
 }
 
 export default function RootLayout() {
   const { width } = useWindowDimensions();
   const isWeb = Platform.OS === "web";
-  const compact = isWeb && width < 800;
-  const showLabels = !compact;
-  const iconSize = compact ? 17 : 16;
+  const compact = width < 860;
 
   return (
     <View style={s.container}>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <Tabs
         screenOptions={{
           headerShown: false,
-          tabBarShowLabel: isWeb ? showLabels : true,
-          tabBarItemStyle: {
-            borderRadius: 10,
-            marginHorizontal: compact ? 0 : 2,
-            minWidth: compact ? 38 : undefined,
-          },
-          tabBarActiveBackgroundColor: Colors.card,
-          tabBarStyle: {
-            backgroundColor: Colors.surface,
-            borderWidth: 1,
-            borderColor: Colors.border,
-            height: isWeb
-              ? compact
-                ? 60
-                : 68
-              : Platform.OS === "ios"
-                ? 82
-                : 64,
-            position: isWeb ? "relative" : "absolute",
-            left: isWeb ? undefined : 12,
-            right: isWeb ? undefined : 12,
-            bottom: isWeb ? undefined : Platform.OS === "ios" ? 14 : 10,
-            marginHorizontal: isWeb ? (compact ? 8 : 20) : undefined,
-            marginBottom: isWeb ? 12 : undefined,
-            maxWidth: isWeb ? 720 : undefined,
-            alignSelf: isWeb ? "center" : undefined,
-            width: isWeb ? "100%" : undefined,
-            borderRadius: isWeb ? 14 : 16,
-            paddingTop: 6,
-            paddingBottom: isWeb
-              ? compact
-                ? 6
-                : 8
-              : Platform.OS === "ios"
-                ? 10
-                : 8,
-            paddingHorizontal: isWeb ? (compact ? 0 : 6) : 4,
-            ...Platform.select({
-              web: { boxShadow: "0 6px 20px rgba(0,0,0,0.4)" },
-            }),
-          },
           tabBarActiveTintColor: Colors.primary,
           tabBarInactiveTintColor: Colors.muted,
-          tabBarLabelStyle: {
-            fontSize: 10,
-            fontWeight: "700",
-            marginTop: 1,
-          },
+          tabBarShowLabel: true,
+          tabBarLabelStyle: s.tabLabel,
+          tabBarItemStyle: s.tabItem,
+          tabBarStyle: [
+            s.tabBar,
+            isWeb && compact && s.tabBarWebCompact,
+            !isWeb && s.tabBarNative,
+          ],
         }}
       >
         <Tabs.Screen
@@ -95,14 +71,8 @@ export default function RootLayout() {
           options={{
             title: "Showcase",
             tabBarIcon: ({ color, focused }) => (
-              <TabIcon
-                glyph="⚡"
-                color={color}
-                focused={focused}
-                size={iconSize}
-              />
+              <TabGlyph label="SH" color={color} focused={focused} />
             ),
-            tabBarLabel: showLabels ? "SHOWCASE" : undefined,
           }}
         />
         <Tabs.Screen
@@ -110,14 +80,8 @@ export default function RootLayout() {
           options={{
             title: "Features",
             tabBarIcon: ({ color, focused }) => (
-              <TabIcon
-                glyph="🧪"
-                color={color}
-                focused={focused}
-                size={iconSize}
-              />
+              <TabGlyph label="FT" color={color} focused={focused} />
             ),
-            tabBarLabel: showLabels ? "FEATURES" : undefined,
           }}
         />
         <Tabs.Screen
@@ -125,14 +89,8 @@ export default function RootLayout() {
           options={{
             title: "Tools",
             tabBarIcon: ({ color, focused }) => (
-              <TabIcon
-                glyph="🛠"
-                color={color}
-                focused={focused}
-                size={iconSize}
-              />
+              <TabGlyph label="TL" color={color} focused={focused} />
             ),
-            tabBarLabel: showLabels ? "TOOLS" : undefined,
           }}
         />
         <Tabs.Screen
@@ -140,14 +98,8 @@ export default function RootLayout() {
           options={{
             title: "Perf",
             tabBarIcon: ({ color, focused }) => (
-              <TabIcon
-                glyph="📊"
-                color={color}
-                focused={focused}
-                size={iconSize}
-              />
+              <TabGlyph label="PF" color={color} focused={focused} />
             ),
-            tabBarLabel: showLabels ? "PERF" : undefined,
           }}
         />
       </Tabs>
@@ -159,5 +111,56 @@ const s = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
+  },
+  tabBar: {
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 16,
+    height: 74,
+    paddingTop: 8,
+    paddingBottom: 10,
+    paddingHorizontal: 8,
+    marginHorizontal: 14,
+    marginBottom: 14,
+    maxWidth: 820,
+    alignSelf: "center",
+    width: "100%",
+    boxShadow: "0 14px 28px rgba(15, 23, 42, 0.14)",
+  },
+  tabBarNative: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: Platform.OS === "ios" ? 8 : 6,
+  },
+  tabBarWebCompact: {
+    marginHorizontal: 10,
+    marginBottom: 10,
+  },
+  tabItem: {
+    borderRadius: 12,
+    paddingVertical: 2,
+  },
+  tabLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    marginTop: 2,
+    letterSpacing: 0.4,
+  },
+  tabGlyph: {
+    minWidth: 30,
+    minHeight: 22,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 6,
+  },
+  tabGlyphText: {
+    fontSize: 10,
+    lineHeight: 12,
+    fontWeight: "800",
+    letterSpacing: 0.5,
   },
 });

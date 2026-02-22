@@ -1,4 +1,3 @@
-import { useRef, useSyncExternalStore } from "react";
 import { NitroModules } from "react-native-nitro-modules";
 import type { Storage } from "./Storage.nitro";
 import { StorageScope, AccessControl, BiometricLevel } from "./Storage.types";
@@ -56,8 +55,18 @@ type RawBatchPathItem = {
   _secureAccessControl?: AccessControl;
 };
 
-function asInternal(item: StorageItem<any>): StorageItemInternal<any> {
-  return item as unknown as StorageItemInternal<any>;
+function asInternal<T>(item: StorageItem<T>): StorageItemInternal<T> {
+  return item as StorageItemInternal<T>;
+}
+
+function isUpdater<T>(
+  valueOrFn: T | ((prev: T) => T),
+): valueOrFn is (prev: T) => T {
+  return typeof valueOrFn === "function";
+}
+
+function typedKeys<K extends string, V>(record: Record<K, V>): K[] {
+  return Object.keys(record) as K[];
 }
 type NonMemoryScope = StorageScope.Disk | StorageScope.Secure;
 type PendingSecureWrite = { key: string; value: string | undefined };
@@ -336,9 +345,6 @@ export const storage = {
 
     clearScopeRawCache(scope);
     getStorageModule().clear(scope);
-    if (scope === StorageScope.Secure) {
-      getStorageModule().clearSecureBiometric();
-    }
   },
   clearAll: () => {
     storage.clear(StorageScope.Memory);
@@ -356,18 +362,14 @@ export const storage = {
       notifyAllListeners(memoryListeners);
       return;
     }
+
+    const keyPrefix = prefixKey(namespace, "");
     if (scope === StorageScope.Secure) {
       flushSecureWrites();
     }
-    const keys = getStorageModule().getAllKeys(scope);
-    const namespacedKeys = keys.filter((k) => isNamespaced(k, namespace));
-    if (namespacedKeys.length > 0) {
-      getStorageModule().removeBatch(namespacedKeys, scope);
-      namespacedKeys.forEach((k) => cacheRawValue(scope, k, undefined));
-      if (scope === StorageScope.Secure) {
-        namespacedKeys.forEach((k) => clearPendingSecureWrite(k));
-      }
-    }
+
+    clearScopeRawCache(scope);
+    getStorageModule().removeByPrefix(keyPrefix, scope);
   },
   clearBiometric: () => {
     getStorageModule().clearSecureBiometric();
@@ -414,6 +416,12 @@ export const storage = {
   setAccessControl: (level: AccessControl) => {
     secureDefaultAccessControl = level;
     getStorageModule().setSecureAccessControl(level);
+  },
+  setSecureWritesAsync: (enabled: boolean) => {
+    getStorageModule().setSecureWritesAsync(enabled);
+  },
+  flushSecureWrites: () => {
+    flushSecureWrites();
   },
   setKeychainAccessGroup: (group: string) => {
     getStorageModule().setKeychainAccessGroup(group);
@@ -467,6 +475,14 @@ function canUseRawBatchPath(item: RawBatchPathItem): boolean {
   );
 }
 
+function canUseSecureRawBatchPath(item: RawBatchPathItem): boolean {
+  return (
+    item._hasExpiration === false &&
+    item._hasValidation === false &&
+    item._isBiometric !== true
+  );
+}
+
 function defaultSerialize<T>(value: T): string {
   return serializeWithPrimitiveFastPath(value);
 }
@@ -498,6 +514,7 @@ export function createStorageItem<T = undefined>(
     config.coalesceSecureWrites === true &&
     !isBiometric &&
     secureAccessControl === undefined;
+  const defaultValue = config.defaultValue as T;
   const nonMemoryScope: NonMemoryScope | null =
     config.scope === StorageScope.Disk
       ? StorageScope.Disk
@@ -514,11 +531,13 @@ export function createStorageItem<T = undefined>(
   let lastRaw: unknown = undefined;
   let lastValue: T | undefined;
   let hasLastValue = false;
+  let lastExpiresAt: number | null | undefined = undefined;
 
   const invalidateParsedCache = () => {
     lastRaw = undefined;
     lastValue = undefined;
     hasLastValue = false;
+    lastExpiresAt = undefined;
   };
 
   const ensureSubscription = () => {
@@ -556,7 +575,7 @@ export function createStorageItem<T = undefined>(
           return undefined;
         }
       }
-      return memoryStore.get(storageKey) as T | undefined;
+      return memoryStore.get(storageKey);
     }
 
     if (
@@ -654,7 +673,7 @@ export function createStorageItem<T = undefined>(
       return onValidationError(invalidValue);
     }
 
-    return config.defaultValue as T;
+    return defaultValue;
   };
 
   const ensureValidatedValue = (
@@ -667,7 +686,7 @@ export function createStorageItem<T = undefined>(
 
     const resolved = resolveInvalidValue(candidate);
     if (validate && !validate(resolved)) {
-      return config.defaultValue as T;
+      return defaultValue;
     }
     if (hadStoredValue) {
       writeValueWithoutValidation(resolved);
@@ -678,36 +697,61 @@ export function createStorageItem<T = undefined>(
   const get = (): T => {
     const raw = readStoredRaw();
 
-    const canUseCachedValue = !expiration && !memoryExpiration;
-    if (canUseCachedValue && raw === lastRaw && hasLastValue) {
-      return lastValue as T;
+    if (!memoryExpiration && raw === lastRaw && hasLastValue) {
+      if (!expiration || lastExpiresAt === null) {
+        return lastValue as T;
+      }
+
+      if (typeof lastExpiresAt === "number") {
+        if (lastExpiresAt > Date.now()) {
+          return lastValue as T;
+        }
+
+        removeStoredRaw();
+        invalidateParsedCache();
+        onExpired?.(storageKey);
+        lastValue = ensureValidatedValue(defaultValue, false);
+        hasLastValue = true;
+        return lastValue;
+      }
     }
 
     lastRaw = raw;
 
     if (raw === undefined) {
-      lastValue = ensureValidatedValue(config.defaultValue, false);
+      lastExpiresAt = undefined;
+      lastValue = ensureValidatedValue(defaultValue, false);
       hasLastValue = true;
       return lastValue;
     }
 
     if (isMemory) {
+      lastExpiresAt = undefined;
       lastValue = ensureValidatedValue(raw, true);
       hasLastValue = true;
       return lastValue;
     }
 
-    let deserializableRaw = raw as string;
+    if (typeof raw !== "string") {
+      lastExpiresAt = undefined;
+      lastValue = ensureValidatedValue(defaultValue, false);
+      hasLastValue = true;
+      return lastValue;
+    }
+
+    let deserializableRaw = raw;
 
     if (expiration) {
+      let envelopeExpiresAt: number | null = null;
       try {
-        const parsed = JSON.parse(raw as string) as unknown;
+        const parsed = JSON.parse(raw) as unknown;
         if (isStoredEnvelope(parsed)) {
+          envelopeExpiresAt = parsed.expiresAt;
           if (parsed.expiresAt <= Date.now()) {
             removeStoredRaw();
             invalidateParsedCache();
             onExpired?.(storageKey);
-            lastValue = ensureValidatedValue(config.defaultValue, false);
+            lastValue = ensureValidatedValue(defaultValue, false);
             hasLastValue = true;
             return lastValue;
           }
@@ -717,6 +761,9 @@ export function createStorageItem<T = undefined>(
       } catch {
         // Keep backward compatibility with legacy raw values.
       }
+      lastExpiresAt = envelopeExpiresAt;
+    } else {
+      lastExpiresAt = undefined;
     }
 
     lastValue = ensureValidatedValue(deserialize(deserializableRaw), true);
@@ -725,11 +772,7 @@ export function createStorageItem<T = undefined>(
   };
 
   const set = (valueOrFn: T | ((prev: T) => T)): void => {
-    const currentValue = get();
-    const newValue =
-      typeof valueOrFn === "function"
-        ? (valueOrFn as (prev: T) => T)(currentValue)
-        : valueOrFn;
+    const newValue = isUpdater(valueOrFn) ? valueOrFn(get()) : valueOrFn;
 
     invalidateParsedCache();
 
@@ -794,54 +837,17 @@ export function createStorageItem<T = undefined>(
     _hasExpiration: expiration !== undefined,
     _readCacheEnabled: readCache,
     _isBiometric: isBiometric,
-    _secureAccessControl: secureAccessControl,
+    ...(secureAccessControl !== undefined
+      ? { _secureAccessControl: secureAccessControl }
+      : {}),
     scope: config.scope,
     key: storageKey,
   };
 
-  return storageItem as StorageItem<T>;
+  return storageItem;
 }
 
-export function useStorage<T>(
-  item: StorageItem<T>,
-): [T, (value: T | ((prev: T) => T)) => void] {
-  const value = useSyncExternalStore(item.subscribe, item.get, item.get);
-  return [value, item.set];
-}
-
-export function useStorageSelector<T, TSelected>(
-  item: StorageItem<T>,
-  selector: (value: T) => TSelected,
-  isEqual: (prev: TSelected, next: TSelected) => boolean = Object.is,
-): [TSelected, (value: T | ((prev: T) => T)) => void] {
-  const selectedRef = useRef<
-    { hasValue: false } | { hasValue: true; value: TSelected }
-  >({
-    hasValue: false,
-  });
-
-  const getSelectedSnapshot = () => {
-    const nextSelected = selector(item.get());
-    const current = selectedRef.current;
-    if (current.hasValue && isEqual(current.value, nextSelected)) {
-      return current.value;
-    }
-
-    selectedRef.current = { hasValue: true, value: nextSelected };
-    return nextSelected;
-  };
-
-  const selectedValue = useSyncExternalStore(
-    item.subscribe,
-    getSelectedSnapshot,
-    getSelectedSnapshot,
-  );
-  return [selectedValue, item.set];
-}
-
-export function useSetStorage<T>(item: StorageItem<T>) {
-  return item.set;
-}
+export { useStorage, useStorageSelector, useSetStorage } from "./storage-hooks";
 
 type BatchReadItem<T> = Pick<
   StorageItem<T>,
@@ -870,7 +876,11 @@ export function getBatch(
     return items.map((item) => item.get());
   }
 
-  const useRawBatchPath = items.every((item) => canUseRawBatchPath(item));
+  const useRawBatchPath = items.every((item) =>
+    scope === StorageScope.Secure
+      ? canUseSecureRawBatchPath(item)
+      : canUseRawBatchPath(item),
+  );
   if (!useRawBatchPath) {
     return items.map((item) => item.get());
   }
@@ -907,6 +917,9 @@ export function getBatch(
     fetchedValues.forEach((value, index) => {
       const key = keysToFetch[index];
       const targetIndex = keyIndexes[index];
+      if (key === undefined || targetIndex === undefined) {
+        return;
+      }
       rawValues[targetIndex] = value;
       cacheRawValue(scope, key, value);
     });
@@ -935,6 +948,49 @@ export function setBatch<T>(
     return;
   }
 
+  if (scope === StorageScope.Secure) {
+    const secureEntries = items.map(({ item, value }) => ({
+      item,
+      value,
+      internal: asInternal(item),
+    }));
+    const canUseSecureBatchPath = secureEntries.every(({ internal }) =>
+      canUseSecureRawBatchPath(internal),
+    );
+    if (!canUseSecureBatchPath) {
+      items.forEach(({ item, value }) => item.set(value));
+      return;
+    }
+
+    flushSecureWrites();
+    const storageModule = getStorageModule();
+    const groupedByAccessControl = new Map<
+      number,
+      { keys: string[]; values: string[] }
+    >();
+
+    secureEntries.forEach(({ item, value, internal }) => {
+      const accessControl =
+        internal._secureAccessControl ?? secureDefaultAccessControl;
+      const existingGroup = groupedByAccessControl.get(accessControl);
+      const group = existingGroup ?? { keys: [], values: [] };
+      group.keys.push(item.key);
+      group.values.push(item.serialize(value));
+      if (!existingGroup) {
+        groupedByAccessControl.set(accessControl, group);
+      }
+    });
+
+    groupedByAccessControl.forEach((group, accessControl) => {
+      storageModule.setSecureAccessControl(accessControl);
+      storageModule.setBatch(group.keys, group.values, scope);
+      group.keys.forEach((key, index) =>
+        cacheRawValue(scope, key, group.values[index]),
+      );
+    });
+    return;
+  }
+
   const useRawBatchPath = items.every(({ item }) =>
     canUseRawBatchPath(asInternal(item)),
   );
@@ -946,10 +1002,6 @@ export function setBatch<T>(
   const keys = items.map((entry) => entry.item.key);
   const values = items.map((entry) => entry.item.serialize(entry.value));
 
-  if (scope === StorageScope.Secure) {
-    flushSecureWrites();
-    getStorageModule().setSecureAccessControl(secureDefaultAccessControl);
-  }
   getStorageModule().setBatch(keys, values, scope);
   keys.forEach((key, index) => cacheRawValue(scope, key, values[index]));
 }
@@ -1090,20 +1142,28 @@ export function createSecureAuthStorage<K extends string>(
   options?: { namespace?: string },
 ): Record<K, StorageItem<string>> {
   const ns = options?.namespace ?? "auth";
-  const result = {} as Record<K, StorageItem<string>>;
+  const result: Partial<Record<K, StorageItem<string>>> = {};
 
-  for (const key of Object.keys(config) as K[]) {
+  for (const key of typedKeys(config)) {
     const itemConfig = config[key];
+    const expirationConfig =
+      itemConfig.ttlMs !== undefined ? { ttlMs: itemConfig.ttlMs } : undefined;
     result[key] = createStorageItem<string>({
       key,
       scope: StorageScope.Secure,
       defaultValue: "",
       namespace: ns,
-      biometric: itemConfig.biometric,
-      accessControl: itemConfig.accessControl,
-      expiration: itemConfig.ttlMs ? { ttlMs: itemConfig.ttlMs } : undefined,
+      ...(itemConfig.biometric !== undefined
+        ? { biometric: itemConfig.biometric }
+        : {}),
+      ...(itemConfig.accessControl !== undefined
+        ? { accessControl: itemConfig.accessControl }
+        : {}),
+      ...(expirationConfig !== undefined
+        ? { expiration: expirationConfig }
+        : {}),
     });
   }
 
-  return result;
+  return result as Record<K, StorageItem<string>>;
 }

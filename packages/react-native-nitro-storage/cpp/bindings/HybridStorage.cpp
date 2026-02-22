@@ -1,11 +1,13 @@
 #include "HybridStorage.hpp"
 #include <stdexcept>
 
+#ifndef NITRO_STORAGE_DISABLE_PLATFORM_ADAPTER
 #if __APPLE__
 #include "../../ios/IOSStorageAdapterCpp.hpp"
 #elif __ANDROID__
 #include "../../android/src/main/cpp/AndroidStorageAdapterCpp.hpp"
 #include <fbjni/fbjni.h>
+#endif
 #endif
 
 namespace margelo::nitro::NitroStorage {
@@ -16,11 +18,13 @@ constexpr auto kBatchMissingSentinel = "__nitro_storage_batch_missing__::v1";
 
 HybridStorage::HybridStorage()
     : HybridObject(TAG), HybridStorageSpec() {
+#ifndef NITRO_STORAGE_DISABLE_PLATFORM_ADAPTER
 #if __APPLE__
     nativeAdapter_ = std::make_shared<::NitroStorage::IOSStorageAdapterCpp>();
 #elif __ANDROID__
     auto context = ::NitroStorage::AndroidStorageAdapterJava::getContext();
     nativeAdapter_ = std::make_shared<::NitroStorage::AndroidStorageAdapterCpp>(context);
+#endif
 #endif
 }
 
@@ -298,8 +302,10 @@ void HybridStorage::setBatch(const std::vector<std::string>& keys, const std::ve
             break;
     }
 
+    const auto scopeValue = static_cast<int>(s);
+    const auto listeners = copyListenersForScope(scopeValue);
     for (size_t i = 0; i < keys.size(); ++i) {
-        notifyListeners(static_cast<int>(s), keys[i], values[i]);
+        notifyListeners(listeners, keys[i], values[i]);
     }
 }
 
@@ -392,9 +398,32 @@ void HybridStorage::removeBatch(const std::vector<std::string>& keys, double sco
             break;
     }
 
+    const auto scopeValue = static_cast<int>(s);
+    const auto listeners = copyListenersForScope(scopeValue);
     for (const auto& key : keys) {
-        notifyListeners(static_cast<int>(s), key, std::nullopt);
+        notifyListeners(listeners, key, std::nullopt);
     }
+}
+
+void HybridStorage::removeByPrefix(const std::string& prefix, double scope) {
+    if (prefix.empty()) {
+        return;
+    }
+
+    const auto keys = getAllKeys(scope);
+    std::vector<std::string> prefixedKeys;
+    prefixedKeys.reserve(keys.size());
+    for (const auto& key : keys) {
+        if (key.rfind(prefix, 0) == 0) {
+            prefixedKeys.push_back(key);
+        }
+    }
+
+    if (prefixedKeys.empty()) {
+        return;
+    }
+
+    removeBatch(prefixedKeys, scope);
 }
 
 // --- Configuration ---
@@ -402,6 +431,11 @@ void HybridStorage::removeBatch(const std::vector<std::string>& keys, double sco
 void HybridStorage::setSecureAccessControl(double level) {
     ensureAdapter();
     nativeAdapter_->setSecureAccessControl(static_cast<int>(level));
+}
+
+void HybridStorage::setSecureWritesAsync(bool enabled) {
+    ensureAdapter();
+    nativeAdapter_->setSecureWritesAsync(enabled);
 }
 
 void HybridStorage::setKeychainAccessGroup(const std::string& group) {
@@ -457,11 +491,7 @@ void HybridStorage::clearSecureBiometric() {
 
 // --- Internal ---
 
-void HybridStorage::notifyListeners(
-    int scope,
-    const std::string& key,
-    const std::optional<std::string>& value
-) {
+std::vector<HybridStorage::Listener> HybridStorage::copyListenersForScope(int scope) {
     std::vector<Listener> listenersCopy;
     {
         std::lock_guard<std::mutex> lock(listenersMutex_);
@@ -471,14 +501,30 @@ void HybridStorage::notifyListeners(
             listenersCopy = it->second;
         }
     }
-    
-    for (const auto& listener : listenersCopy) {
+    return listenersCopy;
+}
+
+void HybridStorage::notifyListeners(
+    const std::vector<Listener>& listeners,
+    const std::string& key,
+    const std::optional<std::string>& value
+) {
+    for (const auto& listener : listeners) {
         try {
             listener.callback(key, value);
         } catch (...) {
             // Ignore listener failures to avoid crashing the caller.
         }
     }
+}
+
+void HybridStorage::notifyListeners(
+    int scope,
+    const std::string& key,
+    const std::optional<std::string>& value
+) {
+    const auto listeners = copyListenersForScope(scope);
+    notifyListeners(listeners, key, value);
 }
 
 void HybridStorage::ensureAdapter() const {

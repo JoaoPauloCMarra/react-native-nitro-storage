@@ -4,6 +4,32 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
+## 0.3.2 - 2026-02-22
+
+### Added
+
+- Add `storage.setSecureWritesAsync(enabled)` to toggle Android secure writes between synchronous `commit()` and asynchronous `apply()`.
+- Add `storage.flushSecureWrites()` for deterministic flush control of coalesced secure writes.
+- Add native `removeByPrefix(prefix, scope)` plumbing and route namespace clears through the native/web prefix path.
+- Add dedicated C++ binding tests for `HybridStorage` behavior (`cpp/bindings/HybridStorageTest.cpp`), wired into `test:cpp`.
+- Add type-level public API tests (`test:types`) and package content guard checks (`check:pack`).
+
+### Changed
+
+- Skip unnecessary read path on direct `item.set(value)` writes (still reads for updater functions).
+- Reuse TTL envelope parse results while entries remain unexpired to avoid repeated JSON parse/deserialization work.
+- Group secure raw batch writes by per-item access control so secure batch paths stay fast even with mixed access-control settings.
+- Optimize C++ batch listener dispatch by copying scoped listeners once per batch operation.
+- Avoid duplicate secure biometric clearing calls by relying on secure clear paths that already include biometric cleanup.
+- Optimize web secure/disk key bookkeeping with an indexed key cache (faster `size`, `getAllKeys`, and namespace clears without repeated `localStorage` scans).
+- Improve iOS secure key union performance by deduplicating with an `unordered_set`.
+- Extract shared React hooks into `src/storage-hooks.ts` to reduce native/web entrypoint duplication.
+- Expand benchmark coverage to include Disk and Secure scope throughput checks and tighten regression thresholds.
+- Refresh the Expo example app UI with a cleaner shared design system and add an Android secure write mode demo control.
+- Configure Expo iOS example builds to use React Native source builds under New Architecture and silence expected deprecated RN host warnings in the Android template wrapper.
+- Extend CI with Android/iOS example build jobs under New Architecture.
+- Expand README coverage so every public feature has a concrete TypeScript use-case example, including secure write flush, biometric/access-control usage, batch bootstrap, and storage utility workflows.
+
 ## 0.3.1 - 2026-02-16
 
 ### Added

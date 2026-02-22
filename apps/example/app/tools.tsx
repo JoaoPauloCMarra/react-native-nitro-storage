@@ -1,39 +1,39 @@
 import { useState } from "react";
-import { View, Text } from "react-native";
+import { Platform, StyleSheet, Text, View } from "react-native";
 import {
-  storage,
-  StorageScope,
   createStorageItem,
   getBatch,
-  setBatch,
   removeBatch,
+  setBatch,
+  storage,
+  StorageScope,
   useStorage,
 } from "react-native-nitro-storage";
 import {
+  Badge,
   Button,
-  Page,
   Card,
   Colors,
-  Badge,
-  StatusRow,
+  Page,
   Section,
+  StatusRow,
   styles,
 } from "../components/shared";
 
 const batch1 = createStorageItem({
   key: "batch-1",
   scope: StorageScope.Disk,
-  defaultValue: "—",
+  defaultValue: "-",
 });
 const batch2 = createStorageItem({
   key: "batch-2",
   scope: StorageScope.Disk,
-  defaultValue: "—",
+  defaultValue: "-",
 });
 const batch3 = createStorageItem({
   key: "batch-3",
   scope: StorageScope.Disk,
-  defaultValue: "—",
+  defaultValue: "-",
 });
 
 export default function ToolsScreen() {
@@ -41,55 +41,36 @@ export default function ToolsScreen() {
   const [v2] = useStorage(batch2);
   const [v3] = useStorage(batch3);
   const [batchResult, setBatchResult] = useState<string | null>(null);
+  const [secureWritesAsync, setSecureWritesAsync] = useState(false);
+
+  const setSecureWriteMode = (enabled: boolean) => {
+    storage.setSecureWritesAsync(enabled);
+    setSecureWritesAsync(enabled);
+  };
 
   return (
-    <Page title="Tools" subtitle="Batch ops & system maintenance">
-      {/* Batch */}
+    <Page title="Tools" subtitle="Batch ops, maintenance, and runtime controls">
       <Card
         title="Batch Operations"
         subtitle="Disk scope"
         indicatorColor={Colors.primary}
       >
-        <View style={{ gap: 6 }}>
-          {[v1, v2, v3].map((val, i) => (
-            <View
-              key={i}
-              style={[
-                styles.row,
-                {
-                  backgroundColor: Colors.background,
-                  padding: 10,
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: Colors.border,
-                },
-              ]}
-            >
-              <Badge label={`ITEM ${i + 1}`} color={Colors.primary} />
-              <Text
-                style={{
-                  color: Colors.text,
-                  marginLeft: 10,
-                  fontWeight: "500",
-                  flex: 1,
-                }}
-              >
-                {val}
-              </Text>
-            </View>
-          ))}
+        <View style={styles.panel}>
+          <StatusRow label="item 1" value={v1} color={Colors.primary} />
+          <StatusRow label="item 2" value={v2} color={Colors.primary} />
+          <StatusRow label="item 3" value={v3} color={Colors.primary} />
         </View>
 
         <View style={styles.row}>
           <Button
             title="Batch Set"
             onPress={() => {
-              const t = new Date().toLocaleTimeString();
+              const stamp = new Date().toLocaleTimeString();
               setBatch(
                 [
-                  { item: batch1, value: `A — ${t}` },
-                  { item: batch2, value: `B — ${t}` },
-                  { item: batch3, value: `C — ${t}` },
+                  { item: batch1, value: `A | ${stamp}` },
+                  { item: batch2, value: `B | ${stamp}` },
+                  { item: batch3, value: `C | ${stamp}` },
                 ],
                 StorageScope.Disk,
               );
@@ -99,11 +80,11 @@ export default function ToolsScreen() {
           <Button
             title="Batch Get"
             onPress={() => {
-              const vals = getBatch(
+              const values = getBatch(
                 [batch1, batch2, batch3],
                 StorageScope.Disk,
               );
-              setBatchResult(vals.join("\n"));
+              setBatchResult(values.join("\n"));
             }}
             variant="success"
             style={styles.flex1}
@@ -121,40 +102,63 @@ export default function ToolsScreen() {
         />
 
         {batchResult ? (
-          <View
-            style={{
-              padding: 14,
-              backgroundColor: Colors.card,
-              borderRadius: 10,
-              borderWidth: 1,
-              borderColor: Colors.success + "40",
-            }}
-          >
-            <Text
-              style={{
-                fontSize: 11,
-                color: Colors.success,
-                fontWeight: "800",
-                textTransform: "uppercase",
-                marginBottom: 6,
-              }}
-            >
-              Batch Response
-            </Text>
-            <Text style={[styles.codeText, { color: Colors.text }]}>
-              {batchResult}
-            </Text>
+          <View style={s.resultBlock}>
+            <Text style={s.resultTitle}>Batch response</Text>
+            <Text style={styles.codeText}>{batchResult}</Text>
           </View>
         ) : null}
       </Card>
 
-      {/* Scope Control */}
+      <Card
+        title="Secure Write Mode"
+        subtitle="Android commit/apply control"
+        indicatorColor={Colors.secure}
+      >
+        <Text style={styles.helperText}>
+          On Android, sync mode uses commit() and async mode uses apply(). On
+          iOS and web, this call is a safe no-op.
+        </Text>
+
+        <View style={styles.row}>
+          <Button
+            title="Sync"
+            onPress={() => {
+              setSecureWriteMode(false);
+            }}
+            variant={secureWritesAsync ? "secondary" : "success"}
+            style={styles.flex1}
+          />
+          <Button
+            title="Async"
+            onPress={() => {
+              setSecureWriteMode(true);
+            }}
+            variant={secureWritesAsync ? "success" : "secondary"}
+            style={styles.flex1}
+          />
+        </View>
+
+        <StatusRow
+          label="Current mode"
+          value={secureWritesAsync ? "Async (apply)" : "Sync (commit)"}
+          color={Colors.secure}
+        />
+        <Badge
+          label={
+            Platform.OS === "android"
+              ? "Android active"
+              : "No-op on this platform"
+          }
+          color={Platform.OS === "android" ? Colors.success : Colors.warning}
+        />
+      </Card>
+
       <Card
         title="Scope Control"
         subtitle="Danger zone"
         indicatorColor={Colors.danger}
       >
-        <Section title="Clear Individual Scopes">
+        <Section title="Clear individual scopes">
           <View style={styles.grid}>
             <Button
               title="Memory"
@@ -185,6 +189,7 @@ export default function ToolsScreen() {
             />
           </View>
         </Section>
+
         <Button
           title="Reset Everything"
           onPress={() => {
@@ -203,8 +208,30 @@ export default function ToolsScreen() {
             label="Memory keys"
             value={String(storage.size(StorageScope.Memory))}
           />
+          <StatusRow
+            label="Secure keys"
+            value={String(storage.size(StorageScope.Secure))}
+          />
         </Section>
       </Card>
     </Page>
   );
 }
+
+const s = StyleSheet.create({
+  resultBlock: {
+    backgroundColor: Colors.card,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: `${Colors.success}66`,
+    padding: 12,
+    gap: 6,
+  },
+  resultTitle: {
+    color: Colors.success,
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+});

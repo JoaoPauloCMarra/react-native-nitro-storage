@@ -19,6 +19,7 @@
       "outputs": ["nitrogen/generated/**"]
     },
     "typecheck": {},
+    "test:types": {},
     "test": {},
     "test:coverage": {
       "outputs": ["coverage/**"]

@@ -34,6 +34,7 @@ public:
     virtual void clearSecure() = 0;
 
     virtual void setSecureAccessControl(int level) = 0;
+    virtual void setSecureWritesAsync(bool enabled) = 0;
     virtual void setKeychainAccessGroup(const std::string& group) = 0;
 
     virtual void setSecureBiometric(const std::string& key, const std::string& value) = 0;

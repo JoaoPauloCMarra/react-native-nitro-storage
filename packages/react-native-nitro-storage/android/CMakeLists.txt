@@ -11,6 +11,8 @@ file(GLOB SOURCES
   "../cpp/core/*.cpp"
   "./src/main/cpp/*.cpp"
 )
+# Unit/integration C++ tests define `main()` and must never be linked into the Android shared library.
+list(FILTER SOURCES EXCLUDE REGEX ".*/[^/]*Test\\.cpp$")
 
 # 2. Create the library target
 add_library(
