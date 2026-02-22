@@ -112,6 +112,10 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Generate example Android native project
+        working-directory: apps/example
+        run: bunx expo prebuild --platform android --non-interactive
+
       - name: Assemble example Android debug APK
         working-directory: apps/example/android
         run: |
@@ -133,6 +137,10 @@ jobs:
 
       - name: Install dependencies
         run: bun install
+
+      - name: Generate example iOS native project
+        working-directory: apps/example
+        run: bunx expo prebuild --platform ios --non-interactive
 
       - name: Install CocoaPods
         working-directory: apps/example/ios
