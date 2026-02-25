@@ -33,6 +33,9 @@ jest.mock("react-native-nitro-modules", () => ({
 
 import {
   createStorageItem,
+  createSecureAuthStorage,
+  getWebSecureStorageBackend,
+  setWebSecureStorageBackend,
   useStorage,
   useStorageSelector,
   type StorageMetricsEvent,
@@ -825,6 +828,195 @@ describe("useStorage", () => {
 
     storage.setMetricsObserver(undefined);
     storage.resetMetrics();
+  });
+
+  it("keeps web secure backend hooks as native no-ops", () => {
+    expect(getWebSecureStorageBackend()).toBeUndefined();
+
+    setWebSecureStorageBackend({
+      getItem: jest.fn(() => null),
+      setItem: jest.fn(),
+      removeItem: jest.fn(),
+      clear: jest.fn(),
+      getAllKeys: jest.fn(() => []),
+    });
+
+    expect(getWebSecureStorageBackend()).toBeUndefined();
+  });
+
+  it("covers memory utility branches for storage helpers", () => {
+    const namespaced = createStorageItem({
+      key: "token",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+      namespace: "session",
+    });
+    const plain = createStorageItem({
+      key: "plain",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    });
+    const numeric = createStorageItem({
+      key: "count",
+      scope: StorageScope.Memory,
+      defaultValue: 0,
+    });
+
+    namespaced.set("tkn");
+    plain.set("value");
+    numeric.set(42);
+
+    expect(storage.has("session:token", StorageScope.Memory)).toBe(true);
+    expect(storage.getAllKeys(StorageScope.Memory)).toEqual(
+      expect.arrayContaining(["session:token", "plain", "count"]),
+    );
+    expect(storage.getKeysByPrefix("session:", StorageScope.Memory)).toEqual([
+      "session:token",
+    ]);
+    expect(storage.getAll(StorageScope.Memory)).toEqual(
+      expect.objectContaining({
+        "session:token": "tkn",
+        plain: "value",
+      }),
+    );
+    expect(storage.getAll(StorageScope.Memory).count).toBeUndefined();
+    expect(storage.size(StorageScope.Memory)).toBeGreaterThanOrEqual(3);
+
+    storage.clearNamespace("session", StorageScope.Memory);
+    expect(storage.has("session:token", StorageScope.Memory)).toBe(false);
+    expect(storage.has("plain", StorageScope.Memory)).toBe(true);
+  });
+
+  it("covers disk getAll edge branches for empty and missing values", () => {
+    mockHybridObject.getAllKeys.mockReturnValueOnce([]);
+    expect(storage.getAll(StorageScope.Disk)).toEqual({});
+    expect(mockHybridObject.getBatch).not.toHaveBeenCalled();
+
+    mockHybridObject.getAllKeys.mockReturnValueOnce(["a", "b"]);
+    mockHybridObject.getBatch.mockReturnValueOnce([
+      serializeWithPrimitiveFastPath("x"),
+      "__nitro_storage_batch_missing__::v1",
+    ]);
+    expect(storage.getAll(StorageScope.Disk)).toEqual({
+      a: serializeWithPrimitiveFastPath("x"),
+    });
+  });
+
+  it("covers item branches for non-string disk reads and secure biometric delete/has", () => {
+    const weirdDisk = createStorageItem({
+      key: "weird-disk",
+      scope: StorageScope.Disk,
+      defaultValue: "fallback",
+    });
+    mockHybridObject.get.mockReturnValueOnce(123 as unknown as string);
+    expect(weirdDisk.get()).toBe("fallback");
+
+    const memoryItem = createStorageItem({
+      key: "memory-has",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    });
+    expect(memoryItem.has()).toBe(false);
+    memoryItem.set("v");
+    expect(memoryItem.has()).toBe(true);
+
+    const biometricItem = createStorageItem({
+      key: "bio-delete",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+    mockHybridObject.hasSecureBiometric.mockReturnValue(true);
+    expect(biometricItem.has()).toBe(true);
+    biometricItem.delete();
+    expect(mockHybridObject.deleteSecureBiometric).toHaveBeenCalledWith(
+      "bio-delete",
+    );
+  });
+
+  it("covers pending secure batch reads, secure batch fallback, and secure remove flush", () => {
+    const pendingItem = createStorageItem({
+      key: "pending-read",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      coalesceSecureWrites: true,
+    });
+    pendingItem.set("queued");
+
+    const pendingValues = getBatch([pendingItem], StorageScope.Secure);
+    expect(pendingValues).toEqual(["queued"]);
+    expect(mockHybridObject.getBatch).not.toHaveBeenCalled();
+
+    const validatedSecure = createStorageItem<number>({
+      key: "validated-secure-fallback",
+      scope: StorageScope.Secure,
+      defaultValue: 1,
+      validate: (value): value is number =>
+        typeof value === "number" && value > 0,
+    });
+    expect(() =>
+      setBatch([{ item: validatedSecure, value: -1 }], StorageScope.Secure),
+    ).toThrow(/Validation failed/);
+
+    removeBatch([pendingItem], StorageScope.Secure);
+    expect(mockHybridObject.setBatch).toHaveBeenCalled();
+    expect(mockHybridObject.removeBatch).toHaveBeenCalledWith(
+      ["pending-read"],
+      StorageScope.Secure,
+    );
+  });
+
+  it("handles idempotent unsubscribe for memory listeners", () => {
+    const item = createStorageItem({
+      key: "memory-unsub-idempotent",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    });
+    const unsubscribe = item.subscribe(jest.fn());
+
+    unsubscribe();
+    expect(() => unsubscribe()).not.toThrow();
+  });
+
+  it("covers createSecureAuthStorage namespace and option branches", () => {
+    const auth = createSecureAuthStorage({
+      accessToken: {
+        ttlMs: 60_000,
+        biometric: true,
+        biometricLevel: BiometricLevel.BiometryOrPasscode,
+        accessControl: AccessControl.AfterFirstUnlock,
+      },
+      refreshToken: {},
+    });
+
+    expect(auth.accessToken.key).toBe("auth:accessToken");
+    expect(auth.refreshToken.key).toBe("auth:refreshToken");
+
+    auth.accessToken.set("a");
+    auth.refreshToken.set("r");
+
+    const secureCall =
+      mockHybridObject.setSecureBiometricWithLevel.mock.calls[0];
+    expect(secureCall?.[0]).toBe("auth:accessToken");
+    expect(secureCall?.[2]).toBe(BiometricLevel.BiometryOrPasscode);
+    expect(() => JSON.parse(secureCall?.[1] as string)).not.toThrow();
+    const envelope = JSON.parse(secureCall?.[1] as string) as {
+      __nitroStorageEnvelope?: boolean;
+      payload?: string;
+    };
+    expect(envelope.__nitroStorageEnvelope).toBe(true);
+    expect(envelope.payload).toBe(serializeWithPrimitiveFastPath("a"));
+    expect(mockHybridObject.set).toHaveBeenCalledWith(
+      "auth:refreshToken",
+      serializeWithPrimitiveFastPath("r"),
+      StorageScope.Secure,
+    );
+
+    const custom = createSecureAuthStorage(
+      { session: {} },
+      { namespace: "custom" },
+    );
+    expect(custom.session.key).toBe("custom:session");
   });
 });
 
