@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
+## 0.4.0 - 2026-02-25
+
+### Added
+
+- Add prefix query APIs: `storage.getKeysByPrefix(prefix, scope)` and `storage.getByPrefix(prefix, scope)`.
+- Add optimistic concurrency APIs on items: `item.getWithVersion()` and `item.setIfVersion(version, value)`.
+- Add storage metrics APIs: `storage.setMetricsObserver`, `storage.getMetricsSnapshot`, and `storage.resetMetrics`.
+- Add `biometricLevel` item/auth config and native bridge support for `setSecureBiometricWithLevel`.
+- Add configurable web Secure backend hooks: `setWebSecureStorageBackend` and `getWebSecureStorageBackend`.
+- Add native prefix key retrieval plumbing (`getKeysByPrefix`) across Nitro spec, C++ core/bindings, Android, and iOS.
+- Add regression coverage for prefix APIs, versioned APIs, metrics APIs, secure coalescing with access control, cross-tab web updates, and transaction rollback batch behavior.
+
+### Changed
+
+- Optimize non-memory transaction rollback paths to use batch native/web writes and removals.
+- Improve batch read semantics by using per-item cache hits and returning each item's default when raw batch data is missing.
+- Improve native/web secure write coalescing by preserving optional access control without violating strict optional typing.
+- Keep iOS secure keychain cache/index behavior aligned with new prefix query and biometric-level paths.
+- Expand README/API docs to cover the new public API surface with concrete TypeScript use-case snippets.
+
 ## 0.3.2 - 2026-02-22
 
 ### Added

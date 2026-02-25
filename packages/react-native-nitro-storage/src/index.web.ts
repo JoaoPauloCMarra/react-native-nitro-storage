@@ -7,6 +7,7 @@ import {
   assertValidScope,
   serializeWithPrimitiveFastPath,
   deserializeWithPrimitiveFastPath,
+  toVersionToken,
   prefixKey,
   isNamespaced,
 } from "./internal";
@@ -17,6 +18,31 @@ export { migrateFromMMKV } from "./migration";
 export type Validator<T> = (value: unknown) => value is T;
 export type ExpirationConfig = {
   ttlMs: number;
+};
+export type StorageVersion = string;
+export type VersionedValue<T> = {
+  value: T;
+  version: StorageVersion;
+};
+export type StorageMetricsEvent = {
+  operation: string;
+  scope: StorageScope;
+  durationMs: number;
+  keysCount: number;
+};
+export type StorageMetricsObserver = (event: StorageMetricsEvent) => void;
+export type StorageMetricSummary = {
+  count: number;
+  totalDurationMs: number;
+  avgDurationMs: number;
+  maxDurationMs: number;
+};
+export type WebSecureStorageBackend = {
+  getItem: (key: string) => string | null;
+  setItem: (key: string, value: string) => void;
+  removeItem: (key: string) => void;
+  clear: () => void;
+  getAllKeys: () => string[];
 };
 
 export type MigrationContext = {
@@ -65,7 +91,11 @@ function typedKeys<K extends string, V>(record: Record<K, V>): K[] {
   return Object.keys(record) as K[];
 }
 type NonMemoryScope = StorageScope.Disk | StorageScope.Secure;
-type PendingSecureWrite = { key: string; value: string | undefined };
+type PendingSecureWrite = {
+  key: string;
+  value: string | undefined;
+  accessControl?: AccessControl;
+};
 type BrowserStorageLike = {
   setItem: (key: string, value: string) => void;
   getItem: (key: string) => string | null;
@@ -93,6 +123,7 @@ export interface Storage {
   clear(scope: number): void;
   has(key: string, scope: number): boolean;
   getAllKeys(scope: number): string[];
+  getKeysByPrefix(prefix: string, scope: number): string[];
   size(scope: number): number;
   setBatch(keys: string[], values: string[], scope: number): void;
   getBatch(keys: string[], scope: number): (string | undefined)[];
@@ -106,6 +137,7 @@ export interface Storage {
   setSecureWritesAsync(enabled: boolean): void;
   setKeychainAccessGroup(group: string): void;
   setSecureBiometric(key: string, value: string): void;
+  setSecureBiometricWithLevel(key: string, value: string, level: number): void;
   getSecureBiometric(key: string): string | undefined;
   deleteSecureBiometric(key: string): void;
   hasSecureBiometric(key: string): boolean;
@@ -134,13 +166,90 @@ let secureFlushScheduled = false;
 const SECURE_WEB_PREFIX = "__secure_";
 const BIOMETRIC_WEB_PREFIX = "__bio_";
 let hasWarnedAboutWebBiometricFallback = false;
+let hasWebStorageEventSubscription = false;
+let metricsObserver: StorageMetricsObserver | undefined;
+const metricsCounters = new Map<
+  string,
+  { count: number; totalDurationMs: number; maxDurationMs: number }
+>();
+
+function recordMetric(
+  operation: string,
+  scope: StorageScope,
+  durationMs: number,
+  keysCount = 1,
+): void {
+  const existing = metricsCounters.get(operation);
+  if (!existing) {
+    metricsCounters.set(operation, {
+      count: 1,
+      totalDurationMs: durationMs,
+      maxDurationMs: durationMs,
+    });
+  } else {
+    existing.count += 1;
+    existing.totalDurationMs += durationMs;
+    existing.maxDurationMs = Math.max(existing.maxDurationMs, durationMs);
+  }
+  metricsObserver?.({ operation, scope, durationMs, keysCount });
+}
+
+function measureOperation<T>(
+  operation: string,
+  scope: StorageScope,
+  fn: () => T,
+  keysCount = 1,
+): T {
+  const start = Date.now();
+  try {
+    return fn();
+  } finally {
+    recordMetric(operation, scope, Date.now() - start, keysCount);
+  }
+}
+
+function createLocalStorageWebSecureBackend(): WebSecureStorageBackend {
+  return {
+    getItem: (key) => globalThis.localStorage?.getItem(key) ?? null,
+    setItem: (key, value) => globalThis.localStorage?.setItem(key, value),
+    removeItem: (key) => globalThis.localStorage?.removeItem(key),
+    clear: () => globalThis.localStorage?.clear(),
+    getAllKeys: () => {
+      const storage = globalThis.localStorage;
+      if (!storage) return [];
+      const keys: string[] = [];
+      for (let index = 0; index < storage.length; index += 1) {
+        const key = storage.key(index);
+        if (key) {
+          keys.push(key);
+        }
+      }
+      return keys;
+    },
+  };
+}
+
+let webSecureStorageBackend: WebSecureStorageBackend | undefined =
+  createLocalStorageWebSecureBackend();
 
 function getBrowserStorage(scope: number): BrowserStorageLike | undefined {
   if (scope === StorageScope.Disk) {
     return globalThis.localStorage;
   }
   if (scope === StorageScope.Secure) {
-    return globalThis.localStorage;
+    if (!webSecureStorageBackend) {
+      return undefined;
+    }
+    return {
+      setItem: (key, value) => webSecureStorageBackend?.setItem(key, value),
+      getItem: (key) => webSecureStorageBackend?.getItem(key) ?? null,
+      removeItem: (key) => webSecureStorageBackend?.removeItem(key),
+      clear: () => webSecureStorageBackend?.clear(),
+      key: (index) => webSecureStorageBackend?.getAllKeys()[index] ?? null,
+      get length() {
+        return webSecureStorageBackend?.getAllKeys().length ?? 0;
+      },
+    };
   }
   return undefined;
 }
@@ -204,6 +313,74 @@ function hydrateWebScopeKeyIndex(scope: NonMemoryScope): void {
 function ensureWebScopeKeyIndex(scope: NonMemoryScope): Set<string> {
   hydrateWebScopeKeyIndex(scope);
   return getWebScopeKeyIndex(scope);
+}
+
+function handleWebStorageEvent(event: StorageEvent): void {
+  const key = event.key;
+  if (key === null) {
+    clearScopeRawCache(StorageScope.Disk);
+    clearScopeRawCache(StorageScope.Secure);
+    ensureWebScopeKeyIndex(StorageScope.Disk).clear();
+    ensureWebScopeKeyIndex(StorageScope.Secure).clear();
+    notifyAllListeners(getScopedListeners(StorageScope.Disk));
+    notifyAllListeners(getScopedListeners(StorageScope.Secure));
+    return;
+  }
+
+  if (key.startsWith(SECURE_WEB_PREFIX)) {
+    const plainKey = fromSecureStorageKey(key);
+    if (event.newValue === null) {
+      ensureWebScopeKeyIndex(StorageScope.Secure).delete(plainKey);
+      cacheRawValue(StorageScope.Secure, plainKey, undefined);
+    } else {
+      ensureWebScopeKeyIndex(StorageScope.Secure).add(plainKey);
+      cacheRawValue(StorageScope.Secure, plainKey, event.newValue);
+    }
+    notifyKeyListeners(getScopedListeners(StorageScope.Secure), plainKey);
+    return;
+  }
+
+  if (key.startsWith(BIOMETRIC_WEB_PREFIX)) {
+    const plainKey = fromBiometricStorageKey(key);
+    if (event.newValue === null) {
+      if (
+        getBrowserStorage(StorageScope.Secure)?.getItem(
+          toSecureStorageKey(plainKey),
+        ) === null
+      ) {
+        ensureWebScopeKeyIndex(StorageScope.Secure).delete(plainKey);
+      }
+      cacheRawValue(StorageScope.Secure, plainKey, undefined);
+    } else {
+      ensureWebScopeKeyIndex(StorageScope.Secure).add(plainKey);
+      cacheRawValue(StorageScope.Secure, plainKey, event.newValue);
+    }
+    notifyKeyListeners(getScopedListeners(StorageScope.Secure), plainKey);
+    return;
+  }
+
+  if (event.newValue === null) {
+    ensureWebScopeKeyIndex(StorageScope.Disk).delete(key);
+    cacheRawValue(StorageScope.Disk, key, undefined);
+  } else {
+    ensureWebScopeKeyIndex(StorageScope.Disk).add(key);
+    cacheRawValue(StorageScope.Disk, key, event.newValue);
+  }
+  notifyKeyListeners(getScopedListeners(StorageScope.Disk), key);
+}
+
+function ensureWebStorageEventSubscription(): void {
+  if (hasWebStorageEventSubscription) {
+    return;
+  }
+  if (
+    typeof window === "undefined" ||
+    typeof window.addEventListener !== "function"
+  ) {
+    return;
+  }
+  window.addEventListener("storage", handleWebStorageEvent);
+  hasWebStorageEventSubscription = true;
 }
 
 function getScopedListeners(scope: NonMemoryScope): KeyListenerRegistry {
@@ -295,29 +472,46 @@ function flushSecureWrites(): void {
   const writes = Array.from(pendingSecureWrites.values());
   pendingSecureWrites.clear();
 
-  const keysToSet: string[] = [];
-  const valuesToSet: string[] = [];
+  const groupedSetWrites = new Map<
+    AccessControl,
+    { keys: string[]; values: string[] }
+  >();
   const keysToRemove: string[] = [];
 
-  writes.forEach(({ key, value }) => {
+  writes.forEach(({ key, value, accessControl }) => {
     if (value === undefined) {
       keysToRemove.push(key);
     } else {
-      keysToSet.push(key);
-      valuesToSet.push(value);
+      const resolvedAccessControl = accessControl ?? AccessControl.WhenUnlocked;
+      const existingGroup = groupedSetWrites.get(resolvedAccessControl);
+      const group = existingGroup ?? { keys: [], values: [] };
+      group.keys.push(key);
+      group.values.push(value);
+      if (!existingGroup) {
+        groupedSetWrites.set(resolvedAccessControl, group);
+      }
     }
   });
 
-  if (keysToSet.length > 0) {
-    WebStorage.setBatch(keysToSet, valuesToSet, StorageScope.Secure);
-  }
+  groupedSetWrites.forEach((group, accessControl) => {
+    WebStorage.setSecureAccessControl(accessControl);
+    WebStorage.setBatch(group.keys, group.values, StorageScope.Secure);
+  });
   if (keysToRemove.length > 0) {
     WebStorage.removeBatch(keysToRemove, StorageScope.Secure);
   }
 }
 
-function scheduleSecureWrite(key: string, value: string | undefined): void {
-  pendingSecureWrites.set(key, { key, value });
+function scheduleSecureWrite(
+  key: string,
+  value: string | undefined,
+  accessControl?: AccessControl,
+): void {
+  const pendingWrite: PendingSecureWrite = { key, value };
+  if (accessControl !== undefined) {
+    pendingWrite.accessControl = accessControl;
+  }
+  pendingSecureWrites.set(key, pendingWrite);
   if (secureFlushScheduled) {
     return;
   }
@@ -491,6 +685,14 @@ const WebStorage: Storage = {
     }
     return Array.from(ensureWebScopeKeyIndex(scope));
   },
+  getKeysByPrefix: (prefix: string, scope: number) => {
+    if (scope !== StorageScope.Disk && scope !== StorageScope.Secure) {
+      return [];
+    }
+    return Array.from(ensureWebScopeKeyIndex(scope)).filter((key) =>
+      key.startsWith(prefix),
+    );
+  },
   size: (scope: number) => {
     if (scope === StorageScope.Disk || scope === StorageScope.Secure) {
       return ensureWebScopeKeyIndex(scope).size;
@@ -501,6 +703,13 @@ const WebStorage: Storage = {
   setSecureWritesAsync: (_enabled: boolean) => {},
   setKeychainAccessGroup: () => {},
   setSecureBiometric: (key: string, value: string) => {
+    WebStorage.setSecureBiometricWithLevel(
+      key,
+      value,
+      BiometricLevel.BiometryOnly,
+    );
+  },
+  setSecureBiometricWithLevel: (key: string, value: string, _level: number) => {
     if (
       typeof __DEV__ !== "undefined" &&
       __DEV__ &&
@@ -511,17 +720,22 @@ const WebStorage: Storage = {
         "[NitroStorage] Biometric storage is not supported on web. Using localStorage.",
       );
     }
-    globalThis.localStorage?.setItem(toBiometricStorageKey(key), value);
+    getBrowserStorage(StorageScope.Secure)?.setItem(
+      toBiometricStorageKey(key),
+      value,
+    );
     ensureWebScopeKeyIndex(StorageScope.Secure).add(key);
     notifyKeyListeners(getScopedListeners(StorageScope.Secure), key);
   },
   getSecureBiometric: (key: string) => {
     return (
-      globalThis.localStorage?.getItem(toBiometricStorageKey(key)) ?? undefined
+      getBrowserStorage(StorageScope.Secure)?.getItem(
+        toBiometricStorageKey(key),
+      ) ?? undefined
     );
   },
   deleteSecureBiometric: (key: string) => {
-    const storage = globalThis.localStorage;
+    const storage = getBrowserStorage(StorageScope.Secure);
     storage?.removeItem(toBiometricStorageKey(key));
     if (storage?.getItem(toSecureStorageKey(key)) === null) {
       ensureWebScopeKeyIndex(StorageScope.Secure).delete(key);
@@ -530,11 +744,13 @@ const WebStorage: Storage = {
   },
   hasSecureBiometric: (key: string) => {
     return (
-      globalThis.localStorage?.getItem(toBiometricStorageKey(key)) !== null
+      getBrowserStorage(StorageScope.Secure)?.getItem(
+        toBiometricStorageKey(key),
+      ) !== null
     );
   },
   clearSecureBiometric: () => {
-    const storage = globalThis.localStorage;
+    const storage = getBrowserStorage(StorageScope.Secure);
     if (!storage) return;
     const keysToNotify: string[] = [];
     const toRemove: string[] = [];
@@ -621,84 +837,189 @@ function writeMigrationVersion(scope: StorageScope, version: number): void {
 
 export const storage = {
   clear: (scope: StorageScope) => {
-    if (scope === StorageScope.Memory) {
-      memoryStore.clear();
-      notifyAllListeners(memoryListeners);
-      return;
-    }
+    measureOperation("storage:clear", scope, () => {
+      if (scope === StorageScope.Memory) {
+        memoryStore.clear();
+        notifyAllListeners(memoryListeners);
+        return;
+      }
 
-    if (scope === StorageScope.Secure) {
-      flushSecureWrites();
-      pendingSecureWrites.clear();
-    }
+      if (scope === StorageScope.Secure) {
+        flushSecureWrites();
+        pendingSecureWrites.clear();
+      }
 
-    clearScopeRawCache(scope);
-    WebStorage.clear(scope);
+      clearScopeRawCache(scope);
+      WebStorage.clear(scope);
+    });
   },
   clearAll: () => {
-    storage.clear(StorageScope.Memory);
-    storage.clear(StorageScope.Disk);
-    storage.clear(StorageScope.Secure);
+    measureOperation(
+      "storage:clearAll",
+      StorageScope.Memory,
+      () => {
+        storage.clear(StorageScope.Memory);
+        storage.clear(StorageScope.Disk);
+        storage.clear(StorageScope.Secure);
+      },
+      3,
+    );
   },
   clearNamespace: (namespace: string, scope: StorageScope) => {
-    assertValidScope(scope);
-    if (scope === StorageScope.Memory) {
-      for (const key of memoryStore.keys()) {
-        if (isNamespaced(key, namespace)) {
-          memoryStore.delete(key);
+    measureOperation("storage:clearNamespace", scope, () => {
+      assertValidScope(scope);
+      if (scope === StorageScope.Memory) {
+        for (const key of memoryStore.keys()) {
+          if (isNamespaced(key, namespace)) {
+            memoryStore.delete(key);
+          }
         }
+        notifyAllListeners(memoryListeners);
+        return;
       }
-      notifyAllListeners(memoryListeners);
-      return;
-    }
-    const keyPrefix = prefixKey(namespace, "");
-    if (scope === StorageScope.Secure) {
-      flushSecureWrites();
-    }
-    clearScopeRawCache(scope);
-    WebStorage.removeByPrefix(keyPrefix, scope);
+
+      const keyPrefix = prefixKey(namespace, "");
+      if (scope === StorageScope.Secure) {
+        flushSecureWrites();
+      }
+      clearScopeRawCache(scope);
+      WebStorage.removeByPrefix(keyPrefix, scope);
+    });
   },
   clearBiometric: () => {
-    WebStorage.clearSecureBiometric();
+    measureOperation("storage:clearBiometric", StorageScope.Secure, () => {
+      WebStorage.clearSecureBiometric();
+    });
   },
   has: (key: string, scope: StorageScope): boolean => {
-    assertValidScope(scope);
-    if (scope === StorageScope.Memory) return memoryStore.has(key);
-    return WebStorage.has(key, scope);
+    return measureOperation("storage:has", scope, () => {
+      assertValidScope(scope);
+      if (scope === StorageScope.Memory) return memoryStore.has(key);
+      return WebStorage.has(key, scope);
+    });
   },
   getAllKeys: (scope: StorageScope): string[] => {
-    assertValidScope(scope);
-    if (scope === StorageScope.Memory) return Array.from(memoryStore.keys());
-    return WebStorage.getAllKeys(scope);
+    return measureOperation("storage:getAllKeys", scope, () => {
+      assertValidScope(scope);
+      if (scope === StorageScope.Memory) return Array.from(memoryStore.keys());
+      return WebStorage.getAllKeys(scope);
+    });
   },
-  getAll: (scope: StorageScope): Record<string, string> => {
-    assertValidScope(scope);
-    const result: Record<string, string> = {};
-    if (scope === StorageScope.Memory) {
-      memoryStore.forEach((value, key) => {
-        if (typeof value === "string") result[key] = value;
+  getKeysByPrefix: (prefix: string, scope: StorageScope): string[] => {
+    return measureOperation("storage:getKeysByPrefix", scope, () => {
+      assertValidScope(scope);
+      if (scope === StorageScope.Memory) {
+        return Array.from(memoryStore.keys()).filter((key) =>
+          key.startsWith(prefix),
+        );
+      }
+      return WebStorage.getKeysByPrefix(prefix, scope);
+    });
+  },
+  getByPrefix: (
+    prefix: string,
+    scope: StorageScope,
+  ): Record<string, string> => {
+    return measureOperation("storage:getByPrefix", scope, () => {
+      const result: Record<string, string> = {};
+      const keys = storage.getKeysByPrefix(prefix, scope);
+      if (keys.length === 0) {
+        return result;
+      }
+
+      if (scope === StorageScope.Memory) {
+        keys.forEach((key) => {
+          const value = memoryStore.get(key);
+          if (typeof value === "string") {
+            result[key] = value;
+          }
+        });
+        return result;
+      }
+
+      const values = WebStorage.getBatch(keys, scope);
+      keys.forEach((key, index) => {
+        const value = values[index];
+        if (value !== undefined) {
+          result[key] = value;
+        }
       });
       return result;
-    }
-    const keys = WebStorage.getAllKeys(scope);
-    keys.forEach((key) => {
-      const val = WebStorage.get(key, scope);
-      if (val !== undefined) result[key] = val;
     });
-    return result;
+  },
+  getAll: (scope: StorageScope): Record<string, string> => {
+    return measureOperation("storage:getAll", scope, () => {
+      assertValidScope(scope);
+      const result: Record<string, string> = {};
+      if (scope === StorageScope.Memory) {
+        memoryStore.forEach((value, key) => {
+          if (typeof value === "string") result[key] = value;
+        });
+        return result;
+      }
+      const keys = WebStorage.getAllKeys(scope);
+      keys.forEach((key) => {
+        const val = WebStorage.get(key, scope);
+        if (val !== undefined) result[key] = val;
+      });
+      return result;
+    });
   },
   size: (scope: StorageScope): number => {
-    assertValidScope(scope);
-    if (scope === StorageScope.Memory) return memoryStore.size;
-    return WebStorage.size(scope);
+    return measureOperation("storage:size", scope, () => {
+      assertValidScope(scope);
+      if (scope === StorageScope.Memory) return memoryStore.size;
+      return WebStorage.size(scope);
+    });
   },
-  setAccessControl: (_level: AccessControl) => {},
-  setSecureWritesAsync: (_enabled: boolean) => {},
+  setAccessControl: (_level: AccessControl) => {
+    recordMetric("storage:setAccessControl", StorageScope.Secure, 0);
+  },
+  setSecureWritesAsync: (_enabled: boolean) => {
+    recordMetric("storage:setSecureWritesAsync", StorageScope.Secure, 0);
+  },
   flushSecureWrites: () => {
-    flushSecureWrites();
+    measureOperation("storage:flushSecureWrites", StorageScope.Secure, () => {
+      flushSecureWrites();
+    });
   },
-  setKeychainAccessGroup: (_group: string) => {},
+  setKeychainAccessGroup: (_group: string) => {
+    recordMetric("storage:setKeychainAccessGroup", StorageScope.Secure, 0);
+  },
+  setMetricsObserver: (observer?: StorageMetricsObserver) => {
+    metricsObserver = observer;
+  },
+  getMetricsSnapshot: (): Record<string, StorageMetricSummary> => {
+    const snapshot: Record<string, StorageMetricSummary> = {};
+    metricsCounters.forEach((value, key) => {
+      snapshot[key] = {
+        count: value.count,
+        totalDurationMs: value.totalDurationMs,
+        avgDurationMs:
+          value.count === 0 ? 0 : value.totalDurationMs / value.count,
+        maxDurationMs: value.maxDurationMs,
+      };
+    });
+    return snapshot;
+  },
+  resetMetrics: () => {
+    metricsCounters.clear();
+  },
 };
+
+export function setWebSecureStorageBackend(
+  backend?: WebSecureStorageBackend,
+): void {
+  webSecureStorageBackend = backend ?? createLocalStorageWebSecureBackend();
+  hydratedWebScopeKeyIndex.delete(StorageScope.Secure);
+  clearScopeRawCache(StorageScope.Secure);
+}
+
+export function getWebSecureStorageBackend():
+  | WebSecureStorageBackend
+  | undefined {
+  return webSecureStorageBackend;
+}
 
 export interface StorageItemConfig<T> {
   key: string;
@@ -714,12 +1035,18 @@ export interface StorageItemConfig<T> {
   coalesceSecureWrites?: boolean;
   namespace?: string;
   biometric?: boolean;
+  biometricLevel?: BiometricLevel;
   accessControl?: AccessControl;
 }
 
 export interface StorageItem<T> {
   get: () => T;
+  getWithVersion: () => VersionedValue<T>;
   set: (value: T | ((prev: T) => T)) => void;
+  setIfVersion: (
+    version: StorageVersion,
+    value: T | ((prev: T) => T),
+  ) => boolean;
   delete: () => void;
   has: () => boolean;
   subscribe: (callback: () => void) => () => void;
@@ -735,6 +1062,7 @@ type StorageItemInternal<T> = StorageItem<T> & {
   _hasExpiration: boolean;
   _readCacheEnabled: boolean;
   _isBiometric: boolean;
+  _defaultValue: T;
   _secureAccessControl?: AccessControl;
 };
 
@@ -770,8 +1098,14 @@ export function createStorageItem<T = undefined>(
   const serialize = config.serialize ?? defaultSerialize;
   const deserialize = config.deserialize ?? defaultDeserialize;
   const isMemory = config.scope === StorageScope.Memory;
-  const isBiometric =
-    config.biometric === true && config.scope === StorageScope.Secure;
+  const resolvedBiometricLevel =
+    config.scope === StorageScope.Secure
+      ? (config.biometricLevel ??
+        (config.biometric === true
+          ? BiometricLevel.BiometryOnly
+          : BiometricLevel.None))
+      : BiometricLevel.None;
+  const isBiometric = resolvedBiometricLevel !== BiometricLevel.None;
   const secureAccessControl = config.accessControl;
   const validate = config.validate;
   const onValidationError = config.onValidationError;
@@ -784,8 +1118,7 @@ export function createStorageItem<T = undefined>(
   const coalesceSecureWrites =
     config.scope === StorageScope.Secure &&
     config.coalesceSecureWrites === true &&
-    !isBiometric &&
-    secureAccessControl === undefined;
+    !isBiometric;
   const defaultValue = config.defaultValue as T;
   const nonMemoryScope: NonMemoryScope | null =
     config.scope === StorageScope.Disk
@@ -827,6 +1160,7 @@ export function createStorageItem<T = undefined>(
       return;
     }
 
+    ensureWebStorageEventSubscription();
     unsubscribe = addKeyListener(
       getScopedListeners(nonMemoryScope!),
       storageKey,
@@ -874,14 +1208,22 @@ export function createStorageItem<T = undefined>(
 
   const writeStoredRaw = (rawValue: string): void => {
     if (isBiometric) {
-      WebStorage.setSecureBiometric(storageKey, rawValue);
+      WebStorage.setSecureBiometricWithLevel(
+        storageKey,
+        rawValue,
+        resolvedBiometricLevel,
+      );
       return;
     }
 
     cacheRawValue(nonMemoryScope!, storageKey, rawValue);
 
     if (coalesceSecureWrites) {
-      scheduleSecureWrite(storageKey, rawValue);
+      scheduleSecureWrite(
+        storageKey,
+        rawValue,
+        secureAccessControl ?? AccessControl.WhenUnlocked,
+      );
       return;
     }
 
@@ -901,7 +1243,11 @@ export function createStorageItem<T = undefined>(
     cacheRawValue(nonMemoryScope!, storageKey, undefined);
 
     if (coalesceSecureWrites) {
-      scheduleSecureWrite(storageKey, undefined);
+      scheduleSecureWrite(
+        storageKey,
+        undefined,
+        secureAccessControl ?? AccessControl.WhenUnlocked,
+      );
       return;
     }
 
@@ -962,7 +1308,7 @@ export function createStorageItem<T = undefined>(
     return resolved;
   };
 
-  const get = (): T => {
+  const getInternal = (): T => {
     const raw = readStoredRaw();
 
     if (!memoryExpiration && raw === lastRaw && hasLastValue) {
@@ -1039,40 +1385,74 @@ export function createStorageItem<T = undefined>(
     return lastValue;
   };
 
-  const set = (valueOrFn: T | ((prev: T) => T)): void => {
-    const newValue = isUpdater(valueOrFn) ? valueOrFn(get()) : valueOrFn;
-
-    invalidateParsedCache();
-
-    if (validate && !validate(newValue)) {
-      throw new Error(
-        `Validation failed for key "${storageKey}" in scope "${StorageScope[config.scope]}".`,
-      );
-    }
-
-    writeValueWithoutValidation(newValue);
+  const getCurrentVersion = (): StorageVersion => {
+    const raw = readStoredRaw();
+    return toVersionToken(raw);
   };
+
+  const get = (): T =>
+    measureOperation("item:get", config.scope, () => getInternal());
+
+  const getWithVersion = (): VersionedValue<T> =>
+    measureOperation("item:getWithVersion", config.scope, () => ({
+      value: getInternal(),
+      version: getCurrentVersion(),
+    }));
+
+  const set = (valueOrFn: T | ((prev: T) => T)): void => {
+    measureOperation("item:set", config.scope, () => {
+      const newValue = isUpdater(valueOrFn)
+        ? valueOrFn(getInternal())
+        : valueOrFn;
+
+      invalidateParsedCache();
+
+      if (validate && !validate(newValue)) {
+        throw new Error(
+          `Validation failed for key "${storageKey}" in scope "${StorageScope[config.scope]}".`,
+        );
+      }
+
+      writeValueWithoutValidation(newValue);
+    });
+  };
+
+  const setIfVersion = (
+    version: StorageVersion,
+    valueOrFn: T | ((prev: T) => T),
+  ): boolean =>
+    measureOperation("item:setIfVersion", config.scope, () => {
+      const currentVersion = getCurrentVersion();
+      if (currentVersion !== version) {
+        return false;
+      }
+      set(valueOrFn);
+      return true;
+    });
 
   const deleteItem = (): void => {
-    invalidateParsedCache();
+    measureOperation("item:delete", config.scope, () => {
+      invalidateParsedCache();
 
-    if (isMemory) {
-      if (memoryExpiration) {
-        memoryExpiration.delete(storageKey);
+      if (isMemory) {
+        if (memoryExpiration) {
+          memoryExpiration.delete(storageKey);
+        }
+        memoryStore.delete(storageKey);
+        notifyKeyListeners(memoryListeners, storageKey);
+        return;
       }
-      memoryStore.delete(storageKey);
-      notifyKeyListeners(memoryListeners, storageKey);
-      return;
-    }
 
-    removeStoredRaw();
+      removeStoredRaw();
+    });
   };
 
-  const hasItem = (): boolean => {
-    if (isMemory) return memoryStore.has(storageKey);
-    if (isBiometric) return WebStorage.hasSecureBiometric(storageKey);
-    return WebStorage.has(storageKey, config.scope);
-  };
+  const hasItem = (): boolean =>
+    measureOperation("item:has", config.scope, () => {
+      if (isMemory) return memoryStore.has(storageKey);
+      if (isBiometric) return WebStorage.hasSecureBiometric(storageKey);
+      return WebStorage.has(storageKey, config.scope);
+    });
 
   const subscribe = (callback: () => void): (() => void) => {
     ensureSubscription();
@@ -1088,7 +1468,9 @@ export function createStorageItem<T = undefined>(
 
   const storageItem: StorageItemInternal<T> = {
     get,
+    getWithVersion,
     set,
+    setIfVersion,
     delete: deleteItem,
     has: hasItem,
     subscribe,
@@ -1102,6 +1484,7 @@ export function createStorageItem<T = undefined>(
     _hasExpiration: expiration !== undefined,
     _readCacheEnabled: readCache,
     _isBiometric: isBiometric,
+    _defaultValue: defaultValue,
     ...(secureAccessControl !== undefined
       ? { _secureAccessControl: secureAccessControl }
       : {}),
@@ -1122,6 +1505,7 @@ type BatchReadItem<T> = Pick<
   _hasExpiration?: boolean;
   _readCacheEnabled?: boolean;
   _isBiometric?: boolean;
+  _defaultValue?: unknown;
   _secureAccessControl?: AccessControl;
 };
 type BatchRemoveItem = Pick<StorageItem<unknown>, "key" | "scope" | "delete">;
@@ -1135,154 +1519,174 @@ export function getBatch(
   items: readonly BatchReadItem<unknown>[],
   scope: StorageScope,
 ): unknown[] {
-  assertBatchScope(items, scope);
+  return measureOperation(
+    "batch:get",
+    scope,
+    () => {
+      assertBatchScope(items, scope);
 
-  if (scope === StorageScope.Memory) {
-    return items.map((item) => item.get());
-  }
+      if (scope === StorageScope.Memory) {
+        return items.map((item) => item.get());
+      }
 
-  const useRawBatchPath = items.every((item) =>
-    scope === StorageScope.Secure
-      ? canUseSecureRawBatchPath(item)
-      : canUseRawBatchPath(item),
+      const useRawBatchPath = items.every((item) =>
+        scope === StorageScope.Secure
+          ? canUseSecureRawBatchPath(item)
+          : canUseRawBatchPath(item),
+      );
+      if (!useRawBatchPath) {
+        return items.map((item) => item.get());
+      }
+
+      const rawValues = new Array<string | undefined>(items.length);
+      const keysToFetch: string[] = [];
+      const keyIndexes: number[] = [];
+
+      items.forEach((item, index) => {
+        if (scope === StorageScope.Secure) {
+          if (hasPendingSecureWrite(item.key)) {
+            rawValues[index] = readPendingSecureWrite(item.key);
+            return;
+          }
+        }
+
+        if (item._readCacheEnabled === true) {
+          if (hasCachedRawValue(scope, item.key)) {
+            rawValues[index] = readCachedRawValue(scope, item.key);
+            return;
+          }
+        }
+
+        keysToFetch.push(item.key);
+        keyIndexes.push(index);
+      });
+
+      if (keysToFetch.length > 0) {
+        const fetchedValues = WebStorage.getBatch(keysToFetch, scope);
+        fetchedValues.forEach((value, index) => {
+          const key = keysToFetch[index];
+          const targetIndex = keyIndexes[index];
+          if (key === undefined || targetIndex === undefined) {
+            return;
+          }
+          rawValues[targetIndex] = value;
+          cacheRawValue(scope, key, value);
+        });
+      }
+
+      return items.map((item, index) => {
+        const raw = rawValues[index];
+        if (raw === undefined) {
+          return asInternal(item as StorageItem<unknown>)._defaultValue;
+        }
+        return item.deserialize(raw);
+      });
+    },
+    items.length,
   );
-  if (!useRawBatchPath) {
-    return items.map((item) => item.get());
-  }
-  const useBatchCache = items.every((item) => item._readCacheEnabled === true);
-
-  const rawValues = new Array<string | undefined>(items.length);
-  const keysToFetch: string[] = [];
-  const keyIndexes: number[] = [];
-
-  items.forEach((item, index) => {
-    if (scope === StorageScope.Secure) {
-      if (hasPendingSecureWrite(item.key)) {
-        rawValues[index] = readPendingSecureWrite(item.key);
-        return;
-      }
-    }
-
-    if (useBatchCache) {
-      if (hasCachedRawValue(scope, item.key)) {
-        rawValues[index] = readCachedRawValue(scope, item.key);
-        return;
-      }
-    }
-
-    keysToFetch.push(item.key);
-    keyIndexes.push(index);
-  });
-
-  if (keysToFetch.length > 0) {
-    const fetchedValues = WebStorage.getBatch(keysToFetch, scope);
-    fetchedValues.forEach((value, index) => {
-      const key = keysToFetch[index];
-      const targetIndex = keyIndexes[index];
-      if (key === undefined || targetIndex === undefined) {
-        return;
-      }
-      rawValues[targetIndex] = value;
-      cacheRawValue(scope, key, value);
-    });
-  }
-
-  return items.map((item, index) => {
-    const raw = rawValues[index];
-    if (raw === undefined) {
-      return item.get();
-    }
-    return item.deserialize(raw);
-  });
 }
 
 export function setBatch<T>(
   items: readonly StorageBatchSetItem<T>[],
   scope: StorageScope,
 ): void {
-  assertBatchScope(
-    items.map((batchEntry) => batchEntry.item),
+  measureOperation(
+    "batch:set",
     scope,
-  );
-
-  if (scope === StorageScope.Memory) {
-    items.forEach(({ item, value }) => item.set(value));
-    return;
-  }
-
-  if (scope === StorageScope.Secure) {
-    const secureEntries = items.map(({ item, value }) => ({
-      item,
-      value,
-      internal: asInternal(item),
-    }));
-    const canUseSecureBatchPath = secureEntries.every(({ internal }) =>
-      canUseSecureRawBatchPath(internal),
-    );
-    if (!canUseSecureBatchPath) {
-      items.forEach(({ item, value }) => item.set(value));
-      return;
-    }
-
-    flushSecureWrites();
-    const groupedByAccessControl = new Map<
-      number,
-      { keys: string[]; values: string[] }
-    >();
-
-    secureEntries.forEach(({ item, value, internal }) => {
-      const accessControl =
-        internal._secureAccessControl ?? AccessControl.WhenUnlocked;
-      const existingGroup = groupedByAccessControl.get(accessControl);
-      const group = existingGroup ?? { keys: [], values: [] };
-      group.keys.push(item.key);
-      group.values.push(item.serialize(value));
-      if (!existingGroup) {
-        groupedByAccessControl.set(accessControl, group);
-      }
-    });
-
-    groupedByAccessControl.forEach((group, accessControl) => {
-      WebStorage.setSecureAccessControl(accessControl);
-      WebStorage.setBatch(group.keys, group.values, scope);
-      group.keys.forEach((key, index) =>
-        cacheRawValue(scope, key, group.values[index]),
+    () => {
+      assertBatchScope(
+        items.map((batchEntry) => batchEntry.item),
+        scope,
       );
-    });
-    return;
-  }
 
-  const useRawBatchPath = items.every(({ item }) =>
-    canUseRawBatchPath(asInternal(item)),
+      if (scope === StorageScope.Memory) {
+        items.forEach(({ item, value }) => item.set(value));
+        return;
+      }
+
+      if (scope === StorageScope.Secure) {
+        const secureEntries = items.map(({ item, value }) => ({
+          item,
+          value,
+          internal: asInternal(item),
+        }));
+        const canUseSecureBatchPath = secureEntries.every(({ internal }) =>
+          canUseSecureRawBatchPath(internal),
+        );
+        if (!canUseSecureBatchPath) {
+          items.forEach(({ item, value }) => item.set(value));
+          return;
+        }
+
+        flushSecureWrites();
+        const groupedByAccessControl = new Map<
+          number,
+          { keys: string[]; values: string[] }
+        >();
+
+        secureEntries.forEach(({ item, value, internal }) => {
+          const accessControl =
+            internal._secureAccessControl ?? AccessControl.WhenUnlocked;
+          const existingGroup = groupedByAccessControl.get(accessControl);
+          const group = existingGroup ?? { keys: [], values: [] };
+          group.keys.push(item.key);
+          group.values.push(item.serialize(value));
+          if (!existingGroup) {
+            groupedByAccessControl.set(accessControl, group);
+          }
+        });
+
+        groupedByAccessControl.forEach((group, accessControl) => {
+          WebStorage.setSecureAccessControl(accessControl);
+          WebStorage.setBatch(group.keys, group.values, scope);
+          group.keys.forEach((key, index) =>
+            cacheRawValue(scope, key, group.values[index]),
+          );
+        });
+        return;
+      }
+
+      const useRawBatchPath = items.every(({ item }) =>
+        canUseRawBatchPath(asInternal(item)),
+      );
+      if (!useRawBatchPath) {
+        items.forEach(({ item, value }) => item.set(value));
+        return;
+      }
+
+      const keys = items.map((entry) => entry.item.key);
+      const values = items.map((entry) => entry.item.serialize(entry.value));
+      WebStorage.setBatch(keys, values, scope);
+      keys.forEach((key, index) => cacheRawValue(scope, key, values[index]));
+    },
+    items.length,
   );
-  if (!useRawBatchPath) {
-    items.forEach(({ item, value }) => item.set(value));
-    return;
-  }
-
-  const keys = items.map((entry) => entry.item.key);
-  const values = items.map((entry) => entry.item.serialize(entry.value));
-  WebStorage.setBatch(keys, values, scope);
-  keys.forEach((key, index) => cacheRawValue(scope, key, values[index]));
 }
 
 export function removeBatch(
   items: readonly BatchRemoveItem[],
   scope: StorageScope,
 ): void {
-  assertBatchScope(items, scope);
+  measureOperation(
+    "batch:remove",
+    scope,
+    () => {
+      assertBatchScope(items, scope);
 
-  if (scope === StorageScope.Memory) {
-    items.forEach((item) => item.delete());
-    return;
-  }
+      if (scope === StorageScope.Memory) {
+        items.forEach((item) => item.delete());
+        return;
+      }
 
-  const keys = items.map((item) => item.key);
-  if (scope === StorageScope.Secure) {
-    flushSecureWrites();
-  }
-  WebStorage.removeBatch(keys, scope);
-  keys.forEach((key) => cacheRawValue(scope, key, undefined));
+      const keys = items.map((item) => item.key);
+      if (scope === StorageScope.Secure) {
+        flushSecureWrites();
+      }
+      WebStorage.removeBatch(keys, scope);
+      keys.forEach((key) => cacheRawValue(scope, key, undefined));
+    },
+    items.length,
+  );
 }
 
 export function registerMigration(version: number, migration: Migration): void {
@@ -1300,92 +1704,124 @@ export function registerMigration(version: number, migration: Migration): void {
 export function migrateToLatest(
   scope: StorageScope = StorageScope.Disk,
 ): number {
-  assertValidScope(scope);
-  const currentVersion = readMigrationVersion(scope);
-  const versions = Array.from(registeredMigrations.keys())
-    .filter((version) => version > currentVersion)
-    .sort((a, b) => a - b);
+  return measureOperation("migration:run", scope, () => {
+    assertValidScope(scope);
+    const currentVersion = readMigrationVersion(scope);
+    const versions = Array.from(registeredMigrations.keys())
+      .filter((version) => version > currentVersion)
+      .sort((a, b) => a - b);
 
-  let appliedVersion = currentVersion;
-  const context: MigrationContext = {
-    scope,
-    getRaw: (key) => getRawValue(key, scope),
-    setRaw: (key, value) => setRawValue(key, value, scope),
-    removeRaw: (key) => removeRawValue(key, scope),
-  };
+    let appliedVersion = currentVersion;
+    const context: MigrationContext = {
+      scope,
+      getRaw: (key) => getRawValue(key, scope),
+      setRaw: (key, value) => setRawValue(key, value, scope),
+      removeRaw: (key) => removeRawValue(key, scope),
+    };
 
-  versions.forEach((version) => {
-    const migration = registeredMigrations.get(version);
-    if (!migration) {
-      return;
-    }
-    migration(context);
-    writeMigrationVersion(scope, version);
-    appliedVersion = version;
+    versions.forEach((version) => {
+      const migration = registeredMigrations.get(version);
+      if (!migration) {
+        return;
+      }
+      migration(context);
+      writeMigrationVersion(scope, version);
+      appliedVersion = version;
+    });
+
+    return appliedVersion;
   });
-
-  return appliedVersion;
 }
 
 export function runTransaction<T>(
   scope: StorageScope,
   transaction: (context: TransactionContext) => T,
 ): T {
-  assertValidScope(scope);
-  if (scope === StorageScope.Secure) {
-    flushSecureWrites();
-  }
-
-  const rollback = new Map<string, string | undefined>();
-
-  const rememberRollback = (key: string) => {
-    if (rollback.has(key)) {
-      return;
+  return measureOperation("transaction:run", scope, () => {
+    assertValidScope(scope);
+    if (scope === StorageScope.Secure) {
+      flushSecureWrites();
     }
-    rollback.set(key, getRawValue(key, scope));
-  };
 
-  const tx: TransactionContext = {
-    scope,
-    getRaw: (key) => getRawValue(key, scope),
-    setRaw: (key, value) => {
-      rememberRollback(key);
-      setRawValue(key, value, scope);
-    },
-    removeRaw: (key) => {
-      rememberRollback(key);
-      removeRawValue(key, scope);
-    },
-    getItem: (item) => {
-      assertBatchScope([item], scope);
-      return item.get();
-    },
-    setItem: (item, value) => {
-      assertBatchScope([item], scope);
-      rememberRollback(item.key);
-      item.set(value);
-    },
-    removeItem: (item) => {
-      assertBatchScope([item], scope);
-      rememberRollback(item.key);
-      item.delete();
-    },
-  };
+    const rollback = new Map<string, string | undefined>();
 
-  try {
-    return transaction(tx);
-  } catch (error) {
-    Array.from(rollback.entries())
-      .reverse()
-      .forEach(([key, previousValue]) => {
-        if (previousValue === undefined) {
-          removeRawValue(key, scope);
-        } else {
-          setRawValue(key, previousValue, scope);
+    const rememberRollback = (key: string) => {
+      if (rollback.has(key)) {
+        return;
+      }
+      rollback.set(key, getRawValue(key, scope));
+    };
+
+    const tx: TransactionContext = {
+      scope,
+      getRaw: (key) => getRawValue(key, scope),
+      setRaw: (key, value) => {
+        rememberRollback(key);
+        setRawValue(key, value, scope);
+      },
+      removeRaw: (key) => {
+        rememberRollback(key);
+        removeRawValue(key, scope);
+      },
+      getItem: (item) => {
+        assertBatchScope([item], scope);
+        return item.get();
+      },
+      setItem: (item, value) => {
+        assertBatchScope([item], scope);
+        rememberRollback(item.key);
+        item.set(value);
+      },
+      removeItem: (item) => {
+        assertBatchScope([item], scope);
+        rememberRollback(item.key);
+        item.delete();
+      },
+    };
+
+    try {
+      return transaction(tx);
+    } catch (error) {
+      const rollbackEntries = Array.from(rollback.entries()).reverse();
+      if (scope === StorageScope.Memory) {
+        rollbackEntries.forEach(([key, previousValue]) => {
+          if (previousValue === undefined) {
+            removeRawValue(key, scope);
+          } else {
+            setRawValue(key, previousValue, scope);
+          }
+        });
+      } else {
+        const keysToSet: string[] = [];
+        const valuesToSet: string[] = [];
+        const keysToRemove: string[] = [];
+
+        rollbackEntries.forEach(([key, previousValue]) => {
+          if (previousValue === undefined) {
+            keysToRemove.push(key);
+          } else {
+            keysToSet.push(key);
+            valuesToSet.push(previousValue);
+          }
+        });
+
+        if (scope === StorageScope.Secure) {
+          flushSecureWrites();
         }
-      });
-    throw error;
-  }
+        if (keysToSet.length > 0) {
+          WebStorage.setBatch(keysToSet, valuesToSet, scope);
+          keysToSet.forEach((key, index) =>
+            cacheRawValue(scope, key, valuesToSet[index]),
+          );
+        }
+        if (keysToRemove.length > 0) {
+          WebStorage.removeBatch(keysToRemove, scope);
+          keysToRemove.forEach((key) => cacheRawValue(scope, key, undefined));
+        }
+      }
+      throw error;
+    }
+  });
 }
 
 export type SecureAuthStorageConfig<K extends string = string> = Record<
@@ -1393,6 +1829,7 @@ export type SecureAuthStorageConfig<K extends string = string> = Record<
   {
     ttlMs?: number;
     biometric?: boolean;
+    biometricLevel?: BiometricLevel;
     accessControl?: AccessControl;
   }
 >;
@@ -1415,6 +1852,9 @@ export function createSecureAuthStorage<K extends string>(
       namespace: ns,
       ...(itemConfig.biometric !== undefined
         ? { biometric: itemConfig.biometric }
+        : {}),
+      ...(itemConfig.biometricLevel !== undefined
+        ? { biometricLevel: itemConfig.biometricLevel }
         : {}),
       ...(itemConfig.accessControl !== undefined
         ? { accessControl: itemConfig.accessControl }

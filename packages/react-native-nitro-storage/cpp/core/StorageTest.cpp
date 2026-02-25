@@ -53,6 +53,18 @@ public:
         return keys;
     }
 
+    std::vector<std::string> getKeysByPrefixDisk(const std::string& prefix) override {
+        std::lock_guard<std::mutex> lock(diskMutex_);
+        std::vector<std::string> keys;
+        keys.reserve(diskStore_.size());
+        for (const auto& [k, _] : diskStore_) {
+            if (k.rfind(prefix, 0) == 0) {
+                keys.push_back(k);
+            }
+        }
+        return keys;
+    }
+
     size_t sizeDisk() override {
         std::lock_guard<std::mutex> lock(diskMutex_);
         return diskStore_.size();
@@ -123,6 +135,18 @@ public:
         return keys;
     }
 
+    std::vector<std::string> getKeysByPrefixSecure(const std::string& prefix) override {
+        std::lock_guard<std::mutex> lock(secureMutex_);
+        std::vector<std::string> keys;
+        keys.reserve(secureStore_.size());
+        for (const auto& [k, _] : secureStore_) {
+            if (k.rfind(prefix, 0) == 0) {
+                keys.push_back(k);
+            }
+        }
+        return keys;
+    }
+
     size_t sizeSecure() override {
         std::lock_guard<std::mutex> lock(secureMutex_);
         return secureStore_.size();
@@ -177,6 +201,11 @@ public:
     // --- Biometric ---
 
     void setSecureBiometric(const std::string& key, const std::string& value) override {
+        std::lock_guard<std::mutex> lock(biometricMutex_);
+        biometricStore_[key] = value;
+    }
+
+    void setSecureBiometricWithLevel(const std::string& key, const std::string& value, int /*level*/) override {
         std::lock_guard<std::mutex> lock(biometricMutex_);
         biometricStore_[key] = value;
     }

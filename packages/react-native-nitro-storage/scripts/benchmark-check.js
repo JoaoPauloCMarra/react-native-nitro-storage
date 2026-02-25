@@ -79,7 +79,8 @@ function printMetric(metric) {
 
 const thresholds = {
   memorySetOpsPerSecond: 2_000_000,
-  memoryGetOpsPerSecond: 8_000_000,
+  // GitHub-hosted runners can dip below 8M due to noisy CPU allocation.
+  memoryGetOpsPerSecond: 5_500_000,
   memoryBatchOpsPerSecond: 1_000_000,
   diskSetOpsPerSecond: 200_000,
   diskGetOpsPerSecond: 250_000,

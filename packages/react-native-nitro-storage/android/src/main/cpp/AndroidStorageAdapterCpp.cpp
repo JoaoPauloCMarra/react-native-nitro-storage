@@ -90,6 +90,14 @@ std::vector<std::string> AndroidStorageAdapterCpp::getAllKeysDisk() {
     return fromJavaStringArray(keys);
 }
 
+std::vector<std::string> AndroidStorageAdapterCpp::getKeysByPrefixDisk(const std::string& prefix) {
+    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<
+        local_ref<JavaStringArray>(std::string)
+    >("getKeysByPrefixDisk");
+    auto keys = method(AndroidStorageAdapterJava::javaClassStatic(), prefix);
+    return fromJavaStringArray(keys);
+}
+
 size_t AndroidStorageAdapterCpp::sizeDisk() {
     static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<jint()>("sizeDisk");
     return static_cast<size_t>(method(AndroidStorageAdapterJava::javaClassStatic()));
@@ -166,6 +174,14 @@ std::vector<std::string> AndroidStorageAdapterCpp::getAllKeysSecure() {
     return fromJavaStringArray(keys);
 }
 
+std::vector<std::string> AndroidStorageAdapterCpp::getKeysByPrefixSecure(const std::string& prefix) {
+    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<
+        local_ref<JavaStringArray>(std::string)
+    >("getKeysByPrefixSecure");
+    auto keys = method(AndroidStorageAdapterJava::javaClassStatic(), prefix);
+    return fromJavaStringArray(keys);
+}
+
 size_t AndroidStorageAdapterCpp::sizeSecure() {
     static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<jint()>("sizeSecure");
     return static_cast<size_t>(method(AndroidStorageAdapterJava::javaClassStatic()));
@@ -222,8 +238,12 @@ void AndroidStorageAdapterCpp::setKeychainAccessGroup(const std::string& /*group
 // --- Biometric ---
 
 void AndroidStorageAdapterCpp::setSecureBiometric(const std::string& key, const std::string& value) {
-    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<void(std::string, std::string)>("setSecureBiometric");
-    method(AndroidStorageAdapterJava::javaClassStatic(), key, value);
+    setSecureBiometricWithLevel(key, value, 2);
+}
+
+void AndroidStorageAdapterCpp::setSecureBiometricWithLevel(const std::string& key, const std::string& value, int level) {
+    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<void(std::string, std::string, jint)>("setSecureBiometricWithLevel");
+    method(AndroidStorageAdapterJava::javaClassStatic(), key, value, level);
 }
 
 std::optional<std::string> AndroidStorageAdapterCpp::getSecureBiometric(const std::string& key) {

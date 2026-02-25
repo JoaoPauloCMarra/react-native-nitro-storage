@@ -3,15 +3,19 @@ import {
   createStorageItem,
   createSecureAuthStorage,
   getBatch,
+  getWebSecureStorageBackend,
   migrateFromMMKV,
   migrateToLatest,
   registerMigration,
   removeBatch,
   runTransaction,
+  setWebSecureStorageBackend,
   setBatch,
   storage,
+  type StorageMetricsEvent,
   StorageScope,
   AccessControl,
+  BiometricLevel,
   useSetStorage,
   useStorageSelector,
   useStorage,
@@ -47,17 +51,89 @@ function createStorageMock(): Storage {
   };
 }
 
+function createWebSecureBackendMock() {
+  const secureStore = new Map<string, string>();
+  return {
+    getItem: jest.fn((key: string) => secureStore.get(key) ?? null),
+    setItem: jest.fn((key: string, value: string) => {
+      secureStore.set(key, value);
+    }),
+    removeItem: jest.fn((key: string) => {
+      secureStore.delete(key);
+    }),
+    clear: jest.fn(() => {
+      secureStore.clear();
+    }),
+    getAllKeys: jest.fn(() => Array.from(secureStore.keys())),
+  };
+}
+
+function createWindowMock() {
+  const listeners = new Map<string, Set<(event: Event) => void>>();
+  return {
+    addEventListener(type: string, listener: (event: Event) => void) {
+      const typeListeners =
+        listeners.get(type) ?? new Set<(event: Event) => void>();
+      typeListeners.add(listener);
+      listeners.set(type, typeListeners);
+    },
+    removeEventListener(type: string, listener: (event: Event) => void) {
+      listeners.get(type)?.delete(listener);
+    },
+    dispatchEvent(event: Event) {
+      listeners.get(event.type)?.forEach((listener) => {
+        listener(event);
+      });
+      return true;
+    },
+  };
+}
+
+function dispatchStorageEvent(
+  key: string | null,
+  newValue: string | null,
+): void {
+  const storageEvent = new Event("storage") as Event & {
+    key: string | null;
+    newValue: string | null;
+  };
+  storageEvent.key = key;
+  storageEvent.newValue = newValue;
+  window.dispatchEvent(storageEvent);
+}
+
 describe("Web Storage", () => {
   let migrationVersionSeed = 2_000;
 
   beforeEach(() => {
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+
     Object.defineProperty(globalThis, "localStorage", {
       value: createStorageMock(),
       configurable: true,
       writable: true,
     });
+    if (
+      typeof globalThis.window === "undefined" ||
+      typeof globalThis.window.addEventListener !== "function" ||
+      typeof (globalThis.window as unknown as { dispatchEvent?: unknown })
+        .dispatchEvent !== "function"
+    ) {
+      Object.defineProperty(globalThis, "window", {
+        value: createWindowMock() as unknown as Window & typeof globalThis,
+        configurable: true,
+        writable: true,
+      });
+    }
 
+    setWebSecureStorageBackend(undefined);
     storage.clearAll();
+    storage.setMetricsObserver(undefined);
+    storage.resetMetrics();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   it("stores and retrieves disk values", () => {
@@ -108,6 +184,66 @@ describe("Web Storage", () => {
       "__secure_secure-key",
       serializeWithPrimitiveFastPath("value"),
     );
+  });
+
+  it("supports a custom web secure backend", () => {
+    const backend = createWebSecureBackendMock();
+    setWebSecureStorageBackend(backend);
+
+    const secureItem = createStorageItem({
+      key: "secure-custom-backend",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+    });
+    secureItem.set("custom");
+
+    expect(backend.setItem).toHaveBeenCalledWith(
+      "__secure_secure-custom-backend",
+      serializeWithPrimitiveFastPath("custom"),
+    );
+    expect(
+      globalThis.localStorage.getItem("__secure_secure-custom-backend"),
+    ).toBe(null);
+    expect(getWebSecureStorageBackend()).toBe(backend);
+  });
+
+  it("supports biometricLevel with secure writes on web backend", () => {
+    const backend = createWebSecureBackendMock();
+    setWebSecureStorageBackend(backend);
+
+    const biometricItem = createStorageItem({
+      key: "web-bio-level",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometricLevel: BiometricLevel.BiometryOrPasscode,
+    });
+    biometricItem.set("secret");
+
+    expect(backend.setItem).toHaveBeenCalledWith(
+      "__bio_web-bio-level",
+      serializeWithPrimitiveFastPath("secret"),
+    );
+  });
+
+  it("supports getWithVersion and setIfVersion on web items", () => {
+    const item = createStorageItem({
+      key: "web-versioned",
+      scope: StorageScope.Disk,
+      defaultValue: 0,
+    });
+
+    const snapshot = item.getWithVersion();
+    expect(snapshot.value).toBe(0);
+
+    const firstWrite = item.setIfVersion(snapshot.version, 1);
+    expect(firstWrite).toBe(true);
+
+    globalThis.localStorage.setItem(
+      "web-versioned",
+      serializeWithPrimitiveFastPath(2),
+    );
+    const staleWrite = item.setIfVersion(snapshot.version, 3);
+    expect(staleWrite).toBe(false);
   });
 
   it("clears disk and secure scopes", () => {
@@ -270,6 +406,84 @@ describe("Web Storage", () => {
     expect(getSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("uses per-item cache behavior in mixed web getBatch reads", () => {
+    const getSpy = jest.spyOn(globalThis.localStorage, "getItem");
+    globalThis.localStorage.setItem(
+      "mixed-web-cached",
+      serializeWithPrimitiveFastPath("cached"),
+    );
+    globalThis.localStorage.setItem(
+      "mixed-web-uncached",
+      serializeWithPrimitiveFastPath("uncached"),
+    );
+
+    const cachedItem = createStorageItem({
+      key: "mixed-web-cached",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+      readCache: true,
+    });
+    const uncachedItem = createStorageItem({
+      key: "mixed-web-uncached",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    });
+
+    cachedItem.get();
+    getSpy.mockClear();
+
+    const values = getBatch([cachedItem, uncachedItem], StorageScope.Disk);
+    expect(values).toEqual(["cached", "uncached"]);
+    expect(getSpy).toHaveBeenCalledTimes(1);
+    expect(getSpy).toHaveBeenCalledWith("mixed-web-uncached");
+  });
+
+  it("propagates cross-tab storage events to disk subscribers", () => {
+    const item = createStorageItem({
+      key: "cross-tab-disk",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+      readCache: true,
+    });
+    const listener = jest.fn();
+    item.subscribe(listener);
+
+    globalThis.localStorage.setItem(
+      "cross-tab-disk",
+      serializeWithPrimitiveFastPath("updated"),
+    );
+    dispatchStorageEvent(
+      "cross-tab-disk",
+      serializeWithPrimitiveFastPath("updated"),
+    );
+
+    expect(listener).toHaveBeenCalled();
+    expect(item.get()).toBe("updated");
+  });
+
+  it("propagates cross-tab storage events to secure subscribers", () => {
+    const item = createStorageItem({
+      key: "cross-tab-secure",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      readCache: true,
+    });
+    const listener = jest.fn();
+    item.subscribe(listener);
+
+    globalThis.localStorage.setItem(
+      "__secure_cross-tab-secure",
+      serializeWithPrimitiveFastPath("updated"),
+    );
+    dispatchStorageEvent(
+      "__secure_cross-tab-secure",
+      serializeWithPrimitiveFastPath("updated"),
+    );
+
+    expect(listener).toHaveBeenCalled();
+    expect(item.get()).toBe("updated");
+  });
+
   it("coalesces secure writes on the same tick when enabled", async () => {
     const setSpy = jest.spyOn(globalThis.localStorage, "setItem");
     const item = createStorageItem({
@@ -289,6 +503,23 @@ describe("Web Storage", () => {
     expect(
       globalThis.localStorage.getItem("__secure_web-secure-coalesce"),
     ).toBe(serializeWithPrimitiveFastPath("second"));
+  });
+
+  it("coalesces secure writes with per-item access control on web", async () => {
+    const item = createStorageItem({
+      key: "web-secure-coalesce-access",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      coalesceSecureWrites: true,
+      accessControl: AccessControl.AfterFirstUnlock,
+    });
+
+    item.set("value");
+    await Promise.resolve();
+
+    expect(
+      globalThis.localStorage.getItem("__secure_web-secure-coalesce-access"),
+    ).toBe(serializeWithPrimitiveFastPath("value"));
   });
 
   it("flushes pending secure writes on demand", () => {
@@ -1325,6 +1556,38 @@ describe("Web Storage", () => {
     expect(all["ga2"]).toBe(serializeWithPrimitiveFastPath("b"));
   });
 
+  it("storage.getKeysByPrefix and storage.getByPrefix return filtered snapshots", () => {
+    createStorageItem({
+      key: "token",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+      namespace: "session",
+    }).set("a");
+    createStorageItem({
+      key: "user",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+      namespace: "session",
+    }).set("b");
+    createStorageItem({
+      key: "other",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+      namespace: "profile",
+    }).set("c");
+
+    const keys = storage.getKeysByPrefix("session:", StorageScope.Disk);
+    const entries = storage.getByPrefix("session:", StorageScope.Disk);
+
+    expect(keys).toEqual(
+      expect.arrayContaining(["session:token", "session:user"]),
+    );
+    expect(entries).toEqual({
+      "session:token": serializeWithPrimitiveFastPath("a"),
+      "session:user": serializeWithPrimitiveFastPath("b"),
+    });
+  });
+
   it("storage.getAll works for memory scope (returns string values only)", () => {
     const item = createStorageItem({
       key: "ga-mem",
@@ -1360,6 +1623,27 @@ describe("Web Storage", () => {
       defaultValue: "",
     }).set("v");
     expect(storage.size(StorageScope.Memory)).toBe(before + 1);
+  });
+
+  it("exposes operation metrics and counter snapshots on web", () => {
+    const events: StorageMetricsEvent[] = [];
+    storage.setMetricsObserver((event) => events.push(event));
+    storage.resetMetrics();
+
+    const item = createStorageItem({
+      key: "web-metrics-item",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+    });
+    item.set("value");
+    item.get();
+    storage.getAllKeys(StorageScope.Disk);
+
+    const snapshot = storage.getMetricsSnapshot();
+    expect(events.length).toBeGreaterThan(0);
+    expect(snapshot["item:set"]).toBeDefined();
+    expect(snapshot["item:get"]).toBeDefined();
+    expect(snapshot["storage:getAllKeys"]).toBeDefined();
   });
 
   // --- clearNamespace ---

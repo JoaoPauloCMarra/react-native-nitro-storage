@@ -14,6 +14,10 @@ Synchronous Memory, Disk, and Secure storage in one unified API — powered by [
 - **Biometric storage** — hardware-backed biometric protection on iOS & Android
 - **Auth storage factory** — `createSecureAuthStorage` for multi-token auth flows
 - **Batch operations** — atomic multi-key get/set/remove via native batch APIs
+- **Prefix queries** — fast key/value scans with `storage.getKeysByPrefix` and `storage.getByPrefix`
+- **Versioned writes** — optimistic concurrency with `item.getWithVersion()` and `item.setIfVersion(...)`
+- **Performance metrics** — observe operation timings and aggregate snapshots
+- **Web secure backend override** — plug custom secure storage backend on web
 - **Transactions** — grouped writes with automatic rollback on error
 - **Migrations** — versioned data migrations with `registerMigration` / `migrateToLatest`
 - **MMKV migration** — drop-in `migrateFromMMKV` for painless migration from MMKV
@@ -31,6 +35,10 @@ Every feature in this package is documented with at least one runnable example i
 - Validation + recovery — see Feature Flags with Validation
 - Biometric + access control — see Biometric-protected Secrets
 - Global storage utilities (`clear*`, `has`, `getAll*`, `size`, secure write settings) — see Global utility examples and Storage Snapshots and Cleanup
+- Prefix utilities (`getKeysByPrefix`, `getByPrefix`) — see Prefix Queries and Namespace Inspection
+- Versioned item API (`getWithVersion`, `setIfVersion`) — see Optimistic Versioned Writes
+- Metrics API (`setMetricsObserver`, `getMetricsSnapshot`, `resetMetrics`) — see Storage Metrics Instrumentation
+- Web secure backend override (`setWebSecureStorageBackend`, `getWebSecureStorageBackend`) — see Custom Web Secure Backend
 - Batch APIs (`getBatch`, `setBatch`, `removeBatch`) — see Batch Operations and Bulk Bootstrap with Batch APIs
 - Transactions — see Transactions and Atomic Balance Transfer
 - Migrations (`registerMigration`, `migrateToLatest`) — see Migrations
@@ -185,21 +193,24 @@ function createStorageItem<T = undefined>(
 | `coalesceSecureWrites` | `boolean`                        | `false`        | Batch same-tick Secure writes per key                          |
 | `namespace`            | `string`                         | —              | Prefix key as `namespace:key` for isolation                    |
 | `biometric`            | `boolean`                        | `false`        | Require biometric auth (Secure scope only)                     |
+| `biometricLevel`       | `BiometricLevel`                 | `None`         | Biometric policy (`BiometryOrPasscode` / `BiometryOnly`)       |
 | `accessControl`        | `AccessControl`                  | —              | Keychain access control level (native only)                    |
 
 **Returned `StorageItem<T>`:**
 
-| Method / Property | Type                                     | Description                                        |
-| ----------------- | ---------------------------------------- | -------------------------------------------------- |
-| `get()`           | `() => T`                                | Read current value (synchronous)                   |
-| `set(value)`      | `(value: T \| ((prev: T) => T)) => void` | Write a value or updater function                  |
-| `delete()`        | `() => void`                             | Remove the stored value (resets to `defaultValue`) |
-| `has()`           | `() => boolean`                          | Check if a value exists in storage                 |
-| `subscribe(cb)`   | `(cb: () => void) => () => void`         | Listen for changes, returns unsubscribe            |
-| `serialize`       | `(v: T) => string`                       | The item's serializer                              |
-| `deserialize`     | `(v: string) => T`                       | The item's deserializer                            |
-| `scope`           | `StorageScope`                           | The item's scope                                   |
-| `key`             | `string`                                 | The resolved key (includes namespace prefix)       |
+| Method / Property   | Type                                                                 | Description                                            |
+| ------------------- | -------------------------------------------------------------------- | ------------------------------------------------------ |
+| `get()`             | `() => T`                                                            | Read current value (synchronous)                       |
+| `getWithVersion()`  | `() => { value: T; version: StorageVersion }`                        | Read value plus current storage version token          |
+| `set(value)`        | `(value: T \| ((prev: T) => T)) => void`                             | Write a value or updater function                      |
+| `setIfVersion(...)` | `(version: StorageVersion, value: T \| ((prev: T) => T)) => boolean` | Write only if version matches (optimistic concurrency) |
+| `delete()`          | `() => void`                                                         | Remove the stored value (resets to `defaultValue`)     |
+| `has()`             | `() => boolean`                                                      | Check if a value exists in storage                     |
+| `subscribe(cb)`     | `(cb: () => void) => () => void`                                     | Listen for changes, returns unsubscribe                |
+| `serialize`         | `(v: T) => string`                                                   | The item's serializer                                  |
+| `deserialize`       | `(v: string) => T`                                                   | The item's deserializer                                |
+| `scope`             | `StorageScope`                                                       | The item's scope                                       |
+| `key`               | `string`                                                             | The resolved key (includes namespace prefix)           |
 
 **Non-React subscription example:**
 
@@ -249,30 +260,41 @@ setToken("new-token");
 import { storage, StorageScope } from "react-native-nitro-storage";
 ```
 
-| Method                                  | Description                                                                  |
-| --------------------------------------- | ---------------------------------------------------------------------------- |
-| `storage.clear(scope)`                  | Clear all keys in a scope (`Secure` also clears biometric entries)           |
-| `storage.clearAll()`                    | Clear Memory + Disk + Secure                                                 |
-| `storage.clearNamespace(ns, scope)`     | Remove only keys matching a namespace                                        |
-| `storage.clearBiometric()`              | Remove all biometric-prefixed keys                                           |
-| `storage.has(key, scope)`               | Check if a key exists                                                        |
-| `storage.getAllKeys(scope)`             | Get all key names                                                            |
-| `storage.getAll(scope)`                 | Get all key-value pairs as `Record<string, string>`                          |
-| `storage.size(scope)`                   | Number of stored keys                                                        |
-| `storage.setAccessControl(level)`       | Set default secure access control for subsequent secure writes (native only) |
-| `storage.setSecureWritesAsync(enabled)` | Toggle async secure writes on Android (`false` by default)                   |
-| `storage.flushSecureWrites()`           | Force flush of queued secure writes when coalescing is enabled               |
-| `storage.setKeychainAccessGroup(group)` | Set keychain access group for app sharing (native only)                      |
+| Method                                   | Description                                                                  |
+| ---------------------------------------- | ---------------------------------------------------------------------------- |
+| `storage.clear(scope)`                   | Clear all keys in a scope (`Secure` also clears biometric entries)           |
+| `storage.clearAll()`                     | Clear Memory + Disk + Secure                                                 |
+| `storage.clearNamespace(ns, scope)`      | Remove only keys matching a namespace                                        |
+| `storage.clearBiometric()`               | Remove all biometric-prefixed keys                                           |
+| `storage.has(key, scope)`                | Check if a key exists                                                        |
+| `storage.getAllKeys(scope)`              | Get all key names                                                            |
+| `storage.getKeysByPrefix(prefix, scope)` | Get keys that start with a prefix                                            |
+| `storage.getByPrefix(prefix, scope)`     | Get raw key-value pairs for keys matching a prefix                           |
+| `storage.getAll(scope)`                  | Get all key-value pairs as `Record<string, string>`                          |
+| `storage.size(scope)`                    | Number of stored keys                                                        |
+| `storage.setAccessControl(level)`        | Set default secure access control for subsequent secure writes (native only) |
+| `storage.setSecureWritesAsync(enabled)`  | Toggle async secure writes on Android (`false` by default)                   |
+| `storage.flushSecureWrites()`            | Force flush of queued secure writes when coalescing is enabled               |
+| `storage.setKeychainAccessGroup(group)`  | Set keychain access group for app sharing (native only)                      |
+| `storage.setMetricsObserver(observer?)`  | Subscribe to per-operation timing events                                     |
+| `storage.getMetricsSnapshot()`           | Get aggregate counters/latency stats keyed by operation                      |
+| `storage.resetMetrics()`                 | Reset in-memory metrics counters                                             |
 
 > `storage.getAll(StorageScope.Secure)` returns regular secure entries. Biometric-protected values are not included in this snapshot API.
 
 #### Global utility examples
 
 ```ts
-import { AccessControl, storage, StorageScope } from "react-native-nitro-storage";
+import {
+  AccessControl,
+  storage,
+  StorageScope,
+} from "react-native-nitro-storage";
 
 storage.has("session", StorageScope.Disk);
 storage.getAllKeys(StorageScope.Disk);
+storage.getKeysByPrefix("user-42:", StorageScope.Disk);
+storage.getByPrefix("user-42:", StorageScope.Disk);
 storage.getAll(StorageScope.Disk);
 storage.size(StorageScope.Disk);
 
@@ -303,6 +325,28 @@ storage.setSecureWritesAsync(true);
 storage.flushSecureWrites(); // deterministic durability boundary
 ```
 
+#### Custom web secure backend
+
+By default, web Secure scope uses `localStorage` with `__secure_` key prefixing. You can replace it with a custom backend (for example encrypted IndexedDB adapter).
+
+```ts
+import {
+  getWebSecureStorageBackend,
+  setWebSecureStorageBackend,
+} from "react-native-nitro-storage";
+
+setWebSecureStorageBackend({
+  getItem: (key) => encryptedStore.get(key) ?? null,
+  setItem: (key, value) => encryptedStore.set(key, value),
+  removeItem: (key) => encryptedStore.delete(key),
+  clear: () => encryptedStore.clear(),
+  getAllKeys: () => encryptedStore.keys(),
+});
+
+const backend = getWebSecureStorageBackend();
+console.log("custom backend active:", backend !== undefined);
+```
+
 ---
 
 ### `createSecureAuthStorage<K>(config, options?)`
@@ -318,7 +362,7 @@ function createSecureAuthStorage<K extends string>(
 
 - Default namespace: `"auth"`
 - Each key is a separate `StorageItem<string>` with `StorageScope.Secure`
-- Supports per-key TTL, biometric, and access control
+- Supports per-key TTL, biometric level policy, and access control
 
 ---
 
@@ -550,13 +594,18 @@ const flagsItem = createStorageItem<FeatureFlags>({
 ### Biometric-protected Secrets
 
 ```ts
-import { AccessControl, createStorageItem, StorageScope } from "react-native-nitro-storage";
+import {
+  AccessControl,
+  BiometricLevel,
+  createStorageItem,
+  StorageScope,
+} from "react-native-nitro-storage";
 
 const paymentPin = createStorageItem<string>({
   key: "payment-pin",
   scope: StorageScope.Secure,
   defaultValue: "",
-  biometric: true,
+  biometricLevel: BiometricLevel.BiometryOnly,
   accessControl: AccessControl.WhenPasscodeSetThisDeviceOnly,
 });
 
@@ -686,7 +735,11 @@ const compactItem = createStorageItem<{ id: number; active: boolean }>({
 ### Coalesced Secure Writes with Deterministic Flush
 
 ```ts
-import { createStorageItem, storage, StorageScope } from "react-native-nitro-storage";
+import {
+  createStorageItem,
+  storage,
+  StorageScope,
+} from "react-native-nitro-storage";
 
 const sessionToken = createStorageItem<string>({
   key: "session-token",
@@ -716,6 +769,58 @@ if (storage.has("legacy-flag", StorageScope.Disk)) {
 }
 
 storage.clearBiometric();
+```
+
+### Prefix Queries and Namespace Inspection
+
+```ts
+import { storage, StorageScope } from "react-native-nitro-storage";
+
+const userKeys = storage.getKeysByPrefix("user-42:", StorageScope.Disk);
+const userRawEntries = storage.getByPrefix("user-42:", StorageScope.Disk);
+
+console.log(userKeys);
+console.log(userRawEntries);
+```
+
+### Optimistic Versioned Writes
+
+```ts
+import { createStorageItem, StorageScope } from "react-native-nitro-storage";
+
+const profileItem = createStorageItem({
+  key: "profile",
+  scope: StorageScope.Disk,
+  defaultValue: { name: "Guest" },
+});
+
+const snapshot = profileItem.getWithVersion();
+const didWrite = profileItem.setIfVersion(snapshot.version, {
+  ...snapshot.value,
+  name: "Ada",
+});
+
+if (!didWrite) {
+  // value changed since snapshot; reload and retry
+}
+```
+
+### Storage Metrics Instrumentation
+
+```ts
+import { storage } from "react-native-nitro-storage";
+
+storage.setMetricsObserver((event) => {
+  console.log(
+    `[nitro-storage] ${event.operation} scope=${event.scope} duration=${event.durationMs}ms keys=${event.keysCount}`,
+  );
+});
+
+const metrics = storage.getMetricsSnapshot();
+console.log(metrics["item:get"]?.avgDurationMs);
+
+storage.resetMetrics();
+storage.setMetricsObserver(undefined);
 ```
 
 ### Low-level Subscription (outside React)
@@ -769,6 +874,12 @@ import type {
   MigrationContext,
   Migration,
   TransactionContext,
+  StorageVersion,
+  VersionedValue,
+  StorageMetricsEvent,
+  StorageMetricsObserver,
+  StorageMetricSummary,
+  WebSecureStorageBackend,
   MMKVLike,
   SecureAuthStorageConfig,
 } from "react-native-nitro-storage";

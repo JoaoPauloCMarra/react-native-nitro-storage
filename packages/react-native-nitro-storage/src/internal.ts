@@ -5,6 +5,7 @@ export const NATIVE_BATCH_MISSING_SENTINEL =
   "__nitro_storage_batch_missing__::v1";
 const PRIMITIVE_FAST_PATH_PREFIX = "__nitro_storage_primitive__:";
 const NAMESPACE_SEPARATOR = ":";
+const VERSION_TOKEN_PREFIX = "__nitro_storage_version__:";
 
 export type StoredEnvelope = {
   __nitroStorageEnvelope: true;
@@ -141,4 +142,31 @@ export function deserializeWithPrimitiveFastPath<T>(value: string): T {
   } catch {
     return value as T;
   }
+}
+
+function fnv1aHash(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+export function toVersionToken(raw: unknown): string {
+  if (raw === undefined) {
+    return `${VERSION_TOKEN_PREFIX}missing`;
+  }
+
+  if (typeof raw === "string") {
+    return `${VERSION_TOKEN_PREFIX}${raw.length}:${fnv1aHash(raw)}`;
+  }
+
+  let normalized: string;
+  try {
+    normalized = JSON.stringify(raw) ?? String(raw);
+  } catch {
+    normalized = String(raw);
+  }
+  return `${VERSION_TOKEN_PREFIX}${normalized.length}:${fnv1aHash(normalized)}`;
 }

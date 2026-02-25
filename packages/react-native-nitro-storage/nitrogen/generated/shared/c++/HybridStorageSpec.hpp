@@ -57,6 +57,7 @@ namespace margelo::nitro::NitroStorage {
       virtual void clear(double scope) = 0;
       virtual bool has(const std::string& key, double scope) = 0;
       virtual std::vector<std::string> getAllKeys(double scope) = 0;
+      virtual std::vector<std::string> getKeysByPrefix(const std::string& prefix, double scope) = 0;
       virtual double size(double scope) = 0;
       virtual void setBatch(const std::vector<std::string>& keys, const std::vector<std::string>& values, double scope) = 0;
       virtual std::vector<std::string> getBatch(const std::vector<std::string>& keys, double scope) = 0;
@@ -67,6 +68,7 @@ namespace margelo::nitro::NitroStorage {
       virtual void setSecureWritesAsync(bool enabled) = 0;
       virtual void setKeychainAccessGroup(const std::string& group) = 0;
       virtual void setSecureBiometric(const std::string& key, const std::string& value) = 0;
+      virtual void setSecureBiometricWithLevel(const std::string& key, const std::string& value, double level) = 0;
       virtual std::optional<std::string> getSecureBiometric(const std::string& key) = 0;
       virtual void deleteSecureBiometric(const std::string& key) = 0;
       virtual bool hasSecureBiometric(const std::string& key) = 0;
