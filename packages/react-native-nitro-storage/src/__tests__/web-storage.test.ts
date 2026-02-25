@@ -106,6 +106,8 @@ describe("Web Storage", () => {
   let migrationVersionSeed = 2_000;
 
   beforeEach(() => {
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+
     Object.defineProperty(globalThis, "localStorage", {
       value: createStorageMock(),
       configurable: true,
@@ -128,6 +130,10 @@ describe("Web Storage", () => {
     storage.clearAll();
     storage.setMetricsObserver(undefined);
     storage.resetMetrics();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   it("stores and retrieves disk values", () => {
