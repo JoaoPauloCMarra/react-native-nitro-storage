@@ -30,6 +30,7 @@ public:
     void deleteDisk(const std::string& key) override;
     bool hasDisk(const std::string& key) override;
     std::vector<std::string> getAllKeysDisk() override;
+    std::vector<std::string> getKeysByPrefixDisk(const std::string& prefix) override;
     size_t sizeDisk() override;
     void setDiskBatch(const std::vector<std::string>& keys, const std::vector<std::string>& values) override;
     std::vector<std::optional<std::string>> getDiskBatch(const std::vector<std::string>& keys) override;
@@ -40,6 +41,7 @@ public:
     void deleteSecure(const std::string& key) override;
     bool hasSecure(const std::string& key) override;
     std::vector<std::string> getAllKeysSecure() override;
+    std::vector<std::string> getKeysByPrefixSecure(const std::string& prefix) override;
     size_t sizeSecure() override;
     void setSecureBatch(const std::vector<std::string>& keys, const std::vector<std::string>& values) override;
     std::vector<std::optional<std::string>> getSecureBatch(const std::vector<std::string>& keys) override;
@@ -53,6 +55,7 @@ public:
     void setKeychainAccessGroup(const std::string& group) override;
 
     void setSecureBiometric(const std::string& key, const std::string& value) override;
+    void setSecureBiometricWithLevel(const std::string& key, const std::string& value, int level) override;
     std::optional<std::string> getSecureBiometric(const std::string& key) override;
     void deleteSecureBiometric(const std::string& key) override;
     bool hasSecureBiometric(const std::string& key) override;

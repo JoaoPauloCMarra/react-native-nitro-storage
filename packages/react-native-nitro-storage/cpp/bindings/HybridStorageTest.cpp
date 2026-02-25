@@ -40,6 +40,16 @@ public:
         return keys;
     }
 
+    std::vector<std::string> getKeysByPrefixDisk(const std::string& prefix) override {
+        std::vector<std::string> keys;
+        for (const auto& [key, _] : disk_) {
+            if (key.rfind(prefix, 0) == 0) {
+                keys.push_back(key);
+            }
+        }
+        return keys;
+    }
+
     size_t sizeDisk() override {
         return disk_.size();
     }
@@ -99,6 +109,18 @@ public:
         return keys;
     }
 
+    std::vector<std::string> getKeysByPrefixSecure(const std::string& prefix) override {
+        std::vector<std::string> keys;
+        const auto all = getAllKeysSecure();
+        keys.reserve(all.size());
+        for (const auto& key : all) {
+            if (key.rfind(prefix, 0) == 0) {
+                keys.push_back(key);
+            }
+        }
+        return keys;
+    }
+
     size_t sizeSecure() override {
         return getAllKeysSecure().size();
     }
@@ -151,6 +173,11 @@ public:
         biometric_[key] = value;
     }
 
+    void setSecureBiometricWithLevel(const std::string& key, const std::string& value, int level) override {
+        biometric_[key] = value;
+        biometricLevel_ = level;
+    }
+
     std::optional<std::string> getSecureBiometric(const std::string& key) override {
         auto it = biometric_.find(key);
         if (it == biometric_.end()) return std::nullopt;
@@ -173,6 +200,7 @@ public:
     bool secureWritesAsync() const { return secureWritesAsync_; }
     int secureWritesAsyncCalls() const { return secureWritesAsyncCalls_; }
     const std::string& keychainGroup() const { return keychainGroup_; }
+    int biometricLevel() const { return biometricLevel_; }
 
 private:
     std::map<std::string, std::string> disk_;
@@ -182,6 +210,7 @@ private:
     bool secureWritesAsync_ = false;
     int secureWritesAsyncCalls_ = 0;
     std::string keychainGroup_;
+    int biometricLevel_ = -1;
 };
 
 void testSetGetAcrossScopes() {
@@ -259,6 +288,26 @@ void testRemoveByPrefix() {
     assert(storage.has("profile:user", 1.0));
 }
 
+void testGetKeysByPrefix() {
+    auto adapter = std::make_shared<MockAdapter>();
+    HybridStorage storage(adapter);
+
+    storage.set("session:token", "a", 1.0);
+    storage.set("session:user", "b", 1.0);
+    storage.set("profile:name", "c", 1.0);
+
+    const auto keys = storage.getKeysByPrefix("session:", 1.0);
+    assert(keys.size() == 2);
+}
+
+void testBiometricLevelPassThrough() {
+    auto adapter = std::make_shared<MockAdapter>();
+    HybridStorage storage(adapter);
+
+    storage.setSecureBiometricWithLevel("bio-key", "bio-value", 1.0);
+    assert(adapter->biometricLevel() == 1);
+}
+
 void testClearNotifiesScope() {
     auto adapter = std::make_shared<MockAdapter>();
     HybridStorage storage(adapter);
@@ -282,6 +331,8 @@ int main() {
     testBatchListeners();
     testSecureConfigPassThrough();
     testRemoveByPrefix();
+    testGetKeysByPrefix();
+    testBiometricLevelPassThrough();
     testClearNotifiesScope();
 
     std::cout << "✅ HybridStorage C++ tests passed!" << std::endl;

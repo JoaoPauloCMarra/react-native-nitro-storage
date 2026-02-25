@@ -2,10 +2,14 @@ import {
   AccessControl,
   BiometricLevel,
   StorageScope,
+  type StorageMetricsEvent,
+  type StorageMetricsObserver,
   createSecureAuthStorage,
   createStorageItem,
+  getWebSecureStorageBackend,
   getBatch,
   removeBatch,
+  setWebSecureStorageBackend,
   setBatch,
   storage,
   useSetStorage,
@@ -62,11 +66,35 @@ const values = getBatch([countItem], StorageScope.Memory);
 const valuesUnknownArray: unknown[] = values;
 removeBatch([countItem], StorageScope.Memory);
 
+const versionedSnapshot = countItem.getWithVersion();
+const versionToken: string = versionedSnapshot.version;
+const casResult: boolean = countItem.setIfVersion(versionToken, 6);
+void casResult;
+
+const prefixedKeys = storage.getKeysByPrefix("auth:", StorageScope.Secure);
+const prefixedEntries = storage.getByPrefix("auth:", StorageScope.Secure);
+const prefixedKeysArray: string[] = prefixedKeys;
+const prefixedEntriesRecord: Record<string, string> = prefixedEntries;
+void prefixedKeysArray;
+void prefixedEntriesRecord;
+
+const metricsObserver: StorageMetricsObserver = (event: StorageMetricsEvent) => {
+  const operationName: string = event.operation;
+  void operationName;
+};
+storage.setMetricsObserver(metricsObserver);
+storage.getMetricsSnapshot();
+storage.resetMetrics();
+storage.setMetricsObserver(undefined);
+
 storage.setAccessControl(AccessControl.WhenUnlockedThisDeviceOnly);
 storage.setSecureWritesAsync(true);
 storage.flushSecureWrites();
 storage.setKeychainAccessGroup("group.test");
 storage.clearNamespace("auth", StorageScope.Secure);
+
+setWebSecureStorageBackend(undefined);
+getWebSecureStorageBackend();
 
 const level: BiometricLevel = BiometricLevel.BiometryOnly;
 const levelNumber: number = level;

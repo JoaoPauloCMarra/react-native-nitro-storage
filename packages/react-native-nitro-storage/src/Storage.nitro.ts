@@ -7,6 +7,7 @@ export interface Storage extends HybridObject<{ ios: "c++"; android: "c++" }> {
   clear(scope: number): void;
   has(key: string, scope: number): boolean;
   getAllKeys(scope: number): string[];
+  getKeysByPrefix(prefix: string, scope: number): string[];
   size(scope: number): number;
   setBatch(keys: string[], values: string[], scope: number): void;
   getBatch(keys: string[], scope: number): (string | undefined)[];
@@ -20,6 +21,7 @@ export interface Storage extends HybridObject<{ ios: "c++"; android: "c++" }> {
   setSecureWritesAsync(enabled: boolean): void;
   setKeychainAccessGroup(group: string): void;
   setSecureBiometric(key: string, value: string): void;
+  setSecureBiometricWithLevel(key: string, value: string, level: number): void;
   getSecureBiometric(key: string): string | undefined;
   deleteSecureBiometric(key: string): void;
   hasSecureBiometric(key: string): boolean;

@@ -17,10 +17,12 @@ const mockHybridObject = {
   setSecureWritesAsync: jest.fn(),
   setKeychainAccessGroup: jest.fn(),
   setSecureBiometric: jest.fn(),
+  setSecureBiometricWithLevel: jest.fn(),
   getSecureBiometric: jest.fn(),
   deleteSecureBiometric: jest.fn(),
   hasSecureBiometric: jest.fn(),
   clearSecureBiometric: jest.fn(),
+  getKeysByPrefix: jest.fn(),
 };
 
 jest.mock("react-native-nitro-modules", () => ({
@@ -33,8 +35,10 @@ import {
   createStorageItem,
   useStorage,
   useStorageSelector,
+  type StorageMetricsEvent,
   StorageScope,
   AccessControl,
+  BiometricLevel,
   getBatch,
   setBatch,
   removeBatch,
@@ -666,6 +670,162 @@ describe("useStorage", () => {
       StorageScope.Secure,
     );
   });
+
+  it("coalesces secure writes with item-level access control", async () => {
+    const item = createStorageItem({
+      key: "secure-coalesce-access",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      coalesceSecureWrites: true,
+      accessControl: AccessControl.AfterFirstUnlock,
+    });
+
+    item.set("value");
+    expect(mockHybridObject.set).not.toHaveBeenCalled();
+
+    await Promise.resolve();
+
+    expect(mockHybridObject.setSecureAccessControl).toHaveBeenCalledWith(
+      AccessControl.AfterFirstUnlock,
+    );
+    expect(mockHybridObject.setBatch).toHaveBeenCalledWith(
+      ["secure-coalesce-access"],
+      [serializeWithPrimitiveFastPath("value")],
+      StorageScope.Secure,
+    );
+  });
+
+  it("uses per-item read-cache behavior in mixed getBatch reads", () => {
+    const cachedItem = createStorageItem({
+      key: "mixed-cache-cached",
+      scope: StorageScope.Disk,
+      defaultValue: "cached-default",
+      readCache: true,
+    });
+    const uncachedItem = createStorageItem({
+      key: "mixed-cache-uncached",
+      scope: StorageScope.Disk,
+      defaultValue: "uncached-default",
+    });
+
+    mockHybridObject.get.mockReturnValueOnce(
+      serializeWithPrimitiveFastPath("cached-value"),
+    );
+    expect(cachedItem.get()).toBe("cached-value");
+
+    mockHybridObject.getBatch.mockReturnValue([
+      serializeWithPrimitiveFastPath("uncached-value"),
+    ]);
+
+    const values = getBatch([cachedItem, uncachedItem], StorageScope.Disk);
+    expect(values).toEqual(["cached-value", "uncached-value"]);
+    expect(mockHybridObject.getBatch).toHaveBeenCalledWith(
+      ["mixed-cache-uncached"],
+      StorageScope.Disk,
+    );
+  });
+
+  it("returns default for missing raw batch values without per-item get calls", () => {
+    const item = createStorageItem({
+      key: "raw-missing-default",
+      scope: StorageScope.Disk,
+      defaultValue: "fallback",
+    });
+
+    mockHybridObject.getBatch.mockReturnValue([
+      "__nitro_storage_batch_missing__::v1",
+    ]);
+
+    const values = getBatch([item], StorageScope.Disk);
+    expect(values).toEqual(["fallback"]);
+    expect(mockHybridObject.get).not.toHaveBeenCalled();
+  });
+
+  it("supports getWithVersion and setIfVersion optimistic writes", () => {
+    const item = createStorageItem({
+      key: "versioned-counter",
+      scope: StorageScope.Disk,
+      defaultValue: 0,
+    });
+
+    mockHybridObject.get.mockReturnValue(undefined);
+    const snapshot = item.getWithVersion();
+    expect(snapshot.value).toBe(0);
+
+    const firstWrite = item.setIfVersion(snapshot.version, 1);
+    expect(firstWrite).toBe(true);
+    expect(mockHybridObject.set).toHaveBeenCalledWith(
+      "versioned-counter",
+      serializeWithPrimitiveFastPath(1),
+      StorageScope.Disk,
+    );
+
+    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath(2));
+    const staleWrite = item.setIfVersion(snapshot.version, 3);
+    expect(staleWrite).toBe(false);
+  });
+
+  it("supports biometricLevel for secure biometric writes", () => {
+    const item = createStorageItem({
+      key: "bio-level",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometricLevel: BiometricLevel.BiometryOrPasscode,
+    });
+
+    item.set("secret");
+    expect(mockHybridObject.setSecureBiometricWithLevel).toHaveBeenCalledWith(
+      "bio-level",
+      serializeWithPrimitiveFastPath("secret"),
+      BiometricLevel.BiometryOrPasscode,
+    );
+  });
+
+  it("exposes prefix read APIs on storage", () => {
+    mockHybridObject.getKeysByPrefix.mockReturnValue([
+      "session:token",
+      "session:user",
+    ]);
+    mockHybridObject.getBatch.mockReturnValue([
+      serializeWithPrimitiveFastPath("tkn"),
+      serializeWithPrimitiveFastPath("usr"),
+    ]);
+
+    const keys = storage.getKeysByPrefix("session:", StorageScope.Disk);
+    const entries = storage.getByPrefix("session:", StorageScope.Disk);
+
+    expect(keys).toEqual(["session:token", "session:user"]);
+    expect(entries).toEqual({
+      "session:token": serializeWithPrimitiveFastPath("tkn"),
+      "session:user": serializeWithPrimitiveFastPath("usr"),
+    });
+  });
+
+  it("emits operation metrics and exposes counter snapshots", () => {
+    const metricsEvents: StorageMetricsEvent[] = [];
+    storage.setMetricsObserver((event) => metricsEvents.push(event));
+    storage.resetMetrics();
+
+    const item = createStorageItem({
+      key: "metric-item",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+    });
+    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("v"));
+
+    item.set("v");
+    item.get();
+    storage.getAllKeys(StorageScope.Disk);
+
+    const snapshot = storage.getMetricsSnapshot();
+    expect(metricsEvents.length).toBeGreaterThan(0);
+    expect(snapshot["item:set"]).toBeDefined();
+    expect(snapshot["item:get"]).toBeDefined();
+    expect(snapshot["storage:getAllKeys"]).toBeDefined();
+
+    storage.setMetricsObserver(undefined);
+    storage.resetMetrics();
+  });
 });
 
 describe("Batch Operations", () => {
@@ -885,14 +1045,11 @@ describe("Batch Operations", () => {
     });
   });
 
-  it("falls back to item.get() in getBatch if native returns undefined", () => {
+  it("falls back to item default in getBatch if native returns undefined", () => {
     mockHybridObject.getBatch.mockReturnValue([
       undefined,
       serializeWithPrimitiveFastPath("v2"),
     ]);
-    mockHybridObject.get.mockReturnValue(
-      serializeWithPrimitiveFastPath("v1-fallback"),
-    );
 
     const item1WithFallback = createStorageItem({
       key: "fallback-1",
@@ -901,7 +1058,7 @@ describe("Batch Operations", () => {
     });
 
     const values = getBatch([item1WithFallback, item2], StorageScope.Disk);
-    expect(values).toEqual(["v1-fallback", "v2"]);
+    expect(values).toEqual(["d1", "v2"]);
   });
 
   it("uses per-item set path for validated items", () => {
@@ -968,12 +1125,9 @@ describe("Batch Operations", () => {
     mockHybridObject.getBatch.mockReturnValue([
       "__nitro_storage_batch_missing__::v1",
     ]);
-    mockHybridObject.get.mockReturnValue(
-      serializeWithPrimitiveFastPath("fallback"),
-    );
 
     const values = getBatch([sentinelItem], StorageScope.Disk);
-    expect(values).toEqual(["fallback"]);
+    expect(values).toEqual(["default"]);
   });
 });
 
@@ -994,6 +1148,22 @@ describe("v0.2 features", () => {
     });
     mockHybridObject.remove.mockImplementation((key: string) => {
       diskStore.delete(key);
+    });
+    mockHybridObject.setBatch.mockImplementation(
+      (keys: string[], values: string[]) => {
+        keys.forEach((key, index) => {
+          const value = values[index];
+          if (value === undefined) {
+            return;
+          }
+          diskStore.set(key, value);
+        });
+      },
+    );
+    mockHybridObject.removeBatch.mockImplementation((keys: string[]) => {
+      keys.forEach((key) => {
+        diskStore.delete(key);
+      });
     });
   });
 
@@ -1084,6 +1254,21 @@ describe("v0.2 features", () => {
 
     expect(item.get()).toBe("before");
     expect(diskStore.get("another")).toBeUndefined();
+  });
+
+  it("rolls back disk transactions using native batch writes", () => {
+    expect(() =>
+      runTransaction(StorageScope.Disk, (tx) => {
+        tx.setRaw("rollback-a", serializeWithPrimitiveFastPath("a"));
+        tx.setRaw("rollback-b", serializeWithPrimitiveFastPath("b"));
+        throw new Error("rollback");
+      }),
+    ).toThrow("rollback");
+
+    expect(
+      mockHybridObject.setBatch.mock.calls.length +
+        mockHybridObject.removeBatch.mock.calls.length,
+    ).toBeGreaterThan(0);
   });
 
   it("runs registered migrations in order and stores applied version", () => {

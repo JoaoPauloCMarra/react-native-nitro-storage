@@ -14,6 +14,7 @@ namespace margelo::nitro::NitroStorage {
 
 namespace {
 constexpr auto kBatchMissingSentinel = "__nitro_storage_batch_missing__::v1";
+constexpr int kDefaultBiometricLevel = 2;
 } // namespace
 
 HybridStorage::HybridStorage()
@@ -74,7 +75,8 @@ void HybridStorage::set(const std::string& key, const std::string& value, double
             }
             break;
     }
-    
+
+    onKeySet(static_cast<int>(s), key);
     notifyListeners(static_cast<int>(s), key, value);
 }
 
@@ -143,7 +145,8 @@ void HybridStorage::remove(const std::string& key, double scope) {
             }
             break;
     }
-    
+
+    onKeyRemove(static_cast<int>(s), key);
     notifyListeners(static_cast<int>(s), key, std::nullopt);
 }
 
@@ -179,11 +182,56 @@ std::vector<std::string> HybridStorage::getAllKeys(double scope) {
             return keys;
         }
         case Scope::Disk:
-            ensureAdapter();
-            return nativeAdapter_->getAllKeysDisk();
-        case Scope::Secure:
-            ensureAdapter();
-            return nativeAdapter_->getAllKeysSecure();
+        case Scope::Secure: {
+            const int scopeValue = static_cast<int>(s);
+            ensureKeyIndexHydrated(scopeValue);
+            std::lock_guard<std::mutex> lock(keyIndexMutex_);
+            auto indexIt = keyIndex_.find(scopeValue);
+            if (indexIt == keyIndex_.end()) {
+                return {};
+            }
+            return toVector(indexIt->second);
+        }
+    }
+    return {};
+}
+
+std::vector<std::string> HybridStorage::getKeysByPrefix(const std::string& prefix, double scope) {
+    Scope s = toScope(scope);
+    if (prefix.empty()) {
+        return getAllKeys(scope);
+    }
+
+    switch (s) {
+        case Scope::Memory: {
+            std::lock_guard<std::mutex> lock(memoryMutex_);
+            std::vector<std::string> keys;
+            keys.reserve(memoryStore_.size());
+            for (const auto& [key, _] : memoryStore_) {
+                if (key.rfind(prefix, 0) == 0) {
+                    keys.push_back(key);
+                }
+            }
+            return keys;
+        }
+        case Scope::Disk:
+        case Scope::Secure: {
+            const int scopeValue = static_cast<int>(s);
+            ensureKeyIndexHydrated(scopeValue);
+            std::lock_guard<std::mutex> lock(keyIndexMutex_);
+            std::vector<std::string> keys;
+            auto indexIt = keyIndex_.find(scopeValue);
+            if (indexIt == keyIndex_.end()) {
+                return keys;
+            }
+            keys.reserve(indexIt->second.size());
+            for (const auto& key : indexIt->second) {
+                if (key.rfind(prefix, 0) == 0) {
+                    keys.push_back(key);
+                }
+            }
+            return keys;
+        }
     }
     return {};
 }
@@ -197,11 +245,16 @@ double HybridStorage::size(double scope) {
             return static_cast<double>(memoryStore_.size());
         }
         case Scope::Disk:
-            ensureAdapter();
-            return static_cast<double>(nativeAdapter_->sizeDisk());
-        case Scope::Secure:
-            ensureAdapter();
-            return static_cast<double>(nativeAdapter_->sizeSecure());
+        case Scope::Secure: {
+            const int scopeValue = static_cast<int>(s);
+            ensureKeyIndexHydrated(scopeValue);
+            std::lock_guard<std::mutex> lock(keyIndexMutex_);
+            auto indexIt = keyIndex_.find(scopeValue);
+            if (indexIt == keyIndex_.end()) {
+                return 0.0;
+            }
+            return static_cast<double>(indexIt->second.size());
+        }
     }
     return 0.0;
 }
@@ -261,7 +314,8 @@ void HybridStorage::clear(double scope) {
             }
             break;
     }
-    
+
+    onScopeClear(static_cast<int>(s));
     notifyListeners(static_cast<int>(s), "", std::nullopt);
 }
 
@@ -303,6 +357,9 @@ void HybridStorage::setBatch(const std::vector<std::string>& keys, const std::ve
     }
 
     const auto scopeValue = static_cast<int>(s);
+    for (const auto& key : keys) {
+        onKeySet(scopeValue, key);
+    }
     const auto listeners = copyListenersForScope(scopeValue);
     for (size_t i = 0; i < keys.size(); ++i) {
         notifyListeners(listeners, keys[i], values[i]);
@@ -399,6 +456,9 @@ void HybridStorage::removeBatch(const std::vector<std::string>& keys, double sco
     }
 
     const auto scopeValue = static_cast<int>(s);
+    for (const auto& key : keys) {
+        onKeyRemove(scopeValue, key);
+    }
     const auto listeners = copyListenersForScope(scopeValue);
     for (const auto& key : keys) {
         notifyListeners(listeners, key, std::nullopt);
@@ -410,14 +470,7 @@ void HybridStorage::removeByPrefix(const std::string& prefix, double scope) {
         return;
     }
 
-    const auto keys = getAllKeys(scope);
-    std::vector<std::string> prefixedKeys;
-    prefixedKeys.reserve(keys.size());
-    for (const auto& key : keys) {
-        if (key.rfind(prefix, 0) == 0) {
-            prefixedKeys.push_back(key);
-        }
-    }
+    const auto prefixedKeys = getKeysByPrefix(prefix, scope);
 
     if (prefixedKeys.empty()) {
         return;
@@ -446,9 +499,18 @@ void HybridStorage::setKeychainAccessGroup(const std::string& group) {
 // --- Biometric ---
 
 void HybridStorage::setSecureBiometric(const std::string& key, const std::string& value) {
+    setSecureBiometricWithLevel(key, value, kDefaultBiometricLevel);
+}
+
+void HybridStorage::setSecureBiometricWithLevel(const std::string& key, const std::string& value, double level) {
     ensureAdapter();
     try {
-        nativeAdapter_->setSecureBiometric(key, value);
+        nativeAdapter_->setSecureBiometricWithLevel(
+            key,
+            value,
+            static_cast<int>(level)
+        );
+        onKeySet(static_cast<int>(Scope::Secure), key);
         notifyListeners(static_cast<int>(Scope::Secure), key, value);
     } catch (const std::exception& e) {
         throw std::runtime_error(std::string("NitroStorage: Biometric set failed: ") + e.what());
@@ -468,6 +530,7 @@ void HybridStorage::deleteSecureBiometric(const std::string& key) {
     ensureAdapter();
     try {
         nativeAdapter_->deleteSecureBiometric(key);
+        onKeyRemove(static_cast<int>(Scope::Secure), key);
         notifyListeners(static_cast<int>(Scope::Secure), key, std::nullopt);
     } catch (const std::exception& e) {
         throw std::runtime_error(std::string("NitroStorage: Biometric delete failed: ") + e.what());
@@ -483,6 +546,7 @@ void HybridStorage::clearSecureBiometric() {
     ensureAdapter();
     try {
         nativeAdapter_->clearSecureBiometric();
+        onScopeClear(static_cast<int>(Scope::Secure));
         notifyListeners(static_cast<int>(Scope::Secure), "", std::nullopt);
     } catch (const std::exception& e) {
         throw std::runtime_error(std::string("NitroStorage: Biometric clear failed: ") + e.what());
@@ -525,6 +589,87 @@ void HybridStorage::notifyListeners(
 ) {
     const auto listeners = copyListenersForScope(scope);
     notifyListeners(listeners, key, value);
+}
+
+std::vector<std::string> HybridStorage::toVector(const std::unordered_set<std::string>& keys) {
+    std::vector<std::string> values;
+    values.reserve(keys.size());
+    for (const auto& key : keys) {
+        values.push_back(key);
+    }
+    return values;
+}
+
+void HybridStorage::ensureKeyIndexHydrated(int scope) {
+    if (scope != static_cast<int>(Scope::Disk) && scope != static_cast<int>(Scope::Secure)) {
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(keyIndexMutex_);
+        auto hydratedIt = keyIndexHydrated_.find(scope);
+        if (hydratedIt != keyIndexHydrated_.end() && hydratedIt->second) {
+            return;
+        }
+    }
+
+    ensureAdapter();
+    std::vector<std::string> keys;
+    try {
+        if (scope == static_cast<int>(Scope::Disk)) {
+            keys = nativeAdapter_->getAllKeysDisk();
+        } else {
+            keys = nativeAdapter_->getAllKeysSecure();
+        }
+    } catch (const std::exception& e) {
+        throw std::runtime_error(std::string("NitroStorage: Key index hydration failed: ") + e.what());
+    } catch (...) {
+        throw std::runtime_error("NitroStorage: Key index hydration failed");
+    }
+
+    std::lock_guard<std::mutex> lock(keyIndexMutex_);
+    auto& index = keyIndex_[scope];
+    index.clear();
+    for (const auto& key : keys) {
+        index.insert(key);
+    }
+    keyIndexHydrated_[scope] = true;
+}
+
+void HybridStorage::onKeySet(int scope, const std::string& key) {
+    if (scope != static_cast<int>(Scope::Disk) && scope != static_cast<int>(Scope::Secure)) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(keyIndexMutex_);
+    auto hydratedIt = keyIndexHydrated_.find(scope);
+    if (hydratedIt != keyIndexHydrated_.end() && hydratedIt->second) {
+        keyIndex_[scope].insert(key);
+    }
+}
+
+void HybridStorage::onKeyRemove(int scope, const std::string& key) {
+    if (scope != static_cast<int>(Scope::Disk) && scope != static_cast<int>(Scope::Secure)) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(keyIndexMutex_);
+    auto hydratedIt = keyIndexHydrated_.find(scope);
+    if (hydratedIt != keyIndexHydrated_.end() && hydratedIt->second) {
+        keyIndex_[scope].erase(key);
+    }
+}
+
+void HybridStorage::onScopeClear(int scope) {
+    if (scope != static_cast<int>(Scope::Disk) && scope != static_cast<int>(Scope::Secure)) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(keyIndexMutex_);
+    auto hydratedIt = keyIndexHydrated_.find(scope);
+    if (hydratedIt != keyIndexHydrated_.end() && hydratedIt->second) {
+        keyIndex_[scope].clear();
+    }
 }
 
 void HybridStorage::ensureAdapter() const {

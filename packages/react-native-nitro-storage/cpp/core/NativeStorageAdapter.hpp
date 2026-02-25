@@ -15,6 +15,7 @@ public:
     virtual void deleteDisk(const std::string& key) = 0;
     virtual bool hasDisk(const std::string& key) = 0;
     virtual std::vector<std::string> getAllKeysDisk() = 0;
+    virtual std::vector<std::string> getKeysByPrefixDisk(const std::string& prefix) = 0;
     virtual size_t sizeDisk() = 0;
     virtual void setDiskBatch(const std::vector<std::string>& keys, const std::vector<std::string>& values) = 0;
     virtual std::vector<std::optional<std::string>> getDiskBatch(const std::vector<std::string>& keys) = 0;
@@ -25,6 +26,7 @@ public:
     virtual void deleteSecure(const std::string& key) = 0;
     virtual bool hasSecure(const std::string& key) = 0;
     virtual std::vector<std::string> getAllKeysSecure() = 0;
+    virtual std::vector<std::string> getKeysByPrefixSecure(const std::string& prefix) = 0;
     virtual size_t sizeSecure() = 0;
     virtual void setSecureBatch(const std::vector<std::string>& keys, const std::vector<std::string>& values) = 0;
     virtual std::vector<std::optional<std::string>> getSecureBatch(const std::vector<std::string>& keys) = 0;
@@ -38,6 +40,7 @@ public:
     virtual void setKeychainAccessGroup(const std::string& group) = 0;
 
     virtual void setSecureBiometric(const std::string& key, const std::string& value) = 0;
+    virtual void setSecureBiometricWithLevel(const std::string& key, const std::string& value, int level) = 0;
     virtual std::optional<std::string> getSecureBiometric(const std::string& key) = 0;
     virtual void deleteSecureBiometric(const std::string& key) = 0;
     virtual bool hasSecureBiometric(const std::string& key) = 0;

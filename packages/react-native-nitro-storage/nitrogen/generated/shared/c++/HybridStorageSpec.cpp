@@ -20,6 +20,7 @@ namespace margelo::nitro::NitroStorage {
       prototype.registerHybridMethod("clear", &HybridStorageSpec::clear);
       prototype.registerHybridMethod("has", &HybridStorageSpec::has);
       prototype.registerHybridMethod("getAllKeys", &HybridStorageSpec::getAllKeys);
+      prototype.registerHybridMethod("getKeysByPrefix", &HybridStorageSpec::getKeysByPrefix);
       prototype.registerHybridMethod("size", &HybridStorageSpec::size);
       prototype.registerHybridMethod("setBatch", &HybridStorageSpec::setBatch);
       prototype.registerHybridMethod("getBatch", &HybridStorageSpec::getBatch);
@@ -30,6 +31,7 @@ namespace margelo::nitro::NitroStorage {
       prototype.registerHybridMethod("setSecureWritesAsync", &HybridStorageSpec::setSecureWritesAsync);
       prototype.registerHybridMethod("setKeychainAccessGroup", &HybridStorageSpec::setKeychainAccessGroup);
       prototype.registerHybridMethod("setSecureBiometric", &HybridStorageSpec::setSecureBiometric);
+      prototype.registerHybridMethod("setSecureBiometricWithLevel", &HybridStorageSpec::setSecureBiometricWithLevel);
       prototype.registerHybridMethod("getSecureBiometric", &HybridStorageSpec::getSecureBiometric);
       prototype.registerHybridMethod("deleteSecureBiometric", &HybridStorageSpec::deleteSecureBiometric);
       prototype.registerHybridMethod("hasSecureBiometric", &HybridStorageSpec::hasSecureBiometric);

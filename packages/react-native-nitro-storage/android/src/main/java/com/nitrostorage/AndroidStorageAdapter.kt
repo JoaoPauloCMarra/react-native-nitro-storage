@@ -36,6 +36,9 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
 
     @Volatile
     private var secureWritesAsync = false
+
+    @Volatile
+    private var secureKeysCache: Array<String>? = null
     
     private fun initializeEncryptedPreferences(name: String, key: MasterKey): SharedPreferences {
         return try {
@@ -99,6 +102,30 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             editor.apply()
         } else {
             editor.commit()
+        }
+    }
+
+    private fun invalidateSecureKeysCache() {
+        secureKeysCache = null
+    }
+
+    private fun getSecureKeysCached(): Array<String> {
+        val cached = secureKeysCache
+        if (cached != null) {
+            return cached
+        }
+
+        synchronized(this) {
+            val existing = secureKeysCache
+            if (existing != null) {
+                return existing
+            }
+            val keys = linkedSetOf<String>()
+            keys.addAll(encryptedPreferences.all.keys)
+            keys.addAll(biometricPreferences.all.keys)
+            val built = keys.toTypedArray()
+            secureKeysCache = built
+            return built
         }
     }
     
@@ -189,6 +216,13 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         }
 
         @JvmStatic
+        fun getKeysByPrefixDisk(prefix: String): Array<String> {
+            return getInstanceOrThrow().sharedPreferences.all.keys
+                .filter { it.startsWith(prefix) }
+                .toTypedArray()
+        }
+
+        @JvmStatic
         fun sizeDisk(): Int {
             return getInstanceOrThrow().sharedPreferences.all.size
         }
@@ -205,6 +239,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             val inst = getInstanceOrThrow()
             val editor = inst.encryptedPreferences.edit().putString(key, value)
             inst.applySecureEditor(editor)
+            inst.invalidateSecureKeysCache()
         }
 
         @JvmStatic
@@ -216,6 +251,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
                 editor.putString(keys[index], values[index])
             }
             inst.applySecureEditor(editor)
+            inst.invalidateSecureKeysCache()
         }
         
         @JvmStatic
@@ -236,6 +272,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             val inst = getInstanceOrThrow()
             inst.applySecureEditor(inst.encryptedPreferences.edit().remove(key))
             inst.applySecureEditor(inst.biometricPreferences.edit().remove(key))
+            inst.invalidateSecureKeysCache()
         }
 
         @JvmStatic
@@ -249,6 +286,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             }
             inst.applySecureEditor(secureEditor)
             inst.applySecureEditor(biometricEditor)
+            inst.invalidateSecureKeysCache()
         }
 
         @JvmStatic
@@ -260,15 +298,17 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         @JvmStatic
         fun getAllKeysSecure(): Array<String> {
             val inst = getInstanceOrThrow()
-            val keys = linkedSetOf<String>()
-            keys.addAll(inst.encryptedPreferences.all.keys)
-            keys.addAll(inst.biometricPreferences.all.keys)
-            return keys.toTypedArray()
+            return inst.getSecureKeysCached()
+        }
+
+        @JvmStatic
+        fun getKeysByPrefixSecure(prefix: String): Array<String> {
+            return getAllKeysSecure().filter { it.startsWith(prefix) }.toTypedArray()
         }
 
         @JvmStatic
         fun sizeSecure(): Int {
-            return getAllKeysSecure().size
+            return getInstanceOrThrow().getSecureKeysCached().size
         }
 
         @JvmStatic
@@ -276,15 +316,22 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             val inst = getInstanceOrThrow()
             inst.applySecureEditor(inst.encryptedPreferences.edit().clear())
             inst.applySecureEditor(inst.biometricPreferences.edit().clear())
+            inst.invalidateSecureKeysCache()
         }
 
         // --- Biometric (separate encrypted store, requires recent biometric auth on Android) ---
 
         @JvmStatic
         fun setSecureBiometric(key: String, value: String) {
+            setSecureBiometricWithLevel(key, value, 2)
+        }
+
+        @JvmStatic
+        fun setSecureBiometricWithLevel(key: String, value: String, @Suppress("UNUSED_PARAMETER") level: Int) {
             val inst = getInstanceOrThrow()
             val editor = inst.biometricPreferences.edit().putString(key, value)
             inst.applySecureEditor(editor)
+            inst.invalidateSecureKeysCache()
         }
 
         @JvmStatic
@@ -296,6 +343,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         fun deleteSecureBiometric(key: String) {
             val inst = getInstanceOrThrow()
             inst.applySecureEditor(inst.biometricPreferences.edit().remove(key))
+            inst.invalidateSecureKeysCache()
         }
 
         @JvmStatic
@@ -307,6 +355,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         fun clearSecureBiometric() {
             val inst = getInstanceOrThrow()
             inst.applySecureEditor(inst.biometricPreferences.edit().clear())
+            inst.invalidateSecureKeysCache()
         }
     }
 }
