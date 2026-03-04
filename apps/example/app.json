@@ -7,7 +7,6 @@
     "icon": "./assets/icon.png",
     "scheme": "nitrostorage",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.nitrostorage.example"
@@ -25,7 +24,8 @@
           }
         }
       ],
-      "react-native-nitro-storage"
+      "react-native-nitro-storage",
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true

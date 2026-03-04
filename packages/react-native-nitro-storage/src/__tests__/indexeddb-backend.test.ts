@@ -1,0 +1,253 @@
+/**
+ * Tests for the IndexedDB-backed WebSecureStorageBackend.
+ *
+ * Jest runs in jsdom (which does not have a real IndexedDB implementation),
+ * so we use the `fake-indexeddb` package (bundled with jest-environment-jsdom's
+ * default polyfills) — or fall back to a manual in-memory IDB mock below.
+ *
+ * The fake-indexeddb approach: we install a minimal indexedDB polyfill on
+ * globalThis before importing the module under test, then reset it between tests.
+ */
+
+import { createIndexedDBBackend } from "../indexeddb-backend";
+
+// ---------------------------------------------------------------------------
+// Minimal in-memory IndexedDB polyfill for the test environment.
+// We cannot use the real jsdom IDBFactory because it is not available in all
+// jest environments.  Instead we shim just enough of the IDB API to exercise
+// our implementation's behaviour.
+// ---------------------------------------------------------------------------
+
+type IDBEntry = {
+  key: IDBValidKey;
+  value: unknown;
+};
+
+function makeFakeIDB(): {
+  indexedDB: Pick<IDBFactory, "open">;
+  reset: () => void;
+} {
+  const databases = new Map<string, IDBEntry[]>();
+
+  function reset(): void {
+    databases.clear();
+  }
+
+  function makeObjectStore(
+    storeName: string,
+    entries: IDBEntry[],
+    mode: IDBTransactionMode,
+  ) {
+    return {
+      put(value: unknown, key: IDBValidKey) {
+        if (mode === "readwrite") {
+          const existing = entries.findIndex((e) => e.key === key);
+          if (existing >= 0) {
+            entries[existing]!.value = value;
+          } else {
+            entries.push({ key, value });
+          }
+        }
+        const req = { result: null, onsuccess: null, onerror: null };
+        return req;
+      },
+      delete(key: IDBValidKey) {
+        if (mode === "readwrite") {
+          const idx = entries.findIndex((e) => e.key === key);
+          if (idx >= 0) entries.splice(idx, 1);
+        }
+        const req = { result: null, onsuccess: null, onerror: null };
+        return req;
+      },
+      clear() {
+        if (mode === "readwrite") entries.length = 0;
+        const req = { result: null, onsuccess: null, onerror: null };
+        return req;
+      },
+      openCursor() {
+        let pos = 0;
+        const req: {
+          result: IDBCursorWithValue | null;
+          onsuccess: ((e: Event) => void) | null;
+          onerror: ((e: Event) => void) | null;
+        } = { result: null, onsuccess: null, onerror: null };
+
+        queueMicrotask(() => {
+          function advance() {
+            if (pos < entries.length) {
+              const entry = entries[pos++]!;
+              const cursor: IDBCursorWithValue = {
+                key: entry.key,
+                value: entry.value,
+                continue() {
+                  queueMicrotask(() => {
+                    advance();
+                  });
+                },
+              } as unknown as IDBCursorWithValue;
+              req.result = cursor;
+            } else {
+              req.result = null;
+            }
+            req.onsuccess?.({} as Event);
+          }
+          advance();
+        });
+
+        return req;
+      },
+    };
+  }
+
+  function makeTransaction(
+    entries: IDBEntry[],
+    storeName: string,
+    mode: IDBTransactionMode,
+  ) {
+    let onCompleteCallback: (() => void) | null = null;
+    let onErrorCallback: ((e: Event) => void) | null = null;
+    const tx = {
+      objectStore(_name: string) {
+        return makeObjectStore(storeName, entries, mode);
+      },
+      set oncomplete(cb: (() => void) | null) {
+        onCompleteCallback = cb;
+        // Fire async so callers can set onsuccess/onerror first
+        queueMicrotask(() => onCompleteCallback?.());
+      },
+      set onerror(cb: ((e: Event) => void) | null) {
+        onErrorCallback = cb;
+        void onErrorCallback; // suppress unused warning
+      },
+    };
+    return tx;
+  }
+
+  function open(dbName: string, _version: number) {
+    if (!databases.has(dbName)) {
+      databases.set(dbName, []);
+    }
+    const entries = databases.get(dbName)!;
+
+    const db = {
+      objectStoreNames: {
+        contains: (_name: string) => true,
+      },
+      createObjectStore(_name: string) {
+        return {};
+      },
+      transaction(storeName: string, mode: IDBTransactionMode = "readonly") {
+        return makeTransaction(entries, storeName, mode);
+      },
+    };
+
+    const req: {
+      result: typeof db | null;
+      error: DOMException | null;
+      onupgradeneeded: ((e: IDBVersionChangeEvent) => void) | null;
+      onsuccess: ((e: Event) => void) | null;
+      onerror: ((e: Event) => void) | null;
+    } = {
+      result: null,
+      error: null,
+      onupgradeneeded: null,
+      onsuccess: null,
+      onerror: null,
+    };
+
+    queueMicrotask(() => {
+      req.result = db;
+      req.onsuccess?.({} as Event);
+    });
+
+    return req;
+  }
+
+  return {
+    indexedDB: { open } as unknown as Pick<IDBFactory, "open">,
+    reset,
+  };
+}
+
+let fakeIDB: ReturnType<typeof makeFakeIDB>;
+
+beforeEach(() => {
+  fakeIDB = makeFakeIDB();
+  Object.defineProperty(globalThis, "indexedDB", {
+    value: fakeIDB.indexedDB,
+    writable: true,
+    configurable: true,
+  });
+});
+
+afterEach(() => {
+  fakeIDB.reset();
+  // @ts-expect-error — intentional cleanup
+  delete globalThis.indexedDB;
+});
+
+describe("createIndexedDBBackend", () => {
+  it("returns a backend that satisfies the WebSecureStorageBackend interface", async () => {
+    const backend = await createIndexedDBBackend();
+    expect(typeof backend.getItem).toBe("function");
+    expect(typeof backend.setItem).toBe("function");
+    expect(typeof backend.removeItem).toBe("function");
+    expect(typeof backend.clear).toBe("function");
+    expect(typeof backend.getAllKeys).toBe("function");
+  });
+
+  it("getItem returns null for a key that was never set", async () => {
+    const backend = await createIndexedDBBackend();
+    expect(backend.getItem("missing")).toBeNull();
+  });
+
+  it("setItem / getItem round-trips a value synchronously after init", async () => {
+    const backend = await createIndexedDBBackend();
+    backend.setItem("foo", "bar");
+    expect(backend.getItem("foo")).toBe("bar");
+  });
+
+  it("removeItem deletes a key from the in-memory cache", async () => {
+    const backend = await createIndexedDBBackend();
+    backend.setItem("to-remove", "v");
+    backend.removeItem("to-remove");
+    expect(backend.getItem("to-remove")).toBeNull();
+  });
+
+  it("clear removes all keys", async () => {
+    const backend = await createIndexedDBBackend();
+    backend.setItem("a", "1");
+    backend.setItem("b", "2");
+    backend.clear();
+    expect(backend.getAllKeys()).toEqual([]);
+    expect(backend.getItem("a")).toBeNull();
+  });
+
+  it("getAllKeys returns all stored keys", async () => {
+    const backend = await createIndexedDBBackend();
+    backend.setItem("k1", "v1");
+    backend.setItem("k2", "v2");
+    expect(backend.getAllKeys().sort()).toEqual(["k1", "k2"]);
+  });
+
+  it("hydrates the cache from pre-existing IndexedDB entries on init", async () => {
+    // Pre-seed the fake IDB by first creating a backend and writing data
+    const seeder = await createIndexedDBBackend("hydrate-test", "kv");
+    seeder.setItem("persisted", "value");
+
+    // Give the fire-and-forget write a chance to land (microtask drain)
+    await new Promise<void>((r) => queueMicrotask(r));
+
+    // Create a fresh backend on the same DB name — it should read "persisted"
+    const fresh = await createIndexedDBBackend("hydrate-test", "kv");
+    expect(fresh.getItem("persisted")).toBe("value");
+  });
+
+  it("rejects when IndexedDB is unavailable", async () => {
+    // @ts-expect-error — intentional: simulate missing IndexedDB
+    delete globalThis.indexedDB;
+    await expect(createIndexedDBBackend()).rejects.toThrow(
+      /IndexedDB is not available/,
+    );
+  });
+});

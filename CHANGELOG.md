@@ -4,6 +4,29 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
+## 0.4.1 - 2026-03-04
+
+### Added
+
+- Add `storage.import(data, scope)` to bulk-load a `Record<string, string>` of raw key/value pairs into any scope in one call. Memory imports are atomic (all keys visible simultaneously before any listener fires).
+- Add `createIndexedDBBackend(dbName?, storeName?)` factory (exported from `react-native-nitro-storage/indexeddb-backend`) that wraps IndexedDB with a write-through in-memory cache, enabling persistent web Secure storage for large payloads without blocking the UI thread.
+
+### Fixed
+
+- Fix TTL expiry notification: subscribers registered via `item.subscribe()` are now correctly notified when a value expires on `item.get()` — both on cache-hit expiry and on envelope-parse expiry. Previously the notification was only emitted by the native event bus, which is not triggered in write-through or coalesced paths.
+- Fix `setBatch` Memory atomicity: all values in a Memory-scope batch are now written to the store before any listener is notified, eliminating partial-batch observation windows. Items with `validate` or `expiration` config fall back to per-item sets to preserve those semantics.
+
+### Changed
+
+- Upgrade to **Nitro Modules 0.35.0** — regenerate nitrogen specs with the new `registerAllNatives()` JNI entry point, fixing the Kotlin `HybridObject` `jni::global_ref` memory leak (Nitro #1238).
+- Update `cpp-adapter.cpp` to use `registerAllNatives()` instead of the deprecated `initialize(vm)` shim.
+- Upgrade example app to **Expo SDK 55** (`expo ~55.0.4`, `expo-router ~55.0.3`, `expo-status-bar ~55.0.4`, `expo-system-ui ~55.0.9`, `expo-build-properties ~55.0.9`, `expo-asset ~55.0.8`, `babel-preset-expo ~55.0.10`).
+- Bump to **React 19.2.0** and **React Native 0.83.2** across workspace and example.
+- Update `react-native-screens` to `~4.23.0` and `react-native-safe-area-context` to `5.7.0` in the example app.
+- Remove `newArchEnabled` from example `app.json` — Expo SDK 55 dropped Legacy Architecture; new arch is always on.
+- Add iOS and Android example build CI jobs that run `expo prebuild` and verify native compilation under New Architecture.
+- Add `--provenance` flag to `npm publish` for npm supply-chain attestation.
+
 ## 0.4.0 - 2026-02-25
 
 ### Added

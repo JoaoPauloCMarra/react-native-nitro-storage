@@ -1,6 +1,6 @@
 {
   "name": "react-native-nitro-storage",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "The fastest, most complete storage solution for React Native. Synchronous Memory, Disk, and Secure storage in one unified API. Built with Nitro Modules.",
   "main": "lib/commonjs/index.js",
   "module": "lib/module/index.js",
@@ -15,6 +15,10 @@
       "react-native": "./src/index.ts",
       "browser": "./src/index.web.ts",
       "default": "./lib/commonjs/index.js"
+    },
+    "./indexeddb-backend": {
+      "types": "./lib/typescript/indexeddb-backend.d.ts",
+      "default": "./lib/commonjs/indexeddb-backend.js"
     },
     "./app.plugin": "./app.plugin.js",
     "./app.plugin.js": "./app.plugin.js",
@@ -91,11 +95,11 @@
     "registry": "https://registry.npmjs.org/"
   },
   "devDependencies": {
-    "@expo/config-plugins": "^54.0.4",
+    "@expo/config-plugins": "^55.0.3",
     "@react-native/babel-preset": "^0.83.2",
     "@testing-library/react-hooks": "^8.0.1",
     "@testing-library/react-native": "^13.3.3",
-    "@types/react": "~19.1.10",
+    "@types/react": "~19.2.0",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {

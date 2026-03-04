@@ -1687,3 +1687,195 @@ describe("v0.2 edge cases", () => {
     ).toThrow(/Validation failed/);
   });
 });
+
+describe("storage.import", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    storage.clearAll();
+  });
+
+  it("imports key-value pairs into Memory scope", () => {
+    storage.import({ greeting: "hello", count: "42" }, StorageScope.Memory);
+    expect(storage.has("greeting", StorageScope.Memory)).toBe(true);
+    expect(storage.has("count", StorageScope.Memory)).toBe(true);
+  });
+
+  it("emits change listeners for each imported key in Memory scope", () => {
+    const item = createStorageItem({
+      key: "imported-key",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    });
+    const listener = jest.fn();
+    item.subscribe(listener);
+
+    storage.import({ "imported-key": "imported-value" }, StorageScope.Memory);
+    expect(listener).toHaveBeenCalled();
+    item.subscribe(listener)(); // unsubscribe
+  });
+
+  it("imports key-value pairs into Disk scope via setBatch", () => {
+    storage.import({ "disk-a": "v1", "disk-b": "v2" }, StorageScope.Disk);
+    expect(mockHybridObject.setBatch).toHaveBeenCalledWith(
+      expect.arrayContaining(["disk-a", "disk-b"]),
+      expect.arrayContaining(["v1", "v2"]),
+      StorageScope.Disk,
+    );
+  });
+
+  it("flushes pending secure writes and sets access control before Secure import", () => {
+    storage.import({ token: "abc" }, StorageScope.Secure);
+    expect(mockHybridObject.setSecureAccessControl).toHaveBeenCalled();
+    expect(mockHybridObject.setBatch).toHaveBeenCalledWith(
+      ["token"],
+      ["abc"],
+      StorageScope.Secure,
+    );
+  });
+
+  it("is a no-op when given an empty object", () => {
+    storage.import({}, StorageScope.Memory);
+    storage.import({}, StorageScope.Disk);
+    expect(mockHybridObject.setBatch).not.toHaveBeenCalled();
+  });
+
+  it("throws on invalid scope", () => {
+    expect(() =>
+      storage.import({ key: "val" }, 99 as unknown as StorageScope),
+    ).toThrow(/Invalid storage scope/);
+  });
+});
+
+describe("TTL expiry subscriber notification", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("notifies item subscribers when a disk-scoped envelope expires on first read", () => {
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(5_000);
+    const item = createStorageItem<string>({
+      key: "ttl-notify-disk",
+      scope: StorageScope.Disk,
+      defaultValue: "fallback",
+      expiration: { ttlMs: 100 },
+    });
+
+    // Return an already-expired envelope from the mock native layer
+    mockHybridObject.get.mockReturnValueOnce(
+      JSON.stringify({
+        __nitroStorageEnvelope: true,
+        expiresAt: 4_999, // expired
+        payload: serializeWithPrimitiveFastPath("stale"),
+      }),
+    );
+
+    const listener = jest.fn();
+    item.subscribe(listener);
+
+    const value = item.get();
+    expect(value).toBe("fallback");
+    expect(listener).toHaveBeenCalled();
+
+    item.subscribe(listener)(); // unsubscribe
+    nowSpy.mockRestore();
+  });
+
+  it("notifies item subscribers when a cached disk-scoped value expires on subsequent read", () => {
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(10_000);
+
+    // Provide a valid envelope first so the item caches the expiresAt
+    const envelope = JSON.stringify({
+      __nitroStorageEnvelope: true,
+      expiresAt: 10_500,
+      payload: serializeWithPrimitiveFastPath("fresh"),
+    });
+    mockHybridObject.get.mockReturnValue(envelope);
+
+    const item = createStorageItem<string>({
+      key: "ttl-notify-cache",
+      scope: StorageScope.Disk,
+      defaultValue: "fallback",
+      expiration: { ttlMs: 500 },
+    });
+
+    const listener = jest.fn();
+    item.subscribe(listener);
+
+    // First read caches the envelope parse
+    expect(item.get()).toBe("fresh");
+
+    // Same raw value returned but time has advanced past expiry
+    nowSpy.mockReturnValue(10_600);
+    const valueAfterExpiry = item.get();
+
+    expect(valueAfterExpiry).toBe("fallback");
+    expect(listener).toHaveBeenCalled();
+
+    item.subscribe(listener)(); // unsubscribe
+    nowSpy.mockRestore();
+  });
+});
+
+describe("setBatch Memory atomicity", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    storage.clear(StorageScope.Memory);
+  });
+
+  it("writes all items before firing any listener (no validation/expiry items)", () => {
+    const itemA = createStorageItem({
+      key: "atom-a",
+      scope: StorageScope.Memory,
+      defaultValue: 0,
+    });
+    const itemB = createStorageItem({
+      key: "atom-b",
+      scope: StorageScope.Memory,
+      defaultValue: 0,
+    });
+
+    const seenDuringNotification: Array<{ a: number; b: number }> = [];
+
+    itemA.subscribe(() => {
+      seenDuringNotification.push({ a: itemA.get(), b: itemB.get() });
+    });
+
+    setBatch(
+      [
+        { item: itemA, value: 1 },
+        { item: itemB, value: 2 },
+      ],
+      StorageScope.Memory,
+    );
+
+    // Both values should already be present when the listener fires
+    expect(seenDuringNotification[0]).toEqual({ a: 1, b: 2 });
+    expect(itemA.get()).toBe(1);
+    expect(itemB.get()).toBe(2);
+  });
+
+  it("falls back to individual sets when any item has validation", () => {
+    const validated = createStorageItem({
+      key: "atom-validated",
+      scope: StorageScope.Memory,
+      defaultValue: 0,
+      validate: (v): v is number => typeof v === "number" && v > 0,
+    });
+    const plain = createStorageItem({
+      key: "atom-plain",
+      scope: StorageScope.Memory,
+      defaultValue: 0,
+    });
+
+    setBatch(
+      [
+        { item: validated, value: 5 },
+        { item: plain, value: 10 },
+      ],
+      StorageScope.Memory,
+    );
+
+    expect(validated.get()).toBe(5);
+    expect(plain.get()).toBe(10);
+  });
+});

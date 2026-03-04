@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import {
   Platform,
   StyleSheet,
@@ -5,9 +6,23 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import { Tabs } from "expo-router";
+import { useFonts } from "expo-font";
+import { SplashScreen, Tabs } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import {
+  Inter_400Regular,
+  Inter_500Medium,
+  Inter_600SemiBold,
+  Inter_700Bold,
+  Inter_800ExtraBold,
+} from "@expo-google-fonts/inter";
+import {
+  JetBrainsMono_400Regular,
+  JetBrainsMono_700Bold,
+} from "@expo-google-fonts/jetbrains-mono";
 import { Colors } from "../components/shared";
+
+void SplashScreen.preventAutoHideAsync();
 
 function TabGlyph({
   label,
@@ -47,6 +62,26 @@ export default function RootLayout() {
   const { width } = useWindowDimensions();
   const isWeb = Platform.OS === "web";
   const compact = width < 860;
+
+  const [fontsLoaded, fontError] = useFonts({
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
+    Inter_800ExtraBold,
+    JetBrainsMono_400Regular,
+    JetBrainsMono_700Bold,
+  });
+
+  useEffect(() => {
+    if (fontsLoaded || fontError) {
+      void SplashScreen.hideAsync();
+    }
+  }, [fontsLoaded, fontError]);
+
+  if (!fontsLoaded && !fontError) {
+    return null;
+  }
 
   return (
     <View style={s.container}>
@@ -144,7 +179,7 @@ const s = StyleSheet.create({
   },
   tabLabel: {
     fontSize: 10,
-    fontWeight: "700",
+    fontFamily: "Inter_700Bold",
     marginTop: 2,
     letterSpacing: 0.4,
   },
@@ -160,7 +195,7 @@ const s = StyleSheet.create({
   tabGlyphText: {
     fontSize: 10,
     lineHeight: 12,
-    fontWeight: "800",
+    fontFamily: "Inter_800ExtraBold",
     letterSpacing: 0.5,
   },
 });

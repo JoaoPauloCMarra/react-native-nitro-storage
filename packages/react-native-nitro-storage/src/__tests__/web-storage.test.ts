@@ -1920,3 +1920,83 @@ describe("Web Storage", () => {
     expect(item.get()).toBe("before");
   });
 });
+
+describe("storage.import (web)", () => {
+  beforeEach(() => {
+    storage.clearAll();
+  });
+
+  it("imports key-value pairs into Memory scope", () => {
+    storage.import({ x: "1", y: "2" }, StorageScope.Memory);
+    expect(storage.has("x", StorageScope.Memory)).toBe(true);
+    expect(storage.has("y", StorageScope.Memory)).toBe(true);
+  });
+
+  it("emits change listeners for each imported key in Memory scope", () => {
+    const item = createStorageItem({
+      key: "web-imported",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    });
+    const listener = jest.fn();
+    const unsub = item.subscribe(listener);
+
+    storage.import({ "web-imported": "value" }, StorageScope.Memory);
+    expect(listener).toHaveBeenCalled();
+    unsub();
+  });
+
+  it("imports key-value pairs into Disk scope", () => {
+    storage.import({ "d-key": "d-val" }, StorageScope.Disk);
+    expect(globalThis.localStorage.getItem("d-key")).toBe("d-val");
+  });
+
+  it("is a no-op for an empty object", () => {
+    const before = storage.size(StorageScope.Memory);
+    storage.import({}, StorageScope.Memory);
+    expect(storage.size(StorageScope.Memory)).toBe(before);
+  });
+
+  it("throws on invalid scope", () => {
+    expect(() =>
+      storage.import({ k: "v" }, 99 as unknown as StorageScope),
+    ).toThrow(/Invalid storage scope/);
+  });
+});
+
+describe("TTL expiry subscriber notification (web)", () => {
+  beforeEach(() => {
+    storage.clearAll();
+  });
+
+  it("notifies subscribers when a disk-scoped envelope expires on first read", () => {
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(20_000);
+
+    const item = createStorageItem<string>({
+      key: "web-ttl-notify",
+      scope: StorageScope.Disk,
+      defaultValue: "fallback",
+      expiration: { ttlMs: 500 },
+    });
+
+    // Pre-seed an already-expired envelope directly into localStorage
+    globalThis.localStorage.setItem(
+      "web-ttl-notify",
+      JSON.stringify({
+        __nitroStorageEnvelope: true,
+        expiresAt: 19_000,
+        payload: serializeWithPrimitiveFastPath("stale"),
+      }),
+    );
+
+    const listener = jest.fn();
+    const unsub = item.subscribe(listener);
+
+    const value = item.get();
+    expect(value).toBe("fallback");
+    expect(listener).toHaveBeenCalled();
+
+    unsub();
+    nowSpy.mockRestore();
+  });
+});

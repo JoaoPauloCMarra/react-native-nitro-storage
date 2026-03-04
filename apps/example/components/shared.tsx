@@ -16,23 +16,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 const { width } = Dimensions.get("window");
 const isWeb = Platform.OS === "web";
 
-const fontSans = Platform.select({
-  ios: "Avenir Next",
-  android: "sans-serif",
-  default: "system",
-});
-
-const fontDisplay = Platform.select({
-  ios: "Avenir Next Condensed",
-  android: "sans-serif-medium",
-  default: "system",
-});
-
-const fontMono = Platform.select({
-  ios: "Menlo",
-  android: "monospace",
-  default: "monospace",
-});
+const fontSans400 = "Inter_400Regular";
+const fontSans500 = "Inter_500Medium";
+const fontSans600 = "Inter_600SemiBold";
+const fontSans700 = "Inter_700Bold";
+const fontSans800 = "Inter_800ExtraBold";
+const fontMono400 = "JetBrainsMono_400Regular";
+const fontMono700 = "JetBrainsMono_700Bold";
 
 export const Colors = {
   background: "#eef3f9",
@@ -388,17 +378,15 @@ export const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 34,
     lineHeight: 38,
-    fontWeight: "800",
-    fontFamily: fontDisplay,
+    fontFamily: fontSans800,
     color: Colors.text,
     letterSpacing: -0.6,
   },
   headerSubtitle: {
     fontSize: 14,
     lineHeight: 20,
-    fontFamily: fontSans,
+    fontFamily: fontSans500,
     color: Colors.muted,
-    fontWeight: "500",
   },
   card: {
     backgroundColor: Colors.surface,
@@ -432,16 +420,14 @@ export const styles = StyleSheet.create({
   },
   cardTitle: {
     fontSize: 17,
-    fontWeight: "800",
-    fontFamily: fontSans,
+    fontFamily: fontSans800,
     color: Colors.text,
     letterSpacing: -0.2,
   },
   cardSubtitle: {
     fontSize: 11,
     color: Colors.muted,
-    fontWeight: "700",
-    fontFamily: fontSans,
+    fontFamily: fontSans700,
     textTransform: "uppercase",
     letterSpacing: 0.8,
   },
@@ -482,8 +468,7 @@ export const styles = StyleSheet.create({
   },
   buttonText: {
     fontSize: 14,
-    fontWeight: "700",
-    fontFamily: fontSans,
+    fontFamily: fontSans700,
     letterSpacing: 0.2,
   },
   buttonTextSm: {
@@ -497,8 +482,7 @@ export const styles = StyleSheet.create({
   },
   label: {
     fontSize: 11,
-    fontWeight: "700",
-    fontFamily: fontSans,
+    fontFamily: fontSans700,
     color: Colors.muted,
     textTransform: "uppercase",
     letterSpacing: 0.9,
@@ -513,7 +497,7 @@ export const styles = StyleSheet.create({
     paddingVertical: 10,
     color: Colors.text,
     fontSize: 14,
-    fontFamily: fontSans,
+    fontFamily: fontSans400,
   },
   badge: {
     alignSelf: "flex-start",
@@ -524,10 +508,9 @@ export const styles = StyleSheet.create({
   },
   badgeText: {
     fontSize: 10,
-    fontWeight: "800",
+    fontFamily: fontSans800,
     textTransform: "uppercase",
     letterSpacing: 0.6,
-    fontFamily: fontSans,
   },
   chip: {
     flexDirection: "row",
@@ -549,10 +532,9 @@ export const styles = StyleSheet.create({
   },
   chipText: {
     fontSize: 11,
-    fontWeight: "700",
+    fontFamily: fontSans700,
     textTransform: "uppercase",
     letterSpacing: 0.4,
-    fontFamily: fontSans,
   },
   statusRow: {
     flexDirection: "row",
@@ -568,17 +550,15 @@ export const styles = StyleSheet.create({
   },
   statusLabel: {
     fontSize: 12,
-    fontWeight: "600",
-    fontFamily: fontSans,
+    fontFamily: fontSans600,
     color: Colors.muted,
   },
   statusValue: {
     flexShrink: 1,
     textAlign: "right",
     fontSize: 13,
-    fontWeight: "700",
     color: Colors.text,
-    fontFamily: fontMono,
+    fontFamily: fontMono700,
   },
   codeBlock: {
     backgroundColor: "#0f172a",
@@ -588,13 +568,13 @@ export const styles = StyleSheet.create({
     padding: 14,
   },
   codeBlockText: {
-    fontFamily: fontMono,
+    fontFamily: fontMono400,
     fontSize: 12,
     lineHeight: 18,
     color: "#cbd5e1",
   },
   codeText: {
-    fontFamily: fontMono,
+    fontFamily: fontMono400,
     fontSize: 12,
     lineHeight: 18,
     color: Colors.text,
@@ -604,8 +584,7 @@ export const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 12,
-    fontWeight: "800",
-    fontFamily: fontSans,
+    fontFamily: fontSans800,
     color: Colors.muted,
     textTransform: "uppercase",
     letterSpacing: 1,
@@ -635,23 +614,21 @@ export const styles = StyleSheet.create({
   },
   panelTitle: {
     color: Colors.muted,
-    fontFamily: fontSans,
-    fontWeight: "700",
+    fontFamily: fontSans700,
     fontSize: 11,
     textTransform: "uppercase",
     letterSpacing: 0.8,
   },
   panelValue: {
     color: Colors.text,
-    fontFamily: fontDisplay,
-    fontWeight: "800",
+    fontFamily: fontSans800,
     fontSize: 42,
     lineHeight: 44,
     textAlign: "center",
   },
   helperText: {
     color: Colors.muted,
-    fontFamily: fontSans,
+    fontFamily: fontSans400,
     fontSize: 12,
     lineHeight: 18,
   },
