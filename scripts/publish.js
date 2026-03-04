@@ -167,7 +167,7 @@ async function main() {
     log(`Run without --dry-run to publish version ${version}`, "cyan");
   } else {
     log("🚀 Publishing to npm...", "cyan");
-    const publishCommand = `npm publish --tag ${tag} --access public`;
+    const publishCommand = `npm publish --tag ${tag} --access public --provenance`;
     if (!execCommand(publishCommand, { cwd: packageDir })) {
       log("✗ Publish failed", "red");
       process.exit(1);

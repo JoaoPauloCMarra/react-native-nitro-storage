@@ -20,25 +20,30 @@
 namespace margelo::nitro::NitroStorage {
 
 int initialize(JavaVM* vm) {
+  return facebook::jni::initialize(vm, []() {
+    ::margelo::nitro::NitroStorage::registerAllNatives();
+  });
+}
+
+
+
+void registerAllNatives() {
   using namespace margelo::nitro;
   using namespace margelo::nitro::NitroStorage;
-  using namespace facebook;
 
-  return facebook::jni::initialize(vm, [] {
-    // Register native JNI methods
-    
+  // Register native JNI methods
+  
 
-    // Register Nitro Hybrid Objects
-    HybridObjectRegistry::registerHybridObjectConstructor(
-      "Storage",
-      []() -> std::shared_ptr<HybridObject> {
-        static_assert(std::is_default_constructible_v<HybridStorage>,
-                      "The HybridObject \"HybridStorage\" is not default-constructible! "
-                      "Create a public constructor that takes zero arguments to be able to autolink this HybridObject.");
-        return std::make_shared<HybridStorage>();
-      }
-    );
-  });
+  // Register Nitro Hybrid Objects
+  HybridObjectRegistry::registerHybridObjectConstructor(
+    "Storage",
+    []() -> std::shared_ptr<HybridObject> {
+      static_assert(std::is_default_constructible_v<HybridStorage>,
+                    "The HybridObject \"HybridStorage\" is not default-constructible! "
+                    "Create a public constructor that takes zero arguments to be able to autolink this HybridObject.");
+      return std::make_shared<HybridStorage>();
+    }
+  );
 }
 
 } // namespace margelo::nitro::NitroStorage

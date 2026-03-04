@@ -1005,6 +1005,29 @@ export const storage = {
   resetMetrics: () => {
     metricsCounters.clear();
   },
+  import: (data: Record<string, string>, scope: StorageScope): void => {
+    measureOperation(
+      "storage:import",
+      scope,
+      () => {
+        assertValidScope(scope);
+        const keys = Object.keys(data);
+        if (keys.length === 0) return;
+        const values = keys.map((k) => data[k]!);
+
+        if (scope === StorageScope.Memory) {
+          keys.forEach((key, index) => {
+            memoryStore.set(key, values[index]);
+          });
+          keys.forEach((key) => notifyKeyListeners(memoryListeners, key));
+          return;
+        }
+
+        WebStorage.setBatch(keys, values, scope);
+      },
+      Object.keys(data).length,
+    );
+  },
 };
 
 export function setWebSecureStorageBackend(
@@ -1058,6 +1081,7 @@ export interface StorageItem<T> {
 
 type StorageItemInternal<T> = StorageItem<T> & {
   _triggerListeners: () => void;
+  _invalidateParsedCacheOnly: () => void;
   _hasValidation: boolean;
   _hasExpiration: boolean;
   _readCacheEnabled: boolean;
@@ -1326,6 +1350,7 @@ export function createStorageItem<T = undefined>(
         onExpired?.(storageKey);
         lastValue = ensureValidatedValue(defaultValue, false);
         hasLastValue = true;
+        listeners.forEach((cb) => cb());
         return lastValue;
       }
     }
@@ -1367,6 +1392,7 @@ export function createStorageItem<T = undefined>(
             onExpired?.(storageKey);
             lastValue = ensureValidatedValue(defaultValue, false);
             hasLastValue = true;
+            listeners.forEach((cb) => cb());
             return lastValue;
           }
 
@@ -1480,6 +1506,9 @@ export function createStorageItem<T = undefined>(
       invalidateParsedCache();
       listeners.forEach((listener) => listener());
     },
+    _invalidateParsedCacheOnly: () => {
+      invalidateParsedCache();
+    },
     _hasValidation: validate !== undefined,
     _hasExpiration: expiration !== undefined,
     _readCacheEnabled: readCache,
@@ -1496,6 +1525,7 @@ export function createStorageItem<T = undefined>(
 }
 
 export { useStorage, useStorageSelector, useSetStorage } from "./storage-hooks";
+export { createIndexedDBBackend } from "./indexeddb-backend";
 
 type BatchReadItem<T> = Pick<
   StorageItem<T>,
@@ -1600,7 +1630,25 @@ export function setBatch<T>(
       );
 
       if (scope === StorageScope.Memory) {
-        items.forEach(({ item, value }) => item.set(value));
+        // Determine if any item needs per-item handling (validation or TTL)
+        const needsIndividualSets = items.some(({ item }) => {
+          const internal = asInternal(item as StorageItem<unknown>);
+          return internal._hasValidation || internal._hasExpiration;
+        });
+
+        if (needsIndividualSets) {
+          items.forEach(({ item, value }) => item.set(value));
+          return;
+        }
+
+        // Atomic write: update all values in memoryStore, invalidate caches, then batch-notify
+        items.forEach(({ item, value }) => {
+          memoryStore.set(item.key, value);
+          asInternal(item as StorageItem<unknown>)._invalidateParsedCacheOnly();
+        });
+        items.forEach(({ item }) =>
+          notifyKeyListeners(memoryListeners, item.key),
+        );
         return;
       }
 

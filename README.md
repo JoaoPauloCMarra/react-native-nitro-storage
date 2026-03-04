@@ -18,6 +18,8 @@ Synchronous Memory, Disk, and Secure storage in one unified API — powered by [
 - **Versioned writes** — optimistic concurrency with `item.getWithVersion()` and `item.setIfVersion(...)`
 - **Performance metrics** — observe operation timings and aggregate snapshots
 - **Web secure backend override** — plug custom secure storage backend on web
+- **IndexedDB backend** — drop-in `createIndexedDBBackend` factory for persistent web Secure storage with large payloads
+- **Bulk import** — load a raw `Record<string, string>` into any scope atomically with `storage.import`
 - **Transactions** — grouped writes with automatic rollback on error
 - **Migrations** — versioned data migrations with `registerMigration` / `migrateToLatest`
 - **MMKV migration** — drop-in `migrateFromMMKV` for painless migration from MMKV
@@ -39,6 +41,8 @@ Every feature in this package is documented with at least one runnable example i
 - Versioned item API (`getWithVersion`, `setIfVersion`) — see Optimistic Versioned Writes
 - Metrics API (`setMetricsObserver`, `getMetricsSnapshot`, `resetMetrics`) — see Storage Metrics Instrumentation
 - Web secure backend override (`setWebSecureStorageBackend`, `getWebSecureStorageBackend`) — see Custom Web Secure Backend
+- IndexedDB backend factory (`createIndexedDBBackend`) — see IndexedDB Backend for Web
+- Bulk import (`storage.import`) — see Bulk Data Import
 - Batch APIs (`getBatch`, `setBatch`, `removeBatch`) — see Batch Operations and Bulk Bootstrap with Batch APIs
 - Transactions — see Transactions and Atomic Balance Transfer
 - Migrations (`registerMigration`, `migrateToLatest`) — see Migrations
@@ -276,6 +280,7 @@ import { storage, StorageScope } from "react-native-nitro-storage";
 | `storage.setSecureWritesAsync(enabled)`  | Toggle async secure writes on Android (`false` by default)                   |
 | `storage.flushSecureWrites()`            | Force flush of queued secure writes when coalescing is enabled               |
 | `storage.setKeychainAccessGroup(group)`  | Set keychain access group for app sharing (native only)                      |
+| `storage.import(data, scope)`            | Bulk-load a `Record<string, string>` of raw key/value pairs into a scope     |
 | `storage.setMetricsObserver(observer?)`  | Subscribe to per-operation timing events                                     |
 | `storage.getMetricsSnapshot()`           | Get aggregate counters/latency stats keyed by operation                      |
 | `storage.resetMetrics()`                 | Reset in-memory metrics counters                                             |
@@ -345,6 +350,33 @@ setWebSecureStorageBackend({
 
 const backend = getWebSecureStorageBackend();
 console.log("custom backend active:", backend !== undefined);
+```
+
+---
+
+### IndexedDB Backend for Web
+
+The default web Secure backend uses `localStorage`, which is synchronous and size-limited. For large payloads or when you need true persistence across tab reloads, use the built-in IndexedDB-backed factory.
+
+```ts
+import { setWebSecureStorageBackend } from "react-native-nitro-storage";
+import { createIndexedDBBackend } from "react-native-nitro-storage/indexeddb-backend";
+
+// call once at app startup, before rendering any components that read secure items
+const backend = await createIndexedDBBackend();
+setWebSecureStorageBackend(backend);
+```
+
+**How it works:**
+
+- **Async init**: `createIndexedDBBackend()` opens (or creates) the IndexedDB database and hydrates an in-memory cache from all stored entries before resolving.
+- **Synchronous reads**: all `getItem` calls are served from the in-memory cache — no async overhead after init.
+- **Fire-and-forget writes**: `setItem`, `removeItem`, and `clear` update the cache synchronously, then persist to IndexedDB in the background. The cache is always the authoritative source.
+- **Custom database/store**: optionally pass `dbName` and `storeName` to isolate databases per environment or tenant.
+
+```ts
+const backend = await createIndexedDBBackend("my-app-db", "secure-kv");
+setWebSecureStorageBackend(backend);
 ```
 
 ---
@@ -754,6 +786,25 @@ sessionToken.set("token-v2");
 // force pending secure writes to native persistence
 storage.flushSecureWrites();
 ```
+
+### Bulk Data Import
+
+Load server-fetched data into storage in one atomic call. All keys become visible simultaneously before any listener fires.
+
+```ts
+import { storage, StorageScope } from "react-native-nitro-storage";
+
+// seed local cache from a server response
+const serverData = await fetchInitialData(); // Record<string, string>
+storage.import(serverData, StorageScope.Disk);
+
+// all imported keys are immediately readable
+const value = storage.has("remote-config", StorageScope.Disk);
+```
+
+> `storage.import` writes raw string values directly — serialization is bypassed. Use it for bootstrapping data that was already serialized by the server or exported via `storage.getAll`.
+
+---
 
 ### Storage Snapshots and Cleanup
 
