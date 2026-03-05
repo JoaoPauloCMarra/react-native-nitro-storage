@@ -34,16 +34,14 @@ std::vector<std::optional<std::string>> fromNullableJavaStringArray(alias_ref<Ja
 }
 
 std::vector<std::string> fromJavaStringArray(alias_ref<JavaStringArray> values) {
+    if (!values) return {};
+    const jsize size = values->size();
     std::vector<std::string> result;
-    if (!values) return result;
-
-    const jsize size = static_cast<jsize>(values->size());
     result.reserve(size);
     for (jsize i = 0; i < size; ++i) {
         auto currentValue = values->getElement(i);
-        if (currentValue) {
-            result.push_back(currentValue->toStdString());
-        }
+        // Preserve null as empty string to maintain index alignment with caller
+        result.push_back(currentValue ? currentValue->toStdString() : std::string());
     }
     return result;
 }

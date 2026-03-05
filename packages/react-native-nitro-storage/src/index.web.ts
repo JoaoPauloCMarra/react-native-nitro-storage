@@ -163,10 +163,12 @@ const webScopeKeyIndex = new Map<NonMemoryScope, Set<string>>([
 const hydratedWebScopeKeyIndex = new Set<NonMemoryScope>();
 const pendingSecureWrites = new Map<string, PendingSecureWrite>();
 let secureFlushScheduled = false;
+let secureDefaultAccessControl: AccessControl = AccessControl.WhenUnlocked;
 const SECURE_WEB_PREFIX = "__secure_";
 const BIOMETRIC_WEB_PREFIX = "__bio_";
 let hasWarnedAboutWebBiometricFallback = false;
 let hasWebStorageEventSubscription = false;
+let webStorageSubscriberCount = 0;
 let metricsObserver: StorageMetricsObserver | undefined;
 const metricsCounters = new Map<
   string,
@@ -370,17 +372,27 @@ function handleWebStorageEvent(event: StorageEvent): void {
 }
 
 function ensureWebStorageEventSubscription(): void {
-  if (hasWebStorageEventSubscription) {
-    return;
-  }
+  webStorageSubscriberCount += 1;
   if (
-    typeof window === "undefined" ||
-    typeof window.addEventListener !== "function"
+    webStorageSubscriberCount === 1 &&
+    typeof window !== "undefined" &&
+    typeof window.addEventListener === "function"
   ) {
-    return;
+    window.addEventListener("storage", handleWebStorageEvent);
+    hasWebStorageEventSubscription = true;
   }
-  window.addEventListener("storage", handleWebStorageEvent);
-  hasWebStorageEventSubscription = true;
+}
+
+function maybeCleanupWebStorageSubscription(): void {
+  webStorageSubscriberCount = Math.max(0, webStorageSubscriberCount - 1);
+  if (
+    webStorageSubscriberCount === 0 &&
+    hasWebStorageEventSubscription &&
+    typeof window !== "undefined"
+  ) {
+    window.removeEventListener("storage", handleWebStorageEvent);
+    hasWebStorageEventSubscription = false;
+  }
 }
 
 function getScopedListeners(scope: NonMemoryScope): KeyListenerRegistry {
@@ -482,7 +494,7 @@ function flushSecureWrites(): void {
     if (value === undefined) {
       keysToRemove.push(key);
     } else {
-      const resolvedAccessControl = accessControl ?? AccessControl.WhenUnlocked;
+      const resolvedAccessControl = accessControl ?? secureDefaultAccessControl;
       const existingGroup = groupedSetWrites.get(resolvedAccessControl);
       const group = existingGroup ?? { keys: [], values: [] };
       group.keys.push(key);
@@ -882,7 +894,12 @@ export const storage = {
       if (scope === StorageScope.Secure) {
         flushSecureWrites();
       }
-      clearScopeRawCache(scope);
+      const scopeCache = getScopeRawCache(scope);
+      for (const key of scopeCache.keys()) {
+        if (isNamespaced(key, namespace)) {
+          scopeCache.delete(key);
+        }
+      }
       WebStorage.removeByPrefix(keyPrefix, scope);
     });
   },
@@ -958,9 +975,13 @@ export const storage = {
         return result;
       }
       const keys = WebStorage.getAllKeys(scope);
-      keys.forEach((key) => {
-        const val = WebStorage.get(key, scope);
-        if (val !== undefined) result[key] = val;
+      if (keys.length === 0) return {};
+      const values = WebStorage.getBatch(keys, scope);
+      keys.forEach((key, index) => {
+        const val = values[index];
+        if (val !== undefined && val !== null) {
+          result[key] = val;
+        }
       });
       return result;
     });
@@ -972,7 +993,8 @@ export const storage = {
       return WebStorage.size(scope);
     });
   },
-  setAccessControl: (_level: AccessControl) => {
+  setAccessControl: (level: AccessControl) => {
+    secureDefaultAccessControl = level;
     recordMetric("storage:setAccessControl", StorageScope.Secure, 0);
   },
   setSecureWritesAsync: (_enabled: boolean) => {
@@ -1021,6 +1043,11 @@ export const storage = {
           });
           keys.forEach((key) => notifyKeyListeners(memoryListeners, key));
           return;
+        }
+
+        if (scope === StorageScope.Secure) {
+          flushSecureWrites();
+          WebStorage.setSecureAccessControl(secureDefaultAccessControl);
         }
 
         WebStorage.setBatch(keys, values, scope);
@@ -1488,6 +1515,9 @@ export function createStorageItem<T = undefined>(
       if (listeners.size === 0 && unsubscribe) {
         unsubscribe();
         unsubscribe = null;
+        if (!isMemory) {
+          maybeCleanupWebStorageSubscription();
+        }
       }
     };
   };
@@ -1773,9 +1803,12 @@ export function migrateToLatest(
         return;
       }
       migration(context);
-      writeMigrationVersion(scope, version);
       appliedVersion = version;
     });
+
+    if (appliedVersion !== currentVersion) {
+      writeMigrationVersion(scope, appliedVersion);
+    }
 
     return appliedVersion;
   });

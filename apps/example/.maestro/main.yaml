@@ -2,12 +2,4 @@ appId: com.nitrostorage.example
 name: "Nitro Storage - Full Suite"
 ---
 - runFlow:
-    file: /Users/jota/Workspace/Projects/RN-Packages/react-native-nitro-storage/apps/example/.maestro/storage_e2e.yaml
-- runFlow:
-    file: /Users/jota/Workspace/Projects/RN-Packages/react-native-nitro-storage/apps/example/.maestro/features_e2e.yaml
-- runFlow:
-    file: /Users/jota/Workspace/Projects/RN-Packages/react-native-nitro-storage/apps/example/.maestro/tools_e2e.yaml
-- runFlow:
-    file: /Users/jota/Workspace/Projects/RN-Packages/react-native-nitro-storage/apps/example/.maestro/benchmark_e2e.yaml
-- runFlow:
-    file: /Users/jota/Workspace/Projects/RN-Packages/react-native-nitro-storage/apps/example/.maestro/app_storage_e2e.yaml
+    file: apps/example/.maestro/e2e.yaml

@@ -86,7 +86,7 @@ describe("internal helpers", () => {
       "__nitro_storage_primitive__:l",
     );
     expect(serializeWithPrimitiveFastPath(Number.POSITIVE_INFINITY)).toBe(
-      "null",
+      "__nitro_storage_primitive__:n:Infinity",
     );
     expect(serializeWithPrimitiveFastPath({ nested: "ok" })).toBe(
       '{"nested":"ok"}',

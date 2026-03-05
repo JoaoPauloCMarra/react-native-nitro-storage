@@ -1420,9 +1420,12 @@ export function migrateToLatest(
         return;
       }
       migration(context);
-      writeMigrationVersion(scope, version);
       appliedVersion = version;
     });
+
+    if (appliedVersion !== currentVersion) {
+      writeMigrationVersion(scope, appliedVersion);
+    }
 
     return appliedVersion;
   });
@@ -1528,6 +1531,19 @@ export type SecureAuthStorageConfig<K extends string = string> = Record<
     accessControl?: AccessControl;
   }
 >;
+
+export function isKeychainLockedError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message;
+  return (
+    msg.includes("errSecInteractionNotAllowed") ||
+    msg.includes("UserNotAuthenticatedException") ||
+    msg.includes("KeyStoreException") ||
+    msg.includes("KeyPermanentlyInvalidatedException") ||
+    msg.includes("InvalidKeyException") ||
+    msg.includes("android.security.keystore")
+  );
+}
 
 export function createSecureAuthStorage<K extends string>(
   config: SecureAuthStorageConfig<K>,

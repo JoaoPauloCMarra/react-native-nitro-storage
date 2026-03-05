@@ -90,6 +90,8 @@ private:
     void onScopeClear(int scope);
     void ensureAdapter() const;
     Scope toScope(double scopeValue);
+
+    static constexpr const char* kClearSentinelKey = "";
 };
 
 } // namespace margelo::nitro::NitroStorage

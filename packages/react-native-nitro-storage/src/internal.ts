@@ -90,6 +90,15 @@ export function serializeWithPrimitiveFastPath<T>(value: T): string {
       if (Number.isFinite(value)) {
         return `${PRIMITIVE_FAST_PATH_PREFIX}n:${value}`;
       }
+      if (Number.isNaN(value as number)) {
+        return `${PRIMITIVE_FAST_PATH_PREFIX}n:NaN`;
+      }
+      if (value === Infinity) {
+        return `${PRIMITIVE_FAST_PATH_PREFIX}n:Infinity`;
+      }
+      if (value === -Infinity) {
+        return `${PRIMITIVE_FAST_PATH_PREFIX}n:-Infinity`;
+      }
       break;
     case "boolean":
       return `${PRIMITIVE_FAST_PATH_PREFIX}b:${value ? "1" : "0"}`;
@@ -129,6 +138,9 @@ export function deserializeWithPrimitiveFastPath<T>(value: string): T {
         return (payload === "1") as T;
       }
       if (tag === "n") {
+        if (payload === "NaN") return NaN as T;
+        if (payload === "Infinity") return Infinity as T;
+        if (payload === "-Infinity") return -Infinity as T;
         const parsed = Number(payload);
         if (Number.isFinite(parsed)) {
           return parsed as T;

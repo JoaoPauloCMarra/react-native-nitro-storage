@@ -1879,3 +1879,66 @@ describe("setBatch Memory atomicity", () => {
     expect(plain.get()).toBe(10);
   });
 });
+
+describe("storage raw APIs", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    storage.clearAll();
+  });
+
+  it("getString returns undefined for a missing Disk key", () => {
+    mockHybridObject.get.mockReturnValueOnce(undefined);
+    expect(storage.getString("missing-key", StorageScope.Disk)).toBeUndefined();
+  });
+
+  it("getString returns the raw string for a Disk key", () => {
+    mockHybridObject.get.mockReturnValueOnce("raw-val");
+    expect(storage.getString("raw-key", StorageScope.Disk)).toBe("raw-val");
+  });
+
+  it("setString calls native set with the exact string value and correct scope for Disk", () => {
+    storage.setString("disk-key", "disk-value", StorageScope.Disk);
+    expect(mockHybridObject.set).toHaveBeenCalledWith(
+      "disk-key",
+      "disk-value",
+      StorageScope.Disk,
+    );
+  });
+
+  it("setString calls native set with the exact string value and correct scope for Secure", () => {
+    storage.setString("secure-key", "secure-value", StorageScope.Secure);
+    expect(mockHybridObject.set).toHaveBeenCalledWith(
+      "secure-key",
+      "secure-value",
+      StorageScope.Secure,
+    );
+  });
+
+  it("deleteString calls native remove for a Disk key", () => {
+    storage.deleteString("disk-del-key", StorageScope.Disk);
+    expect(mockHybridObject.remove).toHaveBeenCalledWith(
+      "disk-del-key",
+      StorageScope.Disk,
+    );
+  });
+
+  it("deleteString calls native remove for a Secure key", () => {
+    storage.deleteString("secure-del-key", StorageScope.Secure);
+    expect(mockHybridObject.remove).toHaveBeenCalledWith(
+      "secure-del-key",
+      StorageScope.Secure,
+    );
+  });
+
+  it("getString/setString/deleteString work for Memory scope without calling the native module", () => {
+    storage.setString("mem-key", "mem-val", StorageScope.Memory);
+    expect(storage.getString("mem-key", StorageScope.Memory)).toBe("mem-val");
+
+    storage.deleteString("mem-key", StorageScope.Memory);
+    expect(storage.getString("mem-key", StorageScope.Memory)).toBeUndefined();
+
+    expect(mockHybridObject.set).not.toHaveBeenCalled();
+    expect(mockHybridObject.get).not.toHaveBeenCalled();
+    expect(mockHybridObject.remove).not.toHaveBeenCalled();
+  });
+});
