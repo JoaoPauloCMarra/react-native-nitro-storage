@@ -1,7 +1,5 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "telemetry": false,
-  "globalPassThroughEnv": ["ANDROID_HOME", "ANDROID_SDK_ROOT", "JAVA_HOME"],
   "tasks": {
     "build": {
       "dependsOn": ["^build", "codegen"],
