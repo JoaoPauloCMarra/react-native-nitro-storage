@@ -4,6 +4,32 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
+## 0.4.2 - 2026-03-05
+
+### Fixed
+
+- Fix crash on Android devices without biometric hardware — all biometric storage paths now catch initialization failures gracefully (non-biometric operations unaffected).
+- Fix Android keystore corruption recovery incorrectly wiping data on a locked keystore — only `AEADBadTagException` now triggers wipe; all other init failures throw without touching stored data.
+- Synchronize `AndroidStorageAdapter.invalidateSecureKeysCache()` under instance lock to close a race between concurrent reads and writes.
+- Synchronize `setSecureBatch`/`deleteSecureBatch` under instance lock to prevent cache rebuild racing a mid-batch write.
+- Propagate `SharedPreferences.commit()` failures out of `applySecureEditor` instead of swallowing them.
+- Fix `IOSStorageAdapterCpp::clearDisk()` using `dictionaryRepresentation` (includes OS-injected keys) — switched to `persistentDomainForName:` scoped strictly to the app suite.
+- Fix `clearSecure()`/`clearSecureBiometric()` clearing the in-memory key cache before confirming `SecItemDelete` succeeded — cache is now only updated after the deletion is confirmed.
+- Fix potential unexpected biometric auth prompt in `getSecure()` — added `kSecUseAuthenticationUI = kSecUseAuthenticationUIFail` consistent with `hasSecure()`.
+- Fix `setKeychainAccessGroup()` race where a concurrent `getAllKeysSecure()` could observe a stale cache between group update and cache invalidation — both are now updated atomically under both mutexes.
+- Fix CFErrorRef leak in `SecAccessControlCreateWithFlags` error path.
+- Fix `setSecureBiometricWithLevel()` incorrectly reporting "value restored" when backup restoration itself threw — now propagates the composite error.
+- Mark `secureKeyCacheHydrated_` as `std::atomic<bool>` to satisfy the C++ memory model.
+- Fix `HybridStorage::addOnChange()` unsubscribe lambda capturing `this` raw pointer — switched to `std::weak_ptr` capture to prevent use-after-free if `HybridStorage` is destroyed before the JS unsubscribe callback fires.
+- Validate access control level in `setSecureAccessControl()` (must be 0–4) and biometric level in `setSecureBiometricWithLevel()` (must be 0–2) — invalid values now throw instead of being silently passed to the native adapter.
+- Fix `clearSecureBiometric()` calling `onScopeClear` which unnecessarily evicted all secure keys from the index — now only marks the index stale for lazy re-hydration.
+- Fix `fromJavaStringArray()` silently dropping null JNI array elements — null entries are now preserved as empty strings to maintain positional alignment.
+- Extend `isKeychainLockedError()` to detect Android `KeyPermanentlyInvalidatedException` and `InvalidKeyException` in addition to existing iOS/Android patterns.
+- Fix web `getAll()` performing O(n) individual reads — switched to `WebStorage.getBatch()`.
+- Fix web `subscribe()` accumulating `window.addEventListener("storage", …)` calls — now reference-counted and removed when the last subscriber unsubscribes.
+- Fix web `import()` for Secure scope skipping `flushSecureWrites()` and `setSecureAccessControl()` before writing.
+- Expand ProGuard/R8 keep rules with explicit method-signature patterns so JNI-callable methods survive aggressive R8 shrinking in release builds.
+
 ## 0.4.1 - 2026-03-04
 
 ### Added

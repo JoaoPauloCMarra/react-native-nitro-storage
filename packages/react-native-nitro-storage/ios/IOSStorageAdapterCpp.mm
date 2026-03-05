@@ -533,7 +533,6 @@ void IOSStorageAdapterCpp::setSecureBiometricWithLevel(const std::string& key, c
             try {
                 setSecure(key, *backup);
             } catch (const std::exception& restoreEx) {
-                // Restoration failed — the value is lost. Include this in the error thrown below.
                 throw std::runtime_error(
                     std::string("NitroStorage: Biometric set failed with status ") +
                     std::to_string(addStatus) +

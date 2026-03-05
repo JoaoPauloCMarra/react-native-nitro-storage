@@ -23,7 +23,6 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
 
     private val masterKeyAlias = "${context.packageName}.nitro_storage.master_key"
 
-    // FIX A-16: Wrap masterKey initialization with a helpful error message
     private val masterKey: MasterKey = try {
         MasterKey.Builder(context, masterKeyAlias)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
@@ -56,12 +55,6 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
     @Volatile
     private var secureKeysCache: Array<String>? = null
 
-    // FIX A-16: Validate that core dependencies initialized correctly
-    init {
-        requireNotNull(encryptedPreferences) { "NitroStorage: Failed to initialize encrypted storage" }
-    }
-
-    // FIX A-04: Distinguish locked keystore from corrupted storage
     private fun initializeEncryptedPreferences(name: String, key: MasterKey): SharedPreferences {
         return try {
             EncryptedSharedPreferences.create(
@@ -126,7 +119,6 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         }
     }
 
-    // FIX A-03: Propagate commit failures
     private fun applySecureEditor(editor: SharedPreferences.Editor) {
         try {
             if (secureWritesAsync) {
@@ -139,14 +131,12 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         }
     }
 
-    // FIX A-02: Synchronized cache invalidation
     private fun invalidateSecureKeysCache() {
         synchronized(this) {
             secureKeysCache = null
         }
     }
 
-    // FIX A-01: Wrap biometricPreferences access in try-catch
     private fun getSecureKeysCached(): Array<String> {
         val cached = secureKeysCache
         if (cached != null) {
@@ -284,7 +274,6 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             inst.invalidateSecureKeysCache()
         }
 
-        // FIX A-11: Synchronized batch secure set
         @JvmStatic
         fun setSecureBatch(keys: Array<String>, values: Array<String>) {
             val inst = getInstanceOrThrow()
@@ -313,7 +302,6 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             }
         }
 
-        // FIX A-05: Wrap biometric access in deleteSecure
         @JvmStatic
         fun deleteSecure(key: String) {
             val inst = getInstanceOrThrow()
@@ -326,7 +314,6 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             inst.invalidateSecureKeysCache()
         }
 
-        // FIX A-11: Synchronized batch secure delete + FIX A-05: biometric try-catch
         @JvmStatic
         fun deleteSecureBatch(keys: Array<String>) {
             val inst = getInstanceOrThrow()
@@ -349,7 +336,6 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             }
         }
 
-        // FIX A-10: Wrap biometric access in hasSecure
         @JvmStatic
         fun hasSecure(key: String): Boolean {
             val inst = getInstanceOrThrow()
@@ -379,7 +365,6 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             return getInstanceOrThrow().getSecureKeysCached().size
         }
 
-        // FIX A-06: Wrap biometric access in clearSecure
         @JvmStatic
         fun clearSecure() {
             val inst = getInstanceOrThrow()
@@ -399,7 +384,6 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             setSecureBiometricWithLevel(key, value, 2)
         }
 
-        // FIX A-01 (setSecureBiometricWithLevel): Throw on unavailability so caller knows
         @JvmStatic
         fun setSecureBiometricWithLevel(key: String, value: String, @Suppress("UNUSED_PARAMETER") level: Int) {
             val inst = getInstanceOrThrow()
@@ -412,7 +396,6 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             }
         }
 
-        // FIX A-03 (getSecureBiometric): Return null on biometric unavailability
         @JvmStatic
         fun getSecureBiometric(key: String): String? {
             val inst = getInstanceOrThrow()
@@ -435,7 +418,6 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             }
         }
 
-        // FIX A-10 (hasSecureBiometric): Return false on biometric unavailability
         @JvmStatic
         fun hasSecureBiometric(key: String): Boolean {
             return try {
@@ -446,7 +428,6 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             }
         }
 
-        // FIX A-06 (clearSecureBiometric): Wrap all biometric access in try-catch
         @JvmStatic
         fun clearSecureBiometric() {
             val inst = getInstanceOrThrow()
