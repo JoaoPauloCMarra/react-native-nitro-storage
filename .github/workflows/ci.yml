@@ -6,7 +6,7 @@ on:
 
 env:
   TZ: UTC
-  BUN_VERSION: "1.3.9"
+  BUN_VERSION: "1.3.10"
 
 jobs:
   quality:
@@ -14,22 +14,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: |
             ~/.bun/install/cache
             node_modules
             packages/*/node_modules
+            apps/*/node_modules
           key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
           restore-keys: ${{ runner.os }}-bun-
 
-      - run: bun install
+      - run: bun install --frozen-lockfile
 
       - name: Lint
         run: bun run lint
