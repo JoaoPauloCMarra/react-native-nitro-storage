@@ -1972,9 +1972,9 @@ describe("isKeychainLockedError", () => {
   });
 
   it('returns true for "android.security.keystore"', () => {
-    expect(
-      isKeychainLockedError(new Error("android.security.keystore")),
-    ).toBe(true);
+    expect(isKeychainLockedError(new Error("android.security.keystore"))).toBe(
+      true,
+    );
   });
 
   it("returns false for unrelated Error", () => {
@@ -2215,9 +2215,7 @@ describe("createSecureAuthStorage", () => {
     );
 
     auth.token.set("val");
-    mockHybridObject.get.mockReturnValue(
-      serializeWithPrimitiveFastPath("val"),
-    );
+    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("val"));
 
     // The item was created — ttlMs presence is verified by the factory accepting it
     // without throwing. We verify the item is functional.

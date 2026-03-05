@@ -189,7 +189,9 @@ describe("special number serialization", () => {
 
   it("deserializes -Infinity correctly", () => {
     expect(
-      deserializeWithPrimitiveFastPath("__nitro_storage_primitive__:n:-Infinity"),
+      deserializeWithPrimitiveFastPath(
+        "__nitro_storage_primitive__:n:-Infinity",
+      ),
     ).toBe(-Infinity);
   });
 
@@ -214,9 +216,7 @@ describe("special number serialization", () => {
 
 describe("toVersionToken", () => {
   it('returns "missing" token for undefined', () => {
-    expect(toVersionToken(undefined)).toBe(
-      "__nitro_storage_version__:missing",
-    );
+    expect(toVersionToken(undefined)).toBe("__nitro_storage_version__:missing");
   });
 
   it("returns consistent hash for same string", () => {
