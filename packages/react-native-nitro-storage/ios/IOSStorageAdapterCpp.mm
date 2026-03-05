@@ -16,6 +16,14 @@ static NSUserDefaults* NitroDiskDefaults() {
     return defaults ?: [NSUserDefaults standardUserDefaults];
 }
 
+// Prevents the Keychain from showing auth UI. On iOS 14+ kSecUseAuthenticationUIFail is
+// deprecated; the correct replacement is an LAContext with interactionNotAllowed = YES.
+static void disableKeychainInteraction(NSMutableDictionary* query) {
+    LAContext* ctx = [[LAContext alloc] init];
+    ctx.interactionNotAllowed = YES;
+    query[(__bridge id)kSecUseAuthenticationContext] = ctx;
+}
+
 static CFStringRef accessControlAttr(int level) {
     switch (level) {
         case 1: return kSecAttrAccessibleAfterFirstUnlock;
@@ -178,7 +186,7 @@ static NSMutableDictionary* allAccountsQuery(NSString* service, NSString* access
 
 static std::vector<std::string> keychainAccountsForService(NSString* service, NSString* accessGroup) {
     NSMutableDictionary* query = allAccountsQuery(service, accessGroup);
-    query[(__bridge id)kSecUseAuthenticationUI] = (__bridge id)kSecUseAuthenticationUIFail;
+    disableKeychainInteraction(query);
     CFTypeRef result = NULL;
     std::vector<std::string> keys;
     OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
@@ -274,7 +282,7 @@ std::optional<std::string> IOSStorageAdapterCpp::getSecure(const std::string& ke
     NSMutableDictionary* query = baseKeychainQuery(nsKey, kKeychainService, group);
     query[(__bridge id)kSecReturnData] = @YES;
     query[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
-    query[(__bridge id)kSecUseAuthenticationUI] = (__bridge id)kSecUseAuthenticationUIFail;
+    disableKeychainInteraction(query);
 
     CFTypeRef result = NULL;
     OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
@@ -334,12 +342,12 @@ bool IOSStorageAdapterCpp::hasSecure(const std::string& key) {
     }
     NSString* group = groupStr.empty() ? nil : [NSString stringWithUTF8String:groupStr.c_str()];
     NSMutableDictionary* secureQuery = baseKeychainQuery(nsKey, kKeychainService, group);
-    secureQuery[(__bridge id)kSecUseAuthenticationUI] = (__bridge id)kSecUseAuthenticationUIFail;
+    disableKeychainInteraction(secureQuery);
     if (SecItemCopyMatching((__bridge CFDictionaryRef)secureQuery, NULL) == errSecSuccess) {
         return true;
     }
     NSMutableDictionary* biometricQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
-    biometricQuery[(__bridge id)kSecUseAuthenticationUI] = (__bridge id)kSecUseAuthenticationUIFail;
+    disableKeychainInteraction(biometricQuery);
     return SecItemCopyMatching((__bridge CFDictionaryRef)biometricQuery, NULL) == errSecSuccess;
 }
 
@@ -484,13 +492,13 @@ void IOSStorageAdapterCpp::setSecureBiometricWithLevel(const std::string& key, c
     }
     NSString* group = groupStr.empty() ? nil : [NSString stringWithUTF8String:groupStr.c_str()];
 
-    // Capture backup before delete — use kSecUseAuthenticationUIFail to avoid prompting
+    // Capture backup before delete — must not prompt for auth
     std::optional<std::string> backup = std::nullopt;
     {
         NSMutableDictionary* backupQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
         backupQuery[(__bridge id)kSecReturnData] = @YES;
         backupQuery[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
-        backupQuery[(__bridge id)kSecUseAuthenticationUI] = (__bridge id)kSecUseAuthenticationUIFail;
+        disableKeychainInteraction(backupQuery);
         CFTypeRef backupResult = NULL;
         if (SecItemCopyMatching((__bridge CFDictionaryRef)backupQuery, &backupResult) == errSecSuccess && backupResult) {
             NSData* bData = (__bridge_transfer NSData*)backupResult;
@@ -606,7 +614,7 @@ bool IOSStorageAdapterCpp::hasSecureBiometric(const std::string& key) {
     }
     NSString* group = groupStr.empty() ? nil : [NSString stringWithUTF8String:groupStr.c_str()];
     NSMutableDictionary* query = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
-    query[(__bridge id)kSecUseAuthenticationUI] = (__bridge id)kSecUseAuthenticationUIFail;
+    disableKeychainInteraction(query);
     return SecItemCopyMatching((__bridge CFDictionaryRef)query, NULL) == errSecSuccess;
 }
 

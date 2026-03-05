@@ -277,7 +277,7 @@ std::function<void()> HybridStorage::addOnChange(
         listeners_[intScope].push_back({listenerId, callback});
     }
     
-    std::weak_ptr<HybridStorage> weakSelf = std::static_pointer_cast<HybridStorage>(shared_from_this());
+    std::weak_ptr<HybridStorage> weakSelf = std::dynamic_pointer_cast<HybridStorage>(shared_from_this());
     return [weakSelf, intScope, listenerId]() {
         auto self = weakSelf.lock();
         if (!self) return;  // HybridStorage was destroyed — safe no-op
