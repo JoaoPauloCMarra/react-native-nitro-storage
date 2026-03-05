@@ -1,0 +1,52 @@
+appId: com.nitrostorage.example
+name: "TTL Expiration"
+---
+- launchApp:
+    clearState: true
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# Scroll to seed button
+- scrollUntilVisible:
+    element:
+      id: "ttl-seed"
+    direction: DOWN
+    timeout: 10000
+    centerElement: true
+
+# Tap seed
+- tapOn:
+    id: "ttl-seed"
+- waitForAnimationToEnd
+
+# Assert value is not expired
+- assertNotVisible:
+    id: "ttl-value"
+    text: "(expired)"
+
+# Wait for TTL to expire (5s TTL + 2s buffer)
+- repeat:
+    times: 7
+    commands:
+      - swipe:
+          start: "50%, 50%"
+          end: "50%, 50%"
+          duration: 1000
+
+# Scroll to refresh button
+- scrollUntilVisible:
+    element:
+      id: "ttl-refresh"
+    direction: DOWN
+    timeout: 10000
+    centerElement: true
+
+# Tap refresh to re-read value after TTL expired
+- tapOn:
+    id: "ttl-refresh"
+- waitForAnimationToEnd
+
+# Assert value is now expired
+- assertVisible:
+    id: "ttl-value"
+    text: "(expired)"

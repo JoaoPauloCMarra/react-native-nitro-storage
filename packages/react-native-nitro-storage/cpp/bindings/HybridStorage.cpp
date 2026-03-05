@@ -1,4 +1,5 @@
 #include "HybridStorage.hpp"
+#include <cmath>
 #include <stdexcept>
 
 #ifndef NITRO_STORAGE_DISABLE_PLATFORM_ADAPTER
@@ -33,7 +34,7 @@ HybridStorage::HybridStorage(std::shared_ptr<::NitroStorage::NativeStorageAdapte
     : HybridObject(TAG), HybridStorageSpec(), nativeAdapter_(std::move(adapter)) {}
 
 HybridStorage::Scope HybridStorage::toScope(double scopeValue) {
-    if (scopeValue < 0.0 || scopeValue > 2.0) {
+    if (std::isnan(scopeValue) || scopeValue < 0.0 || scopeValue > 2.0) {
         throw std::runtime_error("NitroStorage: Invalid scope value");
     }
 
@@ -494,6 +495,9 @@ void HybridStorage::removeByPrefix(const std::string& prefix, double scope) {
 // --- Configuration ---
 
 void HybridStorage::setSecureAccessControl(double level) {
+    if (std::isnan(level) || std::isinf(level)) {
+        throw std::runtime_error("NitroStorage: Invalid access control level");
+    }
     int intLevel = static_cast<int>(level);
     if (intLevel < 0 || intLevel > 4) {
         throw std::runtime_error(
@@ -521,6 +525,10 @@ void HybridStorage::setSecureBiometric(const std::string& key, const std::string
 }
 
 void HybridStorage::setSecureBiometricWithLevel(const std::string& key, const std::string& value, double level) {
+    if (std::isnan(level) || std::isinf(level)) {
+        throw std::runtime_error(
+            "NitroStorage: Invalid biometric level");
+    }
     int intLevel = static_cast<int>(level);
     if (intLevel < 0 || intLevel > 2) {
         throw std::runtime_error(
@@ -600,7 +608,6 @@ std::vector<HybridStorage::Listener> HybridStorage::copyListenersForScope(int sc
         std::lock_guard<std::mutex> lock(listenersMutex_);
         auto it = listeners_.find(scope);
         if (it != listeners_.end()) {
-            listenersCopy.reserve(it->second.size());
             listenersCopy = it->second;
         }
     }

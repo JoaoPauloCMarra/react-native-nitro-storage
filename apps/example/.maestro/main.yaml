@@ -2,4 +2,36 @@ appId: com.nitrostorage.example
 name: "Nitro Storage - Full Suite"
 ---
 - runFlow:
-    file: apps/example/.maestro/e2e.yaml
+    file: apps/example/.maestro/01_memory.yaml
+- runFlow:
+    file: apps/example/.maestro/02_disk.yaml
+- runFlow:
+    file: apps/example/.maestro/03_secure.yaml
+- runFlow:
+    file: apps/example/.maestro/04_namespaces.yaml
+- runFlow:
+    file: apps/example/.maestro/05_json.yaml
+- runFlow:
+    file: apps/example/.maestro/06_auth.yaml
+- runFlow:
+    file: apps/example/.maestro/07_ns_auth.yaml
+- runFlow:
+    file: apps/example/.maestro/08_utils.yaml
+- runFlow:
+    file: apps/example/.maestro/09_hooks.yaml
+- runFlow:
+    file: apps/example/.maestro/10_validation.yaml
+- runFlow:
+    file: apps/example/.maestro/11_ttl.yaml
+- runFlow:
+    file: apps/example/.maestro/12_transactions.yaml
+- runFlow:
+    file: apps/example/.maestro/13_migrations.yaml
+- runFlow:
+    file: apps/example/.maestro/14_batch.yaml
+- runFlow:
+    file: apps/example/.maestro/15_scope_control.yaml
+- runFlow:
+    file: apps/example/.maestro/16_raw_string.yaml
+- runFlow:
+    file: apps/example/.maestro/17_prefix_keys.yaml

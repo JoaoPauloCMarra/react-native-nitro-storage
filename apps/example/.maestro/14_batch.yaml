@@ -1,0 +1,59 @@
+appId: com.nitrostorage.example
+name: "Batch Operations"
+---
+- launchApp:
+    clearState: true
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# Verify initial empty state
+- scrollUntilVisible:
+    element:
+      id: "batch-v1"
+    direction: DOWN
+    timeout: 10000
+    centerElement: true
+- assertVisible:
+    id: "batch-v1"
+    text: "-"
+- assertVisible:
+    id: "batch-v2"
+    text: "-"
+- assertVisible:
+    id: "batch-v3"
+    text: "-"
+
+# Batch set
+- scrollUntilVisible:
+    element:
+      id: "batch-set"
+    direction: DOWN
+    timeout: 10000
+    centerElement: true
+- tapOn:
+    id: "batch-set"
+- waitForAnimationToEnd
+
+# Values should no longer be empty
+- assertNotVisible:
+    id: "batch-v1"
+    text: "-"
+
+# Batch get
+- tapOn:
+    id: "batch-get"
+- waitForAnimationToEnd
+
+# Assert response block exists
+- assertVisible:
+    id: "batch-response"
+
+# Batch remove
+- tapOn:
+    id: "batch-remove"
+- waitForAnimationToEnd
+
+# Values should be reset
+- assertVisible:
+    id: "batch-v1"
+    text: "-"

@@ -48,10 +48,9 @@ std::vector<std::string> fromJavaStringArray(alias_ref<JavaStringArray> values) 
 
 } // namespace
 
-AndroidStorageAdapterCpp::AndroidStorageAdapterCpp(alias_ref<JObject> context) {
-    if (!context) [[unlikely]] {
-        throw std::runtime_error("NitroStorage: Android Context is null");
-    }
+AndroidStorageAdapterCpp::AndroidStorageAdapterCpp(alias_ref<JObject> /*context*/) {
+    // Context is validated by AndroidStorageAdapter.getContext() on the Java side.
+    // The adapter calls static Java methods directly via fbjni.
 }
 
 AndroidStorageAdapterCpp::~AndroidStorageAdapterCpp() = default;

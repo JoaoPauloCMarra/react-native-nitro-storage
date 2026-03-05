@@ -47,6 +47,8 @@ Every feature in this package is documented with at least one runnable example i
 - Transactions — see Transactions and Atomic Balance Transfer
 - Migrations (`registerMigration`, `migrateToLatest`) — see Migrations
 - MMKV migration (`migrateFromMMKV`) — see MMKV Migration and Migrating From MMKV
+- Raw string API (`getString`, `setString`, `deleteString`) — see Raw String API
+- Keychain locked detection (`isKeychainLockedError`) — see `isKeychainLockedError(err)`
 - Auth storage factory (`createSecureAuthStorage`) — see Auth Token Management
 
 ## Requirements
@@ -280,6 +282,9 @@ import { storage, StorageScope } from "react-native-nitro-storage";
 | `storage.setSecureWritesAsync(enabled)`  | Toggle async secure writes on Android (`false` by default)                   |
 | `storage.flushSecureWrites()`            | Force flush of queued secure writes when coalescing is enabled               |
 | `storage.setKeychainAccessGroup(group)`  | Set keychain access group for app sharing (native only)                      |
+| `storage.getString(key, scope)`          | Read a raw string value directly (bypasses serialization)                    |
+| `storage.setString(key, value, scope)`   | Write a raw string value directly (bypasses serialization)                   |
+| `storage.deleteString(key, scope)`       | Delete a raw string value by key                                             |
 | `storage.import(data, scope)`            | Bulk-load a `Record<string, string>` of raw key/value pairs into a scope     |
 | `storage.setMetricsObserver(observer?)`  | Subscribe to per-operation timing events                                     |
 | `storage.getMetricsSnapshot()`           | Get aggregate counters/latency stats keyed by operation                      |
@@ -506,6 +511,40 @@ const migrated = migrateFromMMKV(mmkv, myStorageItem, true);
 - Read priority: `getString` → `getNumber` → `getBoolean`
 - Uses `item.set()` so validation still applies
 - Only deletes from MMKV when migration succeeds
+
+---
+
+### Raw String API
+
+For cases where you want to bypass `createStorageItem` serialization entirely and work with raw key/value strings:
+
+```ts
+import { storage, StorageScope } from "react-native-nitro-storage";
+
+storage.setString("raw-key", "raw-value", StorageScope.Disk);
+const value = storage.getString("raw-key", StorageScope.Disk); // "raw-value" | undefined
+storage.deleteString("raw-key", StorageScope.Disk);
+```
+
+These are synchronous and go directly to the native backend without any serialize/deserialize step.
+
+---
+
+### `isKeychainLockedError(err)`
+
+Utility to detect iOS Keychain locked errors in secure storage operations. Returns `true` if the error was caused by a locked keychain (device locked, first unlock not yet performed, etc.). Always returns `false` on web.
+
+```ts
+import { isKeychainLockedError } from "react-native-nitro-storage";
+
+try {
+  secureItem.get();
+} catch (err) {
+  if (isKeychainLockedError(err)) {
+    // device is locked — retry after unlock
+  }
+}
+```
 
 ---
 

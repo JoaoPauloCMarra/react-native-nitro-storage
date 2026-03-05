@@ -1,0 +1,34 @@
+appId: com.nitrostorage.example
+name: "Raw String API"
+---
+- launchApp:
+    clearState: true
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# Scroll to raw string section and verify initial state
+- scrollUntilVisible:
+    element:
+      id: "raw-set"
+    direction: DOWN
+    timeout: 10000
+    centerElement: true
+- assertVisible:
+    id: "raw-value"
+    text: "(empty)"
+
+# Set raw string value
+- tapOn:
+    id: "raw-set"
+- waitForAnimationToEnd
+- assertVisible:
+    id: "raw-value"
+    text: "hello-world"
+
+# Delete raw string value
+- tapOn:
+    id: "raw-delete"
+- waitForAnimationToEnd
+- assertVisible:
+    id: "raw-value"
+    text: "(empty)"

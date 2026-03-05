@@ -1,0 +1,49 @@
+appId: com.nitrostorage.example
+name: "Namespaces"
+---
+- launchApp:
+    clearState: true
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# Scroll to namespace preference input
+- scrollUntilVisible:
+    element:
+      id: "ns-pref-input"
+    direction: DOWN
+    timeout: 10000
+    centerElement: true
+
+# Enter preference
+- tapOn:
+    id: "ns-pref-input"
+- eraseText: 50
+- inputText: "dark-mode"
+- waitForAnimationToEnd
+- hideKeyboard
+- waitForAnimationToEnd
+
+# Scroll to save button and tap
+- scrollUntilVisible:
+    element:
+      id: "ns-save"
+    direction: DOWN
+    timeout: 10000
+    centerElement: true
+- tapOn:
+    id: "ns-save"
+- waitForAnimationToEnd
+
+# Assert preference value
+- assertVisible:
+    id: "ns-pref-value"
+    text: "dark-mode"
+
+# Clear namespace and assert empty
+- tapOn:
+    id: "ns-clear-namespace"
+- waitForAnimationToEnd
+
+- assertVisible:
+    id: "ns-pref-value"
+    text: "(empty)"

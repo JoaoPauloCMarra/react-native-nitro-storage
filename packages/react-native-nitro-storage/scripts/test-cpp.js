@@ -59,6 +59,7 @@ const hybridObjectStubPath = path.join(nitroVirtualDir, "HybridObject.hpp");
 fs.writeFileSync(
   hybridObjectStubPath,
   `#pragma once
+#include <memory>
 #include <utility>
 
 namespace margelo::nitro {
@@ -69,7 +70,7 @@ public:
   void registerHybridMethod(const char*, Args...) {}
 };
 
-class HybridObject {
+class HybridObject : public std::enable_shared_from_this<HybridObject> {
 public:
   explicit HybridObject(const char* = "") {}
   virtual ~HybridObject() = default;

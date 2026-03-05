@@ -1,0 +1,68 @@
+appId: com.nitrostorage.example
+name: "Transactions"
+---
+- launchApp:
+    clearState: true
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# Scroll to transaction section
+- scrollUntilVisible:
+    element:
+      id: "tx-commit"
+    direction: DOWN
+    timeout: 10000
+    centerElement: true
+
+# Assert initial balance is 0
+- assertVisible:
+    id: "tx-balance"
+    text: "0"
+- assertVisible:
+    id: "tx-log"
+    text: "No log yet"
+
+# Tap commit — balance should become 10
+- tapOn:
+    id: "tx-commit"
+- waitForAnimationToEnd
+
+- assertVisible:
+    id: "tx-balance"
+    text: "10"
+
+# Scroll to rollback button
+- scrollUntilVisible:
+    element:
+      id: "tx-rollback"
+    direction: DOWN
+    timeout: 10000
+    centerElement: true
+
+# Tap rollback — balance should remain 10 (rollback reverts the -25)
+- tapOn:
+    id: "tx-rollback"
+- waitForAnimationToEnd
+
+- assertVisible:
+    id: "tx-balance"
+    text: "10"
+
+# Scroll to clear button and tap
+- scrollUntilVisible:
+    element:
+      id: "tx-clear"
+    direction: DOWN
+    timeout: 10000
+    centerElement: true
+- tapOn:
+    id: "tx-clear"
+- waitForAnimationToEnd
+
+# Assert balance is 0 and log is cleared
+- assertVisible:
+    id: "tx-balance"
+    text: "0"
+- assertVisible:
+    id: "tx-log"
+    text: "No log yet"

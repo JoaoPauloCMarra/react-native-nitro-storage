@@ -6,10 +6,6 @@
 
 namespace NitroStorage {
 
-struct JContext : facebook::jni::JavaClass<JContext> {
-  static constexpr auto kJavaDescriptor = "Landroid/content/Context;";
-};
-
 struct AndroidStorageAdapterJava : facebook::jni::JavaClass<AndroidStorageAdapterJava> {
   static constexpr auto kJavaDescriptor = "Lcom/nitrostorage/AndroidStorageAdapter;";
   

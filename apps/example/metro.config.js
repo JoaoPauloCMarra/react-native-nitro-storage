@@ -17,8 +17,8 @@ const monorepoRoot = path.resolve(projectRoot, "../..");
 
 const config = getDefaultConfig(projectRoot);
 
-// Monorepo support
-config.watchFolders = [monorepoRoot];
+// Monorepo support (merge with Expo defaults)
+config.watchFolders = [...(config.watchFolders || []), monorepoRoot];
 config.resolver.nodeModulesPaths = [
   path.resolve(projectRoot, "node_modules"),
   path.resolve(monorepoRoot, "node_modules"),

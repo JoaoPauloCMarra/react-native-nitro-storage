@@ -67,9 +67,18 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
                 e.hasCause(AEADBadTagException::class.java) -> {
                     Log.w("NitroStorage", "Corrupted encryption keys for $name, attempting recovery...")
                     clearCorruptedStorage(name, key)
+                    val freshAlias = if (name == "NitroStorageBiometric") biometricMasterKeyAlias else masterKeyAlias
+                    val freshKey = MasterKey.Builder(context, freshAlias)
+                        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                        .apply {
+                            if (name == "NitroStorageBiometric") {
+                                setUserAuthenticationRequired(true, 30)
+                            }
+                        }
+                        .build()
                     try {
                         EncryptedSharedPreferences.create(
-                            context, name, key,
+                            context, name, freshKey,
                             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
                         )
@@ -148,10 +157,11 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             if (existing != null) {
                 return existing
             }
+            val INTERNAL_PREFIX = "__androidx_security_crypto_encrypted_prefs_"
             val keys = linkedSetOf<String>()
-            keys.addAll(encryptedPreferences.all.keys)
+            keys.addAll(encryptedPreferences.all.keys.filter { !it.startsWith(INTERNAL_PREFIX) })
             try {
-                keys.addAll(biometricPreferences.all.keys)
+                keys.addAll(biometricPreferences.all.keys.filter { !it.startsWith(INTERNAL_PREFIX) })
             } catch (e: Exception) {
                 Log.d("NitroStorage", "Biometric storage unavailable: ${e.message}")
             }
@@ -269,9 +279,11 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         @JvmStatic
         fun setSecure(key: String, value: String) {
             val inst = getInstanceOrThrow()
-            val editor = inst.encryptedPreferences.edit().putString(key, value)
-            inst.applySecureEditor(editor)
-            inst.invalidateSecureKeysCache()
+            synchronized(inst) {
+                val editor = inst.encryptedPreferences.edit().putString(key, value)
+                inst.applySecureEditor(editor)
+                inst.invalidateSecureKeysCache()
+            }
         }
 
         @JvmStatic
@@ -305,13 +317,15 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         @JvmStatic
         fun deleteSecure(key: String) {
             val inst = getInstanceOrThrow()
-            inst.applySecureEditor(inst.encryptedPreferences.edit().remove(key))
-            try {
-                inst.applySecureEditor(inst.biometricPreferences.edit().remove(key))
-            } catch (e: Exception) {
-                Log.d("NitroStorage", "Biometric storage unavailable: ${e.message}")
+            synchronized(inst) {
+                inst.applySecureEditor(inst.encryptedPreferences.edit().remove(key))
+                try {
+                    inst.applySecureEditor(inst.biometricPreferences.edit().remove(key))
+                } catch (e: Exception) {
+                    Log.d("NitroStorage", "Biometric storage unavailable: ${e.message}")
+                }
+                inst.invalidateSecureKeysCache()
             }
-            inst.invalidateSecureKeysCache()
         }
 
         @JvmStatic

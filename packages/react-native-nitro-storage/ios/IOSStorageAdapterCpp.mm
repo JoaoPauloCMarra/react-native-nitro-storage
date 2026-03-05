@@ -2,8 +2,6 @@
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
 #import <LocalAuthentication/LocalAuthentication.h>
-#include <algorithm>
-#include <unordered_set>
 
 namespace NitroStorage {
 
@@ -81,7 +79,9 @@ void IOSStorageAdapterCpp::deleteDisk(const std::string& key) {
 
 bool IOSStorageAdapterCpp::hasDisk(const std::string& key) {
     NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
-    return [NitroDiskDefaults() objectForKey:nsKey] != nil;
+    if ([NitroDiskDefaults() objectForKey:nsKey] != nil) return true;
+    // Check legacy standardUserDefaults for un-migrated keys
+    return [[NSUserDefaults standardUserDefaults] stringForKey:nsKey] != nil;
 }
 
 std::vector<std::string> IOSStorageAdapterCpp::getAllKeysDisk() {
@@ -478,11 +478,6 @@ void IOSStorageAdapterCpp::setSecureBiometric(const std::string& key, const std:
 }
 
 void IOSStorageAdapterCpp::setSecureBiometricWithLevel(const std::string& key, const std::string& value, int level) {
-    if (level == 0) {
-        setSecure(key, value);
-        return;
-    }
-
     NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
     NSData* data = [[NSString stringWithUTF8String:value.c_str()] dataUsingEncoding:NSUTF8StringEncoding];
     std::string groupStr;
@@ -491,6 +486,16 @@ void IOSStorageAdapterCpp::setSecureBiometricWithLevel(const std::string& key, c
         groupStr = keychainAccessGroup_;
     }
     NSString* group = groupStr.empty() ? nil : [NSString stringWithUTF8String:groupStr.c_str()];
+
+    if (level == 0) {
+        // Delete any existing biometric keychain entry for this key
+        NSMutableDictionary* deleteQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
+        SecItemDelete((__bridge CFDictionaryRef)deleteQuery);
+        markBiometricKeyRemoved(key);
+
+        setSecure(key, value);
+        return;
+    }
 
     // Capture backup before delete — must not prompt for auth
     std::optional<std::string> backup = std::nullopt;

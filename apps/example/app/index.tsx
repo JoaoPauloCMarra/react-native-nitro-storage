@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import {
   createSecureAuthStorage,
@@ -12,6 +12,7 @@ import {
   storage,
   StorageScope,
   useStorage,
+  useStorageSelector,
 } from "react-native-nitro-storage";
 import {
   Button,
@@ -148,14 +149,17 @@ export default function HomeScreen() {
   // 2. Disk Scope
   const [diskName, setDiskName] = useStorage(diskNameItem);
   const [tempDiskName, setTempDiskName] = useState("");
+  const tempDiskNameRef = useRef("");
 
   // 3. Secure Scope
   const [token, setToken] = useStorage(secureTokenItem);
   const [tempToken, setTempToken] = useState("");
+  const tempTokenRef = useRef("");
 
   // 4. Namespaces
   const [nsPref, setNsPref] = useStorage(namespacedItem);
   const [tempNsPref, setTempNsPref] = useState("");
+  const tempNsPrefRef = useRef("");
 
   // 5. JSON Objects
   const [config, setConfig] = useStorage(configItem);
@@ -172,10 +176,12 @@ export default function HomeScreen() {
   const [hookCount, setHookCount] = useStorage(hookCountItem);
   const [hookLabel, setHookLabel] = useStorage(hookLabelItem);
   const [hookLabelIdx, setHookLabelIdx] = useState(0);
+  const [selectedTheme] = useStorageSelector(configItem, (c) => c.theme);
 
   // 10. Validation
   const [age] = useStorage(ageItem);
   const [ageInput, setAgeInput] = useState(String(age));
+  const ageInputRef = useRef(String(age));
 
   // 11. TTL
   const [ttlVal, setTtlVal] = useState(() => ttlItem.get());
@@ -192,6 +198,21 @@ export default function HomeScreen() {
   const [v2] = useStorage(batch2);
   const [v3] = useStorage(batch3);
   const [batchResponse, setBatchResponse] = useState<string | null>(null);
+
+  // 8. Storage Utils — reactive size state
+  const [diskSize, setDiskSize] = useState(() => storage.size(StorageScope.Disk));
+  const [memorySize, setMemorySize] = useState(() => storage.size(StorageScope.Memory));
+
+  // 15. Scope Control — reactive size state
+  const [scopeDiskSize, setScopeDiskSize] = useState(() => storage.size(StorageScope.Disk));
+  const [scopeMemorySize, setScopeMemorySize] = useState(() => storage.size(StorageScope.Memory));
+
+  // 16. Raw String API
+  const [rawValue, setRawValue] = useState<string | undefined>();
+
+  // 17. Prefix & Keys
+  const [prefixKeys, setPrefixKeys] = useState<string[]>([]);
+  const [allMemoryKeys, setAllMemoryKeys] = useState<string[]>([]);
 
   return (
     <Page
@@ -244,7 +265,10 @@ export default function HomeScreen() {
           testID="disk-name-input"
           label="Display name"
           value={tempDiskName}
-          onChangeText={setTempDiskName}
+          onChangeText={(t) => {
+            tempDiskNameRef.current = t;
+            setTempDiskName(t);
+          }}
           placeholder="Enter a name"
           autoCapitalize="none"
         />
@@ -253,11 +277,11 @@ export default function HomeScreen() {
             testID="disk-save"
             title="Save"
             onPress={() => {
-              setDiskName(tempDiskName.trim());
+              setDiskName(tempDiskNameRef.current.trim());
+              tempDiskNameRef.current = "";
               setTempDiskName("");
             }}
             style={styles.flex1}
-            disabled={!tempDiskName.trim()}
           />
           <Button
             testID="disk-delete"
@@ -292,7 +316,10 @@ export default function HomeScreen() {
           testID="secure-token-input"
           label="Secret value"
           value={tempToken}
-          onChangeText={setTempToken}
+          onChangeText={(t) => {
+            tempTokenRef.current = t;
+            setTempToken(t);
+          }}
           placeholder="Paste a token or secret"
           secureTextEntry
           autoCapitalize="none"
@@ -302,12 +329,12 @@ export default function HomeScreen() {
             testID="secure-lock"
             title="Lock"
             onPress={() => {
-              setToken(tempToken.trim());
+              setToken(tempTokenRef.current.trim());
+              tempTokenRef.current = "";
               setTempToken("");
             }}
             variant="success"
             style={styles.flex1}
-            disabled={!tempToken.trim()}
           />
           <Button
             testID="secure-wipe"
@@ -338,7 +365,10 @@ export default function HomeScreen() {
           testID="ns-pref-input"
           label="Preference value"
           value={tempNsPref}
-          onChangeText={setTempNsPref}
+          onChangeText={(t) => {
+            tempNsPrefRef.current = t;
+            setTempNsPref(t);
+          }}
           placeholder="Set a namespaced value"
           autoCapitalize="none"
         />
@@ -347,11 +377,11 @@ export default function HomeScreen() {
             testID="ns-save"
             title="Save"
             onPress={() => {
-              setNsPref(tempNsPref.trim());
+              setNsPref(tempNsPrefRef.current.trim());
+              tempNsPrefRef.current = "";
               setTempNsPref("");
             }}
             style={styles.flex1}
-            disabled={!tempNsPref.trim()}
           />
           <Button
             testID="ns-clear-namespace"
@@ -494,12 +524,12 @@ export default function HomeScreen() {
           <StatusRow
             testID="util-disk-size"
             label="Disk size()"
-            value={String(storage.size(StorageScope.Disk))}
+            value={String(diskSize)}
           />
           <StatusRow
             testID="util-memory-size"
             label="Memory size()"
-            value={String(storage.size(StorageScope.Memory))}
+            value={String(memorySize)}
           />
         </Section>
         <Section title="Actions">
@@ -509,6 +539,7 @@ export default function HomeScreen() {
               title="Wipe Memory"
               onPress={() => {
                 storage.clear(StorageScope.Memory);
+                setMemorySize(0);
               }}
               variant="secondary"
               size="sm"
@@ -519,6 +550,7 @@ export default function HomeScreen() {
               title="Wipe Disk"
               onPress={() => {
                 storage.clear(StorageScope.Disk);
+                setDiskSize(0);
               }}
               variant="secondary"
               size="sm"
@@ -530,6 +562,8 @@ export default function HomeScreen() {
             title="Reset All"
             onPress={() => {
               storage.clearAll();
+              setDiskSize(0);
+              setMemorySize(0);
             }}
             variant="danger"
             size="sm"
@@ -569,6 +603,11 @@ export default function HomeScreen() {
           }}
           variant="secondary"
         />
+        <StatusRow
+          testID="hook-selected-theme"
+          label="selector(theme)"
+          value={selectedTheme}
+        />
       </Card>
 
       {/* 10. Validation */}
@@ -581,7 +620,10 @@ export default function HomeScreen() {
           testID="val-age-input"
           label="Age (13–120)"
           value={ageInput}
-          onChangeText={setAgeInput}
+          onChangeText={(t) => {
+            ageInputRef.current = t;
+            setAgeInput(t);
+          }}
           placeholder="Enter age"
           keyboardType="numeric"
           autoCapitalize="none"
@@ -591,7 +633,7 @@ export default function HomeScreen() {
             testID="val-save"
             title="Save"
             onPress={() => {
-              const n = Number(ageInput);
+              const n = Number(ageInputRef.current);
               if (Number.isFinite(n)) {
                 ageItem.set(n);
               }
@@ -835,12 +877,12 @@ export default function HomeScreen() {
         <StatusRow
           testID="scope-disk-keys"
           label="Disk keys"
-          value={String(storage.size(StorageScope.Disk))}
+          value={String(scopeDiskSize)}
         />
         <StatusRow
           testID="scope-memory-keys"
           label="Memory keys"
-          value={String(storage.size(StorageScope.Memory))}
+          value={String(scopeMemorySize)}
         />
         <View style={styles.row}>
           <Button
@@ -848,6 +890,8 @@ export default function HomeScreen() {
             title="Clear Disk"
             onPress={() => {
               storage.clear(StorageScope.Disk);
+              setScopeDiskSize(0);
+              setDiskSize(0);
             }}
             variant="secondary"
             size="sm"
@@ -858,6 +902,8 @@ export default function HomeScreen() {
             title="Clear Memory"
             onPress={() => {
               storage.clear(StorageScope.Memory);
+              setScopeMemorySize(0);
+              setMemorySize(0);
             }}
             variant="secondary"
             size="sm"
@@ -869,9 +915,91 @@ export default function HomeScreen() {
           title="Reset All"
           onPress={() => {
             storage.clearAll();
+            setScopeDiskSize(0);
+            setScopeMemorySize(0);
+            setDiskSize(0);
+            setMemorySize(0);
           }}
           variant="danger"
           size="sm"
+        />
+      </Card>
+      {/* 16. Raw String API */}
+      <Card
+        title="Raw String API"
+        subtitle="getString / setString / deleteString"
+        indicatorColor={Colors.accent}
+      >
+        <View style={styles.row}>
+          <Button
+            testID="raw-set"
+            title="Set"
+            onPress={() => {
+              storage.setString("raw-demo", "hello-world", StorageScope.Memory);
+              setRawValue(
+                storage.getString("raw-demo", StorageScope.Memory) ?? undefined,
+              );
+            }}
+            style={styles.flex1}
+          />
+          <Button
+            testID="raw-delete"
+            title="Delete"
+            variant="danger"
+            onPress={() => {
+              storage.deleteString("raw-demo", StorageScope.Memory);
+              setRawValue(undefined);
+            }}
+          />
+        </View>
+        <StatusRow
+          testID="raw-value"
+          label="Value"
+          value={rawValue ?? "(empty)"}
+          color={rawValue ? Colors.text : Colors.muted}
+        />
+      </Card>
+
+      {/* 17. Prefix & Keys */}
+      <Card
+        title="Prefix & Keys"
+        subtitle="getAllKeys / getKeysByPrefix"
+        indicatorColor={Colors.primary}
+      >
+        <Button
+          testID="prefix-seed"
+          title="Seed Keys"
+          onPress={() => {
+            storage.setString("pfx_a", "1", StorageScope.Memory);
+            storage.setString("pfx_b", "2", StorageScope.Memory);
+            storage.setString("pfx_c", "3", StorageScope.Memory);
+            setAllMemoryKeys(storage.getAllKeys(StorageScope.Memory));
+            setPrefixKeys(
+              storage.getKeysByPrefix("pfx_", StorageScope.Memory),
+            );
+          }}
+        />
+        <StatusRow
+          testID="prefix-count"
+          label="Prefix keys (pfx_)"
+          value={String(prefixKeys.length)}
+        />
+        <StatusRow
+          testID="all-keys-count"
+          label="All memory keys"
+          value={String(allMemoryKeys.length)}
+        />
+        <Button
+          testID="prefix-refresh"
+          title="Refresh Counts"
+          variant="secondary"
+          size="sm"
+          onPress={() => {
+            setAllMemoryKeys(storage.getAllKeys(StorageScope.Memory));
+            setPrefixKeys(
+              storage.getKeysByPrefix("pfx_", StorageScope.Memory),
+            );
+          }}
         />
       </Card>
     </Page>

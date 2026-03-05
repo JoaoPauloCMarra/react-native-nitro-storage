@@ -637,12 +637,12 @@ export const storage = {
     });
   },
   import: (data: Record<string, string>, scope: StorageScope): void => {
+    const keys = Object.keys(data);
     measureOperation(
       "storage:import",
       scope,
       () => {
         assertValidScope(scope);
-        const keys = Object.keys(data);
         if (keys.length === 0) return;
         const values = keys.map((k) => data[k]!);
 
@@ -662,7 +662,7 @@ export const storage = {
         getStorageModule().setBatch(keys, values, scope);
         keys.forEach((key, index) => cacheRawValue(scope, key, values[index]));
       },
-      Object.keys(data).length,
+      keys.length,
     );
   },
 };

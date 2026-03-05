@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../core/NativeStorageAdapter.hpp"
-#include <atomic>
 #include <mutex>
 #include <unordered_set>
 
@@ -55,7 +54,7 @@ private:
     mutable std::mutex accessGroupMutex_;
     std::unordered_set<std::string> secureKeysCache_;
     std::unordered_set<std::string> biometricKeysCache_;
-    std::atomic<bool> secureKeyCacheHydrated_{false};
+    bool secureKeyCacheHydrated_{false};
 
     void ensureSecureKeyCacheHydrated();
     void markSecureKeySet(const std::string& key);

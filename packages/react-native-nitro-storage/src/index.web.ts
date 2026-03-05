@@ -1027,13 +1027,28 @@ export const storage = {
   resetMetrics: () => {
     metricsCounters.clear();
   },
+  getString: (key: string, scope: StorageScope): string | undefined => {
+    return measureOperation("storage:getString", scope, () => {
+      return getRawValue(key, scope);
+    });
+  },
+  setString: (key: string, value: string, scope: StorageScope): void => {
+    measureOperation("storage:setString", scope, () => {
+      setRawValue(key, value, scope);
+    });
+  },
+  deleteString: (key: string, scope: StorageScope): void => {
+    measureOperation("storage:deleteString", scope, () => {
+      removeRawValue(key, scope);
+    });
+  },
   import: (data: Record<string, string>, scope: StorageScope): void => {
+    const keys = Object.keys(data);
     measureOperation(
       "storage:import",
       scope,
       () => {
         assertValidScope(scope);
-        const keys = Object.keys(data);
         if (keys.length === 0) return;
         const values = keys.map((k) => data[k]!);
 
@@ -1051,8 +1066,9 @@ export const storage = {
         }
 
         WebStorage.setBatch(keys, values, scope);
+        keys.forEach((key, index) => cacheRawValue(scope, key, values[index]));
       },
-      Object.keys(data).length,
+      keys.length,
     );
   },
 };
@@ -1273,7 +1289,7 @@ export function createStorageItem<T = undefined>(
       scheduleSecureWrite(
         storageKey,
         rawValue,
-        secureAccessControl ?? AccessControl.WhenUnlocked,
+        secureAccessControl ?? secureDefaultAccessControl,
       );
       return;
     }
@@ -1297,7 +1313,7 @@ export function createStorageItem<T = undefined>(
       scheduleSecureWrite(
         storageKey,
         undefined,
-        secureAccessControl ?? AccessControl.WhenUnlocked,
+        secureAccessControl ?? secureDefaultAccessControl,
       );
       return;
     }
@@ -1704,7 +1720,7 @@ export function setBatch<T>(
 
         secureEntries.forEach(({ item, value, internal }) => {
           const accessControl =
-            internal._secureAccessControl ?? AccessControl.WhenUnlocked;
+            internal._secureAccessControl ?? secureDefaultAccessControl;
           const existingGroup = groupedByAccessControl.get(accessControl);
           const group = existingGroup ?? { keys: [], values: [] };
           group.keys.push(item.key);
@@ -1947,4 +1963,8 @@ export function createSecureAuthStorage<K extends string>(
   }
 
   return result as Record<K, StorageItem<string>>;
+}
+
+export function isKeychainLockedError(_err: unknown): boolean {
+  return false;
 }

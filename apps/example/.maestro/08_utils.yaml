@@ -1,0 +1,54 @@
+appId: com.nitrostorage.example
+name: "Storage Utils"
+---
+- launchApp:
+    clearState: true
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# Scroll to disk size
+- scrollUntilVisible:
+    element:
+      id: "util-disk-size"
+    direction: DOWN
+    timeout: 10000
+    centerElement: true
+
+# Verify disk and memory size elements are visible
+- assertVisible:
+    id: "util-disk-size"
+- assertVisible:
+    id: "util-memory-size"
+
+# Wipe memory storage
+- tapOn:
+    id: "util-wipe-memory"
+- waitForAnimationToEnd
+
+# Verify memory size is 0
+- assertVisible:
+    id: "util-memory-size"
+    text: "0"
+
+# Wipe disk storage
+- tapOn:
+    id: "util-wipe-disk"
+- waitForAnimationToEnd
+
+# Verify disk size is 0
+- assertVisible:
+    id: "util-disk-size"
+    text: "0"
+
+# Reset all
+- tapOn:
+    id: "util-reset-all"
+- waitForAnimationToEnd
+
+# Verify both sizes are 0
+- assertVisible:
+    id: "util-disk-size"
+    text: "0"
+- assertVisible:
+    id: "util-memory-size"
+    text: "0"

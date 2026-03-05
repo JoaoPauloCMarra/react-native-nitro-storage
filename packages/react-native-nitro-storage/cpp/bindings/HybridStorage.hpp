@@ -3,7 +3,9 @@
 #include "HybridStorageSpec.hpp"
 #include "../core/NativeStorageAdapter.hpp"
 #include <unordered_map>
+#ifdef NITRO_STORAGE_USE_ORDERED_MAP_FOR_TESTS
 #include <map>
+#endif
 #include <mutex>
 #include <functional>
 #include <memory>

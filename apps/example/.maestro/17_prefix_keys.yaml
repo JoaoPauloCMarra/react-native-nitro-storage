@@ -1,0 +1,41 @@
+appId: com.nitrostorage.example
+name: "Prefix & Keys"
+---
+- launchApp:
+    clearState: true
+- waitForAnimationToEnd:
+    timeout: 5000
+
+# Scroll to prefix section and seed data
+- scrollUntilVisible:
+    element:
+      id: "prefix-seed"
+    direction: DOWN
+    timeout: 10000
+    centerElement: true
+- tapOn:
+    id: "prefix-seed"
+- waitForAnimationToEnd
+
+# Assert prefix count
+- assertVisible:
+    id: "prefix-count"
+    text: "3"
+
+# Scroll to all-keys-count and verify it exists
+- scrollUntilVisible:
+    element:
+      id: "all-keys-count"
+    direction: DOWN
+    timeout: 10000
+    centerElement: true
+- assertVisible:
+    id: "all-keys-count"
+
+# Refresh and re-assert
+- tapOn:
+    id: "prefix-refresh"
+- waitForAnimationToEnd
+- assertVisible:
+    id: "prefix-count"
+    text: "3"
