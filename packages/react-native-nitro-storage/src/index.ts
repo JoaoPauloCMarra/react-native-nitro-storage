@@ -1454,13 +1454,18 @@ export function runTransaction<T>(
       flushSecureWrites();
     }
 
-    const rollback = new Map<string, string | undefined>();
+    const NOT_SET = Symbol();
+    const rollback = new Map<string, unknown>();
 
     const rememberRollback = (key: string) => {
       if (rollback.has(key)) {
         return;
       }
-      rollback.set(key, getRawValue(key, scope));
+      if (scope === StorageScope.Memory) {
+        rollback.set(key, memoryStore.has(key) ? memoryStore.get(key) : NOT_SET);
+      } else {
+        rollback.set(key, getRawValue(key, scope));
+      }
     };
 
     const tx: TransactionContext = {
@@ -1496,11 +1501,12 @@ export function runTransaction<T>(
       const rollbackEntries = Array.from(rollback.entries()).reverse();
       if (scope === StorageScope.Memory) {
         rollbackEntries.forEach(([key, previousValue]) => {
-          if (previousValue === undefined) {
-            removeRawValue(key, scope);
+          if (previousValue === NOT_SET) {
+            memoryStore.delete(key);
           } else {
-            setRawValue(key, previousValue, scope);
+            memoryStore.set(key, previousValue);
           }
+          notifyKeyListeners(memoryListeners, key);
         });
       } else {
         const keysToSet: string[] = [];
@@ -1512,7 +1518,7 @@ export function runTransaction<T>(
             keysToRemove.push(key);
           } else {
             keysToSet.push(key);
-            valuesToSet.push(previousValue);
+            valuesToSet.push(previousValue as string);
           }
         });
 

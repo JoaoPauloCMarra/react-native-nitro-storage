@@ -25,6 +25,7 @@ import {
   StatusRow,
   styles,
 } from "../components/shared";
+import { SmokeTestRunner } from "../components/smoke-test";
 
 // ─── Module-level storage items ───────────────────────────────────────────────
 
@@ -1000,6 +1001,9 @@ export default function HomeScreen() {
           }}
         />
       </Card>
+
+      {/* Smoke Test Runner */}
+      <SmokeTestRunner />
     </Page>
   );
 }
