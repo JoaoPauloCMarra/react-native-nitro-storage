@@ -470,7 +470,12 @@ export const storage = {
         flushSecureWrites();
       }
 
-      clearScopeRawCache(scope);
+      const scopeCache = getScopeRawCache(scope);
+      for (const key of scopeCache.keys()) {
+        if (isNamespaced(key, namespace)) {
+          scopeCache.delete(key);
+        }
+      }
       getStorageModule().removeByPrefix(keyPrefix, scope);
     });
   },
@@ -615,6 +620,21 @@ export const storage = {
   },
   resetMetrics: () => {
     metricsCounters.clear();
+  },
+  getString: (key: string, scope: StorageScope): string | undefined => {
+    return measureOperation("storage:getString", scope, () => {
+      return getRawValue(key, scope);
+    });
+  },
+  setString: (key: string, value: string, scope: StorageScope): void => {
+    measureOperation("storage:setString", scope, () => {
+      setRawValue(key, value, scope);
+    });
+  },
+  deleteString: (key: string, scope: StorageScope): void => {
+    measureOperation("storage:deleteString", scope, () => {
+      removeRawValue(key, scope);
+    });
   },
   import: (data: Record<string, string>, scope: StorageScope): void => {
     measureOperation(
