@@ -1,0 +1,124 @@
+appId: com.nitrostorage.example
+name: "App Storage - Full E2E"
+---
+- launchApp:
+    clearState: true
+
+- tapOn: "AS"
+
+# ── Scenario A — Fresh Install ────────────────────────────────
+- tapOn:
+    id: "as-a-reset"
+- tapOn:
+    id: "as-a-read"
+- assertVisible:
+    id: "as-a-access-result"
+    text: "null ✗"
+- assertVisible:
+    id: "as-a-refresh-result"
+    text: "null ✗"
+
+# ── Scenario B — Upgrade: Legacy → Namespaced ─────────────────
+- scrollUntilVisible:
+    element:
+      id: "as-b-setup"
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: "as-b-setup"
+- tapOn:
+    id: "as-b-read"
+- assertVisible:
+    id: "as-b-access-result"
+    text: '"legacy_access_abc" ✓'
+- scrollUntilVisible:
+    element:
+      id: "as-live-legacy-access"
+    direction: UP
+    timeout: 10000
+- assertVisible:
+    id: "as-live-legacy-access"
+    text: "(empty)"
+
+# ── Scenario C — No Overwrite: Namespaced Wins ────────────────
+- scrollUntilVisible:
+    element:
+      id: "as-c-setup"
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: "as-c-setup"
+- tapOn:
+    id: "as-c-read"
+- assertVisible:
+    id: "as-c-access-result"
+    text: '"namespaced_token_current" ✓'
+
+# ── Scenario D — Normal Session Lifecycle ─────────────────────
+- scrollUntilVisible:
+    element:
+      id: "as-d-persist"
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: "as-d-persist"
+- assertNotVisible:
+    id: "as-d-access"
+    text: "(empty)"
+- assertVisible:
+    id: "as-d-login-method"
+    text: "otp_email"
+- tapOn:
+    id: "as-d-clear"
+- assertVisible:
+    id: "as-d-access"
+    text: "(empty)"
+
+# ── Scenario E — Logout Preserves groupShareIntroSkip ─────────
+- scrollUntilVisible:
+    element:
+      id: "as-e-setup"
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: "as-e-setup"
+- tapOn:
+    id: "as-e-logout"
+- assertVisible:
+    id: "as-e-access"
+    text: "empty ✓"
+- assertVisible:
+    id: "as-e-group-skip"
+    text: "true"
+- assertVisible:
+    id: "as-e-logout-progress"
+    text: "false"
+
+# ── Scenario F — Namespace Isolation ──────────────────────────
+- scrollUntilVisible:
+    element:
+      id: "as-f-set-all"
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: "as-f-set-all"
+- tapOn:
+    id: "as-f-clear-ns"
+- assertVisible:
+    id: "as-f-access"
+    text: "empty ✓"
+- assertVisible:
+    id: "as-f-other-secret"
+    text: "keep-me"
+
+# ── Migration Flag ─────────────────────────────────────────────
+- scrollUntilVisible:
+    element:
+      id: "as-mig-reset"
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: "as-mig-reset"
+- assertVisible:
+    id: "as-mig-status"
+    text: "false"

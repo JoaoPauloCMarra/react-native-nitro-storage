@@ -201,6 +201,7 @@ export default function FeaturesScreen() {
         <View style={styles.row}>
           <Button
             title="Count +1"
+            testID="ft-count-increment"
             onPress={() => {
               setHook((p) => ({ ...p, count: p.count + 1 }));
             }}
@@ -208,6 +209,7 @@ export default function FeaturesScreen() {
           />
           <Button
             title="Change Label"
+            testID="ft-label-change"
             onPress={() => {
               setHook((p) => ({
                 ...p,
@@ -228,6 +230,7 @@ export default function FeaturesScreen() {
       >
         <Input
           label="Age (13–120)"
+          testID="ft-age-input"
           value={ageInput}
           onChangeText={setAgeInput}
           placeholder="Enter age"
@@ -236,6 +239,7 @@ export default function FeaturesScreen() {
         <View style={styles.row}>
           <Button
             title="Save"
+            testID="ft-val-save"
             onPress={() => {
               const n = Number(ageInput);
               if (!Number.isFinite(n)) {
@@ -253,6 +257,7 @@ export default function FeaturesScreen() {
           />
           <Button
             title="Inject Invalid"
+            testID="ft-val-inject"
             onPress={() => {
               runTransaction(StorageScope.Disk, (tx) => {
                 tx.setRaw(validatedAge.key, "-999");
@@ -265,7 +270,7 @@ export default function FeaturesScreen() {
             style={styles.flex1}
           />
         </View>
-        <StatusRow label="Current" value={String(age)} color={Colors.text} />
+        <StatusRow label="Current" value={String(age)} color={Colors.text} testID="ft-val-current" />
         <Text style={{ color: Colors.muted, fontSize: 12 }}>{valStatus}</Text>
       </Card>
 
@@ -282,6 +287,7 @@ export default function FeaturesScreen() {
         <View style={styles.row}>
           <Button
             title="Seed 5s Value"
+            testID="ft-ttl-seed"
             onPress={() => {
               ttlItem.set(`session-${Date.now()}`);
               setTtlVal(ttlItem.get());
@@ -291,6 +297,7 @@ export default function FeaturesScreen() {
           />
           <Button
             title="Refresh"
+            testID="ft-ttl-refresh"
             onPress={() => {
               const v = ttlItem.get();
               setTtlVal(v);
@@ -304,6 +311,7 @@ export default function FeaturesScreen() {
           label="Value"
           value={ttlVal || "(expired)"}
           color={ttlVal ? Colors.text : Colors.muted}
+          testID="ft-ttl-value"
         />
         <Text style={{ color: Colors.muted, fontSize: 12 }}>{ttlStatus}</Text>
       </Card>
@@ -318,11 +326,13 @@ export default function FeaturesScreen() {
           label="Balance"
           value={String(balance)}
           color={Colors.text}
+          testID="ft-tx-balance"
         />
-        <StatusRow label="Log" value={log} />
+        <StatusRow label="Log" value={log} testID="ft-tx-log" />
         <View style={styles.row}>
           <Button
             title="Commit +10"
+            testID="ft-tx-commit"
             onPress={() => {
               runTransaction(StorageScope.Disk, (tx) => {
                 const cur = tx.getItem(txBalance);
@@ -335,6 +345,7 @@ export default function FeaturesScreen() {
           />
           <Button
             title="Rollback"
+            testID="ft-tx-rollback"
             onPress={() => {
               try {
                 runTransaction(StorageScope.Disk, (tx) => {
@@ -351,6 +362,7 @@ export default function FeaturesScreen() {
         </View>
         <Button
           title="Clear Log"
+          testID="ft-tx-clear"
           onPress={() => {
             runTransaction(StorageScope.Disk, (tx) => {
               tx.removeItem(txLog);
@@ -368,6 +380,7 @@ export default function FeaturesScreen() {
         <View style={styles.row}>
           <Button
             title="Seed Legacy"
+            testID="ft-mig-seed"
             onPress={() => {
               migName.set("legacy-user");
               migMarker.set("pending");
@@ -378,6 +391,7 @@ export default function FeaturesScreen() {
           />
           <Button
             title="Run Migrations"
+            testID="ft-mig-run"
             onPress={() => {
               const v1 = migVer.current + 1;
               const v2 = migVer.current + 2;
@@ -405,6 +419,7 @@ export default function FeaturesScreen() {
         <View style={styles.row}>
           <Button
             title="Seed Fake MMKV"
+            testID="ft-mmkv-seed"
             onPress={() => {
               fakeStore.current.set(mmkvTarget.key, "legacy-mmkv-value");
               setMmkvStatus("Seeded");
@@ -414,6 +429,7 @@ export default function FeaturesScreen() {
           />
           <Button
             title="Migrate"
+            testID="ft-mmkv-migrate"
             onPress={() => {
               const ok = migrateFromMMKV(fakeMMKV, mmkvTarget, true);
               setMmkvStatus(
@@ -425,7 +441,7 @@ export default function FeaturesScreen() {
             style={styles.flex1}
           />
         </View>
-        <StatusRow label="Target" value={mmkvVal || "(empty)"} />
+        <StatusRow label="Target" value={mmkvVal || "(empty)"} testID="ft-mmkv-target" />
         <Text style={{ color: Colors.muted, fontSize: 12 }}>{mmkvStatus}</Text>
       </Card>
 
@@ -446,6 +462,7 @@ export default function FeaturesScreen() {
         </View>
         <Input
           label="ID"
+          testID="ft-codec-input"
           value={codecId}
           onChangeText={setCodecId}
           placeholder="Custom id"
@@ -453,6 +470,7 @@ export default function FeaturesScreen() {
         <View style={styles.row}>
           <Button
             title="Save"
+            testID="ft-codec-save"
             onPress={() => {
               setCodecVal((p) => ({ ...p, id: codecId || "item-1" }));
             }}
@@ -460,6 +478,7 @@ export default function FeaturesScreen() {
           />
           <Button
             title="Toggle"
+            testID="ft-codec-toggle"
             onPress={() => {
               setCodecVal((p) => ({ ...p, enabled: !p.enabled }));
             }}
@@ -473,6 +492,7 @@ export default function FeaturesScreen() {
       <Card title="Advanced Config" subtitle="readCache / coalesceSecureWrites">
         <Button
           title="readCache Benchmark"
+          testID="ft-cache-bench"
           onPress={() => {
             const payload = `v-${Date.now()}`;
             cachedRead.set(payload);
@@ -494,6 +514,7 @@ export default function FeaturesScreen() {
 
         <Input
           label="Secure Burst Base"
+          testID="ft-burst-input"
           value={secInput}
           onChangeText={setSecInput}
           placeholder="Optional text"
@@ -501,6 +522,7 @@ export default function FeaturesScreen() {
         <View style={styles.row}>
           <Button
             title="Single Set"
+            testID="ft-burst-single"
             onPress={() => {
               setBurstVal(secInput || "secure");
             }}
@@ -509,6 +531,7 @@ export default function FeaturesScreen() {
           />
           <Button
             title="Burst ×3"
+            testID="ft-burst-triple"
             onPress={() => {
               const b = secInput || "secure";
               secureBurst.set(`${b}-1`);
@@ -518,7 +541,7 @@ export default function FeaturesScreen() {
             style={styles.flex1}
           />
         </View>
-        <StatusRow label="Secure value" value={burstVal || "(empty)"} />
+        <StatusRow label="Secure value" value={burstVal || "(empty)"} testID="ft-burst-value" />
       </Card>
     </Page>
   );

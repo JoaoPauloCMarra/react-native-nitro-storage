@@ -45,6 +45,7 @@ const ResultCard = memo(
     onRun,
     running,
     disabled,
+    testID,
   }: {
     title: string;
     result: BenchResult | null;
@@ -52,6 +53,7 @@ const ResultCard = memo(
     onRun: () => void;
     running: boolean;
     disabled: boolean;
+    testID?: string;
   }) => (
     <Card
       title={title}
@@ -64,11 +66,13 @@ const ResultCard = memo(
             label={`write ${result.ops} ops`}
             value={`${result.write.toFixed(2)}ms`}
             color={color}
+            testID={testID ? `${testID}-write` : undefined}
           />
           <StatusRow
             label={`read ${result.ops} ops`}
             value={`${result.read.toFixed(2)}ms`}
             color={color}
+            testID={testID ? `${testID}-read` : undefined}
           />
           <View style={s.avgRow}>
             <Text style={s.avgLabel}>avg latency</Text>
@@ -87,6 +91,7 @@ const ResultCard = memo(
         onPress={onRun}
         variant="ghost"
         disabled={disabled}
+        testID={testID}
       />
     </Card>
   ),
@@ -172,6 +177,7 @@ export default function BenchmarkScreen() {
           }}
           disabled={busy}
           size="lg"
+          testID="bench-run-all"
         />
       </Card>
 
@@ -184,6 +190,7 @@ export default function BenchmarkScreen() {
         }}
         running={runningType === "mem"}
         disabled={busy}
+        testID="bench-run-memory"
       />
 
       <ResultCard
@@ -195,6 +202,7 @@ export default function BenchmarkScreen() {
         }}
         running={runningType === "disk"}
         disabled={busy}
+        testID="bench-run-disk"
       />
 
       <ResultCard
@@ -206,6 +214,7 @@ export default function BenchmarkScreen() {
         }}
         running={runningType === "secure"}
         disabled={busy}
+        testID="bench-run-secure"
       />
     </Page>
   );

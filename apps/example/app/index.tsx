@@ -62,6 +62,11 @@ const authTokens = createSecureAuthStorage({
   refreshToken: {},
 });
 
+const namespacedAuthTokens = createSecureAuthStorage(
+  { accessToken: {}, refreshToken: {} },
+  { namespace: "example-auth" },
+);
+
 export default function ShowcaseScreen() {
   const [counter, setCounter] = useStorage(memoryCounter);
   const [username, setUsername] = useStorage(diskUsername);
@@ -73,6 +78,8 @@ export default function ShowcaseScreen() {
   const [tempPref, setTempPref] = useState("");
   const [atValue] = useStorage(authTokens.accessToken);
   const [rtValue] = useStorage(authTokens.refreshToken);
+  const [nsAtValue] = useStorage(namespacedAuthTokens.accessToken);
+  const [nsRtValue] = useStorage(namespacedAuthTokens.refreshToken);
 
   return (
     <Page
@@ -98,11 +105,12 @@ export default function ShowcaseScreen() {
       >
         <View style={styles.panel}>
           <Text style={styles.panelTitle}>Counter value</Text>
-          <Text style={styles.panelValue}>{counter}</Text>
+          <Text testID="counter-value" style={styles.panelValue}>{counter}</Text>
         </View>
 
         <View style={styles.row}>
           <Button
+            testID="counter-decrement"
             title="-"
             onPress={() => {
               setCounter(counter - 1);
@@ -111,6 +119,7 @@ export default function ShowcaseScreen() {
             style={styles.flex1}
           />
           <Button
+            testID="counter-reset"
             title="Reset"
             onPress={() => {
               setCounter(0);
@@ -119,6 +128,7 @@ export default function ShowcaseScreen() {
             style={styles.flex1}
           />
           <Button
+            testID="counter-increment"
             title="+"
             onPress={() => {
               setCounter(counter + 1);
@@ -134,14 +144,16 @@ export default function ShowcaseScreen() {
         indicatorColor={Colors.disk}
       >
         <Input
+          testID="disk-name-input"
           label="Display name"
           value={tempName}
           onChangeText={setTempName}
           placeholder="Enter a name"
-          autoCapitalize="words"
+          autoCapitalize="none"
         />
         <View style={styles.row}>
           <Button
+            testID="disk-save"
             title="Save"
             onPress={() => {
               setUsername(tempName.trim());
@@ -151,6 +163,7 @@ export default function ShowcaseScreen() {
             disabled={!tempName.trim()}
           />
           <Button
+            testID="disk-delete"
             title="Delete"
             variant="danger"
             onPress={() => {
@@ -159,11 +172,13 @@ export default function ShowcaseScreen() {
           />
         </View>
         <StatusRow
+          testID="disk-stored-value"
           label="Stored"
           value={username || "(empty)"}
           color={username ? Colors.disk : Colors.muted}
         />
         <StatusRow
+          testID="disk-has-value"
           label="has()"
           value={String(diskUsername.has())}
           color={diskUsername.has() ? Colors.success : Colors.muted}
@@ -176,6 +191,7 @@ export default function ShowcaseScreen() {
         indicatorColor={Colors.secure}
       >
         <Input
+          testID="secure-token-input"
           label="Secret value"
           value={tempToken}
           onChangeText={setTempToken}
@@ -185,6 +201,7 @@ export default function ShowcaseScreen() {
         />
         <View style={styles.row}>
           <Button
+            testID="secure-lock"
             title="Lock"
             onPress={() => {
               setToken(tempToken.trim());
@@ -195,6 +212,7 @@ export default function ShowcaseScreen() {
             disabled={!tempToken.trim()}
           />
           <Button
+            testID="secure-wipe"
             title="Wipe"
             variant="danger"
             onPress={() => {
@@ -204,6 +222,7 @@ export default function ShowcaseScreen() {
         </View>
         {token ? (
           <StatusRow
+            testID="secure-encrypted-value"
             label="Encrypted"
             value={`${token.slice(0, 6)}....`}
             color={Colors.secure}
@@ -221,6 +240,7 @@ export default function ShowcaseScreen() {
           naming.
         </Text>
         <Input
+          testID="ns-pref-input"
           label="Preference value"
           value={tempPref}
           onChangeText={setTempPref}
@@ -228,6 +248,7 @@ export default function ShowcaseScreen() {
         />
         <View style={styles.row}>
           <Button
+            testID="ns-save"
             title="Save"
             onPress={() => {
               setNsPref(tempPref.trim());
@@ -237,6 +258,7 @@ export default function ShowcaseScreen() {
             disabled={!tempPref.trim()}
           />
           <Button
+            testID="ns-clear-namespace"
             title="Clear namespace"
             variant="secondary"
             onPress={() => {
@@ -250,7 +272,7 @@ export default function ShowcaseScreen() {
           value={namespacedItem.key}
           color={Colors.accent}
         />
-        <StatusRow label="Value" value={nsPref || "(empty)"} />
+        <StatusRow testID="ns-pref-value" label="Value" value={nsPref || "(empty)"} />
       </Card>
 
       <Card
@@ -261,6 +283,7 @@ export default function ShowcaseScreen() {
         <View style={s.toggleRow}>
           <Text style={s.toggleLabel}>Theme</Text>
           <Button
+            testID="json-theme-toggle"
             title={config.theme.toUpperCase()}
             onPress={() => {
               setConfig((prev) => ({
@@ -275,6 +298,7 @@ export default function ShowcaseScreen() {
         <View style={s.toggleRow}>
           <Text style={s.toggleLabel}>Notifications</Text>
           <Button
+            testID="json-notif-toggle"
             title={config.notifications ? "ON" : "OFF"}
             onPress={() => {
               setConfig((prev) => ({
@@ -286,7 +310,7 @@ export default function ShowcaseScreen() {
             size="sm"
           />
         </View>
-        <CodeBlock>{JSON.stringify(config, null, 2)}</CodeBlock>
+        <CodeBlock testID="json-config-code">{JSON.stringify(config, null, 2)}</CodeBlock>
       </Card>
 
       <Card
@@ -299,6 +323,7 @@ export default function ShowcaseScreen() {
         </Text>
         <View style={styles.row}>
           <Button
+            testID="auth-set-tokens"
             title="Set Tokens"
             onPress={() => {
               const now = Date.now().toString(36);
@@ -308,6 +333,7 @@ export default function ShowcaseScreen() {
             style={styles.flex1}
           />
           <Button
+            testID="auth-clear"
             title="Clear"
             variant="danger"
             onPress={() => {
@@ -316,8 +342,8 @@ export default function ShowcaseScreen() {
             }}
           />
         </View>
-        <StatusRow label="accessToken" value={atValue || "(empty)"} />
-        <StatusRow label="refreshToken" value={rtValue || "(empty)"} />
+        <StatusRow testID="auth-access-token-value" label="accessToken" value={atValue || "(empty)"} />
+        <StatusRow testID="auth-refresh-token-value" label="refreshToken" value={rtValue || "(empty)"} />
         <View style={styles.row}>
           <Badge label="Secure" color={Colors.secure} />
           <Badge label="TTL 60s" color={Colors.warning} />
@@ -325,9 +351,54 @@ export default function ShowcaseScreen() {
         </View>
       </Card>
 
+      <Card
+        title="Namespaced Auth Storage"
+        subtitle="createSecureAuthStorage + namespace isolation"
+        indicatorColor={Colors.secure}
+      >
+        <Text style={styles.helperText}>
+          Tokens stored under the{" "}
+          <Text style={{ fontWeight: "bold" }}>"example-auth"</Text> namespace.
+          Clearing the namespace removes both atomically without affecting other
+          secure keys (e.g. the non-namespaced token above).
+        </Text>
+        <View style={styles.row}>
+          <Button
+            testID="ns-auth-set-tokens"
+            title="Set Tokens"
+            onPress={() => {
+              const now = Date.now().toString(36);
+              namespacedAuthTokens.accessToken.set(`ns_at_${now}`);
+              namespacedAuthTokens.refreshToken.set(`ns_rt_${now}`);
+            }}
+            style={styles.flex1}
+          />
+          <Button
+            testID="ns-auth-clear-namespace"
+            title="Clear Namespace"
+            variant="danger"
+            onPress={() => {
+              storage.clearNamespace("example-auth", StorageScope.Secure);
+            }}
+          />
+        </View>
+        <StatusRow testID="ns-auth-access-token-value" label="accessToken" value={nsAtValue || "(empty)"} />
+        <StatusRow testID="ns-auth-refresh-token-value" label="refreshToken" value={nsRtValue || "(empty)"} />
+        <StatusRow
+          label="non-namespaced token (unaffected)"
+          value={token || "(empty)"}
+          color={token ? Colors.success : Colors.muted}
+        />
+        <View style={styles.row}>
+          <Badge label="Secure" color={Colors.secure} />
+          <Badge label="namespace: example-auth" color={Colors.accent} />
+        </View>
+      </Card>
+
       <Card title="Storage Utilities" subtitle="Introspection helpers">
         <Section title="Disk">
           <StatusRow
+            testID="util-disk-size"
             label="size()"
             value={String(storage.size(StorageScope.Disk))}
           />
@@ -342,6 +413,7 @@ export default function ShowcaseScreen() {
 
         <Section title="Memory">
           <StatusRow
+            testID="util-memory-size"
             label="size()"
             value={String(storage.size(StorageScope.Memory))}
           />
@@ -357,6 +429,7 @@ export default function ShowcaseScreen() {
         <Section title="Actions">
           <View style={styles.grid}>
             <Button
+              testID="util-wipe-memory"
               title="Wipe Memory"
               onPress={() => {
                 storage.clear(StorageScope.Memory);
@@ -366,6 +439,7 @@ export default function ShowcaseScreen() {
               style={styles.flex1}
             />
             <Button
+              testID="util-wipe-disk"
               title="Wipe Disk"
               onPress={() => {
                 storage.clear(StorageScope.Disk);
@@ -376,6 +450,7 @@ export default function ShowcaseScreen() {
             />
           </View>
           <Button
+            testID="util-reset-all"
             title="Reset Everything"
             onPress={() => {
               storage.clearAll();

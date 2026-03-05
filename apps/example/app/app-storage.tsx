@@ -1,9 +1,8 @@
 /**
- * Reproduces the exact storage setup used in the Goodword mobile app.
+ * Reproduces a real-world app storage setup with namespaced auth tokens,
+ * migration patterns, and multi-scope usage.
  * Use this screen to validate all storage scenarios on a real device
- * before shipping react-native-nitro-storage changes that affect Goodword.
- *
- * Mirrors: services/storage.ts in the Goodword mobile-app repo.
+ * before shipping react-native-nitro-storage changes.
  */
 
 import { useState } from "react";
@@ -28,10 +27,10 @@ import {
 } from "../components/shared";
 
 // ---------------------------------------------------------------------------
-// Exact mirror of Goodword services/storage.ts
+// Real-world auth storage setup
 // ---------------------------------------------------------------------------
 
-const AUTH_STORAGE_NAMESPACE = "goodword-auth";
+const AUTH_STORAGE_NAMESPACE = "app-auth";
 
 const authSecureStorage = createSecureAuthStorage(
   { accessToken: {}, refreshToken: {} },
@@ -75,7 +74,7 @@ const otherSecretItem = createStorageItem({
   defaultValue: "",
 });
 
-// Migration state — module-level as in Goodword
+// Migration state — module-level singleton
 let didMigrateLegacyAuthTokens = false;
 
 const normalizeToken = (value: string | null | undefined): string | null => {
@@ -169,7 +168,7 @@ const resetMigrationFlag = () => {
 // Screen
 // ---------------------------------------------------------------------------
 
-export default function GoodwordStorageScreen() {
+export default function AppStorageScreen() {
   const [accessToken] = useStorage(authSecureStorage.accessToken);
   const [refreshToken] = useStorage(authSecureStorage.refreshToken);
   const [legacyAccess] = useStorage(legacyAccessTokenAtom);
@@ -188,8 +187,8 @@ export default function GoodwordStorageScreen() {
 
   return (
     <Page
-      title="Goodword Storage"
-      subtitle="Exact mirror of services/storage.ts — validate before shipping"
+      title="App Storage"
+      subtitle="Real-world storage setup — validate before shipping"
     >
       {/* ------------------------------------------------------------------ */}
       {/* Live state                                                           */}
@@ -199,18 +198,18 @@ export default function GoodwordStorageScreen() {
         subtitle="Reactive — updates immediately on change"
         indicatorColor={Colors.secure}
       >
-        <Section title="Namespaced secure (goodword-auth)">
+        <Section title="Namespaced secure (app-auth)">
           <StatusRow
             label="accessToken"
             value={accessToken || "(empty)"}
             color={accessToken ? Colors.success : Colors.muted}
-            testID="gw-live-access"
+            testID="as-live-access"
           />
           <StatusRow
             label="refreshToken"
             value={refreshToken || "(empty)"}
             color={refreshToken ? Colors.success : Colors.muted}
-            testID="gw-live-refresh"
+            testID="as-live-refresh"
           />
         </Section>
         <Section title="Legacy secure (pre-migration)">
@@ -218,13 +217,13 @@ export default function GoodwordStorageScreen() {
             label="authToken"
             value={legacyAccess || "(empty)"}
             color={legacyAccess ? Colors.warning : Colors.muted}
-            testID="gw-live-legacy-access"
+            testID="as-live-legacy-access"
           />
           <StatusRow
             label="refreshToken"
             value={legacyRefresh || "(empty)"}
             color={legacyRefresh ? Colors.warning : Colors.muted}
-            testID="gw-live-legacy-refresh"
+            testID="as-live-legacy-refresh"
           />
         </Section>
         <Section title="Disk">
@@ -232,13 +231,13 @@ export default function GoodwordStorageScreen() {
             label="loginMethod"
             value={loginMethod ?? "(null)"}
             color={loginMethod ? Colors.disk : Colors.muted}
-            testID="gw-live-login-method"
+            testID="as-live-login-method"
           />
           <StatusRow
             label="groupShareIntroSkip"
             value={String(groupShareIntroSkip)}
             color={groupShareIntroSkip ? Colors.success : Colors.muted}
-            testID="gw-live-group-skip"
+            testID="as-live-group-skip"
           />
         </Section>
         <Section title="Memory">
@@ -246,7 +245,7 @@ export default function GoodwordStorageScreen() {
             label="logoutInProgress"
             value={String(logoutInProgress)}
             color={logoutInProgress ? Colors.danger : Colors.muted}
-            testID="gw-live-logout-progress"
+            testID="as-live-logout-progress"
           />
         </Section>
         <Section title="Migration">
@@ -254,7 +253,7 @@ export default function GoodwordStorageScreen() {
             label="didMigrateLegacyAuthTokens"
             value={String(migrationRan)}
             color={migrationRan ? Colors.success : Colors.muted}
-            testID="gw-live-migration-flag"
+            testID="as-live-migration-flag"
           />
         </Section>
       </Card>
@@ -283,7 +282,7 @@ export default function GoodwordStorageScreen() {
               setLastReadRefresh("(not read yet)");
             }}
             style={styles.flex1}
-            testID="gw-a-reset"
+            testID="as-a-reset"
           />
           <Button
             title="2. Read Tokens"
@@ -295,11 +294,11 @@ export default function GoodwordStorageScreen() {
               setMigrationRan(didMigrateLegacyAuthTokens);
             }}
             style={styles.flex1}
-            testID="gw-a-read"
+            testID="as-a-read"
           />
         </View>
-        <StatusRow label="getAccessToken()" value={lastReadAccess} testID="gw-a-access-result" />
-        <StatusRow label="getRefreshToken()" value={lastReadRefresh} testID="gw-a-refresh-result" />
+        <StatusRow label="getAccessToken()" value={lastReadAccess} testID="as-a-access-result" />
+        <StatusRow label="getRefreshToken()" value={lastReadRefresh} testID="as-a-refresh-result" />
         <View style={styles.row}>
           <Badge label="Expected: null" color={Colors.primary} />
           <Badge label="Migration ran" color={Colors.accent} />
@@ -333,7 +332,7 @@ export default function GoodwordStorageScreen() {
               legacyRefreshTokenAtom.set("legacy_refresh_xyz");
             }}
             style={styles.flex1}
-            testID="gw-b-setup"
+            testID="as-b-setup"
           />
           <Button
             title="2. Read Tokens"
@@ -345,11 +344,11 @@ export default function GoodwordStorageScreen() {
               setMigrationRan(didMigrateLegacyAuthTokens);
             }}
             style={styles.flex1}
-            testID="gw-b-read"
+            testID="as-b-read"
           />
         </View>
-        <StatusRow label="getAccessToken()" value={lastReadAccess} testID="gw-b-access-result" />
-        <StatusRow label="getRefreshToken()" value={lastReadRefresh} testID="gw-b-refresh-result" />
+        <StatusRow label="getAccessToken()" value={lastReadAccess} testID="as-b-access-result" />
+        <StatusRow label="getRefreshToken()" value={lastReadRefresh} testID="as-b-refresh-result" />
         <View style={styles.row}>
           <Badge label='Expected: "legacy_access_abc"' color={Colors.warning} />
           <Badge label="Legacy keys cleared" color={Colors.accent} />
@@ -383,7 +382,7 @@ export default function GoodwordStorageScreen() {
               legacyAccessTokenAtom.set("stale_legacy_token");
             }}
             style={styles.flex1}
-            testID="gw-c-setup"
+            testID="as-c-setup"
           />
           <Button
             title="2. Read Token"
@@ -393,10 +392,10 @@ export default function GoodwordStorageScreen() {
               setMigrationRan(didMigrateLegacyAuthTokens);
             }}
             style={styles.flex1}
-            testID="gw-c-read"
+            testID="as-c-read"
           />
         </View>
-        <StatusRow label="getAccessToken()" value={lastReadAccess} testID="gw-c-access-result" />
+        <StatusRow label="getAccessToken()" value={lastReadAccess} testID="as-c-access-result" />
         <View style={styles.row}>
           <Badge label='Expected: "namespaced_token_current"' color={Colors.secure} />
         </View>
@@ -426,7 +425,7 @@ export default function GoodwordStorageScreen() {
               setMigrationRan(didMigrateLegacyAuthTokens);
             }}
             style={styles.flex1}
-            testID="gw-d-persist"
+            testID="as-d-persist"
           />
           <Button
             title="Clear Auth"
@@ -434,26 +433,26 @@ export default function GoodwordStorageScreen() {
             onPress={() => {
               clearAuthSessionStorage();
             }}
-            testID="gw-d-clear"
+            testID="as-d-clear"
           />
         </View>
         <StatusRow
           label="accessToken"
           value={accessToken || "(empty)"}
           color={accessToken ? Colors.success : Colors.muted}
-          testID="gw-d-access"
+          testID="as-d-access"
         />
         <StatusRow
           label="refreshToken"
           value={refreshToken || "(empty)"}
           color={refreshToken ? Colors.success : Colors.muted}
-          testID="gw-d-refresh"
+          testID="as-d-refresh"
         />
         <StatusRow
           label="loginMethod"
           value={loginMethod ?? "(null)"}
           color={loginMethod ? Colors.disk : Colors.muted}
-          testID="gw-d-login-method"
+          testID="as-d-login-method"
         />
       </Card>
 
@@ -479,7 +478,7 @@ export default function GoodwordStorageScreen() {
               logoutInProgressAtom.set(true);
             }}
             style={styles.flex1}
-            testID="gw-e-setup"
+            testID="as-e-setup"
           />
           <Button
             title="2. Logout"
@@ -488,32 +487,32 @@ export default function GoodwordStorageScreen() {
               clearStorageForLogout();
             }}
             style={styles.flex1}
-            testID="gw-e-logout"
+            testID="as-e-logout"
           />
         </View>
         <StatusRow
           label="accessToken (must be empty)"
           value={accessToken || "empty ✓"}
           color={accessToken ? Colors.danger : Colors.success}
-          testID="gw-e-access"
+          testID="as-e-access"
         />
         <StatusRow
           label="loginMethod (must be null)"
           value={loginMethod ?? "null ✓"}
           color={loginMethod ? Colors.danger : Colors.success}
-          testID="gw-e-login-method"
+          testID="as-e-login-method"
         />
         <StatusRow
           label="logoutInProgress (must be false)"
           value={String(logoutInProgress)}
           color={logoutInProgress ? Colors.danger : Colors.success}
-          testID="gw-e-logout-progress"
+          testID="as-e-logout-progress"
         />
         <StatusRow
           label="groupShareIntroSkip (must be true)"
           value={String(groupShareIntroSkip)}
           color={groupShareIntroSkip ? Colors.success : Colors.danger}
-          testID="gw-e-group-skip"
+          testID="as-e-group-skip"
         />
       </Card>
 
@@ -522,14 +521,14 @@ export default function GoodwordStorageScreen() {
       {/* ------------------------------------------------------------------ */}
       <Card
         title="F — Namespace Isolation"
-        subtitle="clearNamespace('goodword-auth') must not touch other secure keys"
+        subtitle="clearNamespace('app-auth') must not touch other secure keys"
         indicatorColor={Colors.secure}
       >
         <Text style={styles.helperText}>
           A standalone secure item (key: "other-secret") must be unaffected when
-          the goodword-auth namespace is cleared.
+          the app-auth namespace is cleared.
         </Text>
-        <CodeBlock>{`storage.clearNamespace("goodword-auth", Secure)`}</CodeBlock>
+        <CodeBlock>{`storage.clearNamespace("app-auth", Secure)`}</CodeBlock>
         <View style={styles.row}>
           <Button
             title="1. Set All"
@@ -540,7 +539,7 @@ export default function GoodwordStorageScreen() {
               otherSecretItem.set("keep-me");
             }}
             style={styles.flex1}
-            testID="gw-f-set-all"
+            testID="as-f-set-all"
           />
           <Button
             title="2. Clear Namespace"
@@ -549,26 +548,26 @@ export default function GoodwordStorageScreen() {
               storage.clearNamespace(AUTH_STORAGE_NAMESPACE, StorageScope.Secure);
             }}
             style={styles.flex1}
-            testID="gw-f-clear-ns"
+            testID="as-f-clear-ns"
           />
         </View>
         <StatusRow
           label="accessToken (must be empty)"
           value={accessToken || "empty ✓"}
           color={accessToken ? Colors.danger : Colors.success}
-          testID="gw-f-access"
+          testID="as-f-access"
         />
         <StatusRow
           label="refreshToken (must be empty)"
           value={refreshToken || "empty ✓"}
           color={refreshToken ? Colors.danger : Colors.success}
-          testID="gw-f-refresh"
+          testID="as-f-refresh"
         />
         <StatusRow
           label='other-secret (must be "keep-me")'
           value={otherSecret || "(gone ✗)"}
           color={otherSecret === "keep-me" ? Colors.success : Colors.danger}
-          testID="gw-f-other-secret"
+          testID="as-f-other-secret"
         />
       </Card>
 
@@ -589,13 +588,13 @@ export default function GoodwordStorageScreen() {
             setLastReadAccess("(not read yet)");
             setLastReadRefresh("(not read yet)");
           }}
-          testID="gw-mig-reset"
+          testID="as-mig-reset"
         />
         <StatusRow
           label="didMigrateLegacyAuthTokens"
           value={String(migrationRan)}
           color={migrationRan ? Colors.primary : Colors.muted}
-          testID="gw-mig-status"
+          testID="as-mig-status"
         />
       </Card>
     </Page>

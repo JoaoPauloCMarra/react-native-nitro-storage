@@ -137,6 +137,15 @@ export default function RootLayout() {
             ),
           }}
         />
+        <Tabs.Screen
+          name="app-storage"
+          options={{
+            title: "AS",
+            tabBarIcon: ({ color, focused }) => (
+              <TabGlyph label="AS" color={color} focused={focused} />
+            ),
+          }}
+        />
       </Tabs>
     </View>
   );

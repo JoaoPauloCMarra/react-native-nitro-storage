@@ -56,9 +56,9 @@ export default function ToolsScreen() {
         indicatorColor={Colors.primary}
       >
         <View style={styles.panel}>
-          <StatusRow label="item 1" value={v1} color={Colors.primary} />
-          <StatusRow label="item 2" value={v2} color={Colors.primary} />
-          <StatusRow label="item 3" value={v3} color={Colors.primary} />
+          <StatusRow label="item 1" value={v1} color={Colors.primary} testID="tools-batch-v1" />
+          <StatusRow label="item 2" value={v2} color={Colors.primary} testID="tools-batch-v2" />
+          <StatusRow label="item 3" value={v3} color={Colors.primary} testID="tools-batch-v3" />
         </View>
 
         <View style={styles.row}>
@@ -76,6 +76,7 @@ export default function ToolsScreen() {
               );
             }}
             style={styles.flex1}
+            testID="tools-batch-set"
           />
           <Button
             title="Batch Get"
@@ -88,6 +89,7 @@ export default function ToolsScreen() {
             }}
             variant="success"
             style={styles.flex1}
+            testID="tools-batch-get"
           />
         </View>
 
@@ -99,6 +101,7 @@ export default function ToolsScreen() {
           }}
           variant="secondary"
           size="sm"
+          testID="tools-batch-remove"
         />
 
         {batchResult ? (
@@ -127,6 +130,7 @@ export default function ToolsScreen() {
             }}
             variant={secureWritesAsync ? "secondary" : "success"}
             style={styles.flex1}
+            testID="tools-write-sync"
           />
           <Button
             title="Async"
@@ -135,6 +139,7 @@ export default function ToolsScreen() {
             }}
             variant={secureWritesAsync ? "success" : "secondary"}
             style={styles.flex1}
+            testID="tools-write-async"
           />
         </View>
 
@@ -142,6 +147,7 @@ export default function ToolsScreen() {
           label="Current mode"
           value={secureWritesAsync ? "Async (apply)" : "Sync (commit)"}
           color={Colors.secure}
+          testID="tools-write-mode"
         />
         <Badge
           label={
@@ -168,6 +174,7 @@ export default function ToolsScreen() {
               variant="secondary"
               size="sm"
               style={styles.flex1}
+              testID="tools-clear-memory"
             />
             <Button
               title="Disk"
@@ -177,6 +184,7 @@ export default function ToolsScreen() {
               variant="secondary"
               size="sm"
               style={styles.flex1}
+              testID="tools-clear-disk"
             />
             <Button
               title="Secure"
@@ -186,6 +194,7 @@ export default function ToolsScreen() {
               variant="secondary"
               size="sm"
               style={styles.flex1}
+              testID="tools-clear-secure"
             />
           </View>
         </Section>
@@ -197,20 +206,24 @@ export default function ToolsScreen() {
           }}
           variant="danger"
           size="sm"
+          testID="tools-reset-all"
         />
 
         <Section title="Introspection">
           <StatusRow
             label="Disk keys"
             value={String(storage.size(StorageScope.Disk))}
+            testID="tools-disk-keys"
           />
           <StatusRow
             label="Memory keys"
             value={String(storage.size(StorageScope.Memory))}
+            testID="tools-memory-keys"
           />
           <StatusRow
             label="Secure keys"
             value={String(storage.size(StorageScope.Secure))}
+            testID="tools-secure-keys"
           />
         </Section>
       </Card>
