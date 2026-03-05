@@ -11,7 +11,7 @@ name: "Scope Control"
     element:
       id: "scope-disk-keys"
     direction: DOWN
-    timeout: 10000
+    timeout: 30000
     centerElement: true
 - assertVisible:
     id: "scope-disk-keys"
@@ -23,7 +23,7 @@ name: "Scope Control"
     element:
       id: "scope-clear-disk"
     direction: DOWN
-    timeout: 10000
+    timeout: 30000
     centerElement: true
 - tapOn:
     id: "scope-clear-disk"

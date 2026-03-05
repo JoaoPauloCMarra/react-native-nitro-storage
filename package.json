@@ -27,6 +27,8 @@
     "example:prebuild:clean": "turbo run prebuild:clean --filter=example"
   },
   "devDependencies": {
+    "@swc/core": "^1.15.18",
+    "@swc/jest": "^0.2.39",
     "@types/jest": "^30.0.0",
     "@types/node": "^25.3.3",
     "eslint-config-expo-magic": "^2.0.2",

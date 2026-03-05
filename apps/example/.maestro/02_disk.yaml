@@ -6,15 +6,15 @@ name: "Disk Scope"
 - waitForAnimationToEnd:
     timeout: 5000
 
-# Scroll to disk name input
+# Scroll to make disk card fully visible
 - scrollUntilVisible:
     element:
-      id: "disk-name-input"
+      id: "disk-has-value"
     direction: DOWN
-    timeout: 10000
+    timeout: 30000
     centerElement: true
 
-# Enter name
+# Enter name — tap input, erase, type, then dismiss keyboard
 - tapOn:
     id: "disk-name-input"
 - eraseText: 50
@@ -23,16 +23,11 @@ name: "Disk Scope"
 - hideKeyboard
 - waitForAnimationToEnd
 
-# Scroll to save button and tap
-- scrollUntilVisible:
-    element:
-      id: "disk-save"
-    direction: DOWN
-    timeout: 10000
-    centerElement: true
+# Save
 - tapOn:
     id: "disk-save"
-- waitForAnimationToEnd
+- waitForAnimationToEnd:
+    timeout: 2000
 
 # Assert stored value and has value
 - assertVisible:

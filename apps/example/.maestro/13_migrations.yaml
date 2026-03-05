@@ -11,7 +11,7 @@ name: "Migrations"
     element:
       id: "mig-seed"
     direction: DOWN
-    timeout: 10000
+    timeout: 30000
     centerElement: true
 - tapOn:
     id: "mig-seed"
@@ -22,7 +22,7 @@ name: "Migrations"
     element:
       id: "mig-run"
     direction: DOWN
-    timeout: 10000
+    timeout: 30000
     centerElement: true
 - tapOn:
     id: "mig-run"

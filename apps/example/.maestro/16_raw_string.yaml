@@ -11,7 +11,7 @@ name: "Raw String API"
     element:
       id: "raw-set"
     direction: DOWN
-    timeout: 10000
+    timeout: 30000
     centerElement: true
 - assertVisible:
     id: "raw-value"

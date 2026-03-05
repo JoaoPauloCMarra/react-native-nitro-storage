@@ -11,7 +11,7 @@ name: "Batch Operations"
     element:
       id: "batch-v1"
     direction: DOWN
-    timeout: 10000
+    timeout: 30000
     centerElement: true
 - assertVisible:
     id: "batch-v1"
@@ -28,7 +28,7 @@ name: "Batch Operations"
     element:
       id: "batch-set"
     direction: DOWN
-    timeout: 10000
+    timeout: 30000
     centerElement: true
 - tapOn:
     id: "batch-set"

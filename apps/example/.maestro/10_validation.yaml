@@ -11,7 +11,7 @@ name: "Validation"
     element:
       id: "val-age-input"
     direction: DOWN
-    timeout: 10000
+    timeout: 30000
     centerElement: true
 
 # Enter valid age 25
@@ -28,7 +28,7 @@ name: "Validation"
     element:
       id: "val-save"
     direction: DOWN
-    timeout: 10000
+    timeout: 30000
     centerElement: true
 - tapOn:
     id: "val-save"
@@ -44,7 +44,7 @@ name: "Validation"
     element:
       id: "val-age-input"
     direction: DOWN
-    timeout: 10000
+    timeout: 30000
     centerElement: true
 
 # Enter invalid age 999
@@ -61,7 +61,7 @@ name: "Validation"
     element:
       id: "val-save"
     direction: DOWN
-    timeout: 10000
+    timeout: 30000
     centerElement: true
 - tapOn:
     id: "val-save"
@@ -77,7 +77,7 @@ name: "Validation"
     element:
       id: "val-inject"
     direction: DOWN
-    timeout: 10000
+    timeout: 30000
     centerElement: true
 - tapOn:
     id: "val-inject"

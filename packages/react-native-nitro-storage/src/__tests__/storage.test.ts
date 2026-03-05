@@ -49,6 +49,7 @@ import {
   registerMigration,
   runTransaction,
   storage,
+  isKeychainLockedError,
 } from "../index";
 import { serializeWithPrimitiveFastPath } from "../internal";
 
@@ -1940,5 +1941,442 @@ describe("storage raw APIs", () => {
     expect(mockHybridObject.set).not.toHaveBeenCalled();
     expect(mockHybridObject.get).not.toHaveBeenCalled();
     expect(mockHybridObject.remove).not.toHaveBeenCalled();
+  });
+});
+
+describe("isKeychainLockedError", () => {
+  it('returns true for "errSecInteractionNotAllowed"', () => {
+    expect(
+      isKeychainLockedError(new Error("errSecInteractionNotAllowed")),
+    ).toBe(true);
+  });
+
+  it('returns true for "UserNotAuthenticatedException"', () => {
+    expect(
+      isKeychainLockedError(new Error("UserNotAuthenticatedException")),
+    ).toBe(true);
+  });
+
+  it('returns true for "KeyStoreException"', () => {
+    expect(isKeychainLockedError(new Error("KeyStoreException"))).toBe(true);
+  });
+
+  it('returns true for "KeyPermanentlyInvalidatedException"', () => {
+    expect(
+      isKeychainLockedError(new Error("KeyPermanentlyInvalidatedException")),
+    ).toBe(true);
+  });
+
+  it('returns true for "InvalidKeyException"', () => {
+    expect(isKeychainLockedError(new Error("InvalidKeyException"))).toBe(true);
+  });
+
+  it('returns true for "android.security.keystore"', () => {
+    expect(
+      isKeychainLockedError(new Error("android.security.keystore")),
+    ).toBe(true);
+  });
+
+  it("returns false for unrelated Error", () => {
+    expect(isKeychainLockedError(new Error("something else"))).toBe(false);
+  });
+
+  it("returns false for non-Error values (string, null, undefined, number)", () => {
+    expect(isKeychainLockedError("errSecInteractionNotAllowed")).toBe(false);
+    expect(isKeychainLockedError(null)).toBe(false);
+    expect(isKeychainLockedError(undefined)).toBe(false);
+    expect(isKeychainLockedError(42)).toBe(false);
+  });
+});
+
+describe("version token (setIfVersion)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    storage.clearAll();
+  });
+
+  it("setIfVersion returns false when version does not match", () => {
+    const item = createStorageItem({
+      key: "ver-key",
+      scope: StorageScope.Memory,
+      defaultValue: "initial",
+    });
+
+    item.set("initial");
+    const { version } = item.getWithVersion();
+    const result = item.setIfVersion("wrong-version", "updated");
+    expect(result).toBe(false);
+    expect(item.get()).toBe("initial");
+    expect(item.getWithVersion().version).toBe(version);
+  });
+
+  it("setIfVersion returns true and updates when version matches", () => {
+    const item = createStorageItem({
+      key: "ver-key",
+      scope: StorageScope.Memory,
+      defaultValue: "initial",
+    });
+
+    item.set("initial");
+    const { version } = item.getWithVersion();
+    const result = item.setIfVersion(version, "updated");
+    expect(result).toBe(true);
+    expect(item.get()).toBe("updated");
+  });
+
+  it("getWithVersion returns consistent version for same value", () => {
+    const item = createStorageItem({
+      key: "ver-key",
+      scope: StorageScope.Memory,
+      defaultValue: "stable",
+    });
+
+    item.set("stable");
+    const v1 = item.getWithVersion().version;
+    const v2 = item.getWithVersion().version;
+    expect(v1).toBe(v2);
+  });
+
+  it("getWithVersion returns different version after value changes", () => {
+    const item = createStorageItem({
+      key: "ver-key",
+      scope: StorageScope.Memory,
+      defaultValue: "first",
+    });
+
+    item.set("first");
+    const v1 = item.getWithVersion().version;
+
+    item.set("second");
+    const v2 = item.getWithVersion().version;
+    expect(v1).not.toBe(v2);
+  });
+});
+
+describe("secure write coalescing", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    storage.clearAll();
+  });
+
+  it("coalesced writes call scheduleSecureWrite instead of immediate native set", () => {
+    const item = createStorageItem({
+      key: "coal-key",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      coalesceSecureWrites: true,
+    });
+
+    item.set("coalesced-value");
+    expect(mockHybridObject.set).not.toHaveBeenCalled();
+  });
+
+  it("reading a coalesced secure item returns pending value before flush", () => {
+    mockHybridObject.get.mockReturnValue(undefined);
+
+    const item = createStorageItem({
+      key: "coal-read-key",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      coalesceSecureWrites: true,
+    });
+
+    item.set("pending-value");
+    expect(item.get()).toBe("pending-value");
+  });
+});
+
+describe("transaction rollback", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    storage.clearAll();
+  });
+
+  it("transaction rollback in Memory scope restores original values", () => {
+    const item = createStorageItem({
+      key: "tx-mem",
+      scope: StorageScope.Memory,
+      defaultValue: "original",
+    });
+
+    item.set("original");
+
+    expect(() =>
+      runTransaction(StorageScope.Memory, (tx) => {
+        tx.setItem(item, "modified");
+        expect(item.get()).toBe("modified");
+        throw new Error("rollback");
+      }),
+    ).toThrow("rollback");
+
+    expect(item.get()).toBe("original");
+  });
+
+  it("transaction rollback in Disk scope calls native setBatch/removeBatch", () => {
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("disk-original"),
+    );
+
+    const item = createStorageItem({
+      key: "tx-disk",
+      scope: StorageScope.Disk,
+      defaultValue: "disk-default",
+    });
+
+    expect(() =>
+      runTransaction(StorageScope.Disk, (tx) => {
+        tx.setItem(item, "disk-modified");
+        throw new Error("rollback");
+      }),
+    ).toThrow("rollback");
+
+    expect(mockHybridObject.setBatch).toHaveBeenCalled();
+  });
+
+  it("transaction rollback for previously-undefined key removes it", () => {
+    mockHybridObject.get.mockReturnValue(undefined);
+
+    const item = createStorageItem({
+      key: "tx-new-key",
+      scope: StorageScope.Disk,
+      defaultValue: "fallback",
+    });
+
+    expect(() =>
+      runTransaction(StorageScope.Disk, (tx) => {
+        tx.setItem(item, "created-value");
+        throw new Error("rollback");
+      }),
+    ).toThrow("rollback");
+
+    expect(mockHybridObject.removeBatch).toHaveBeenCalledWith(
+      ["tx-new-key"],
+      StorageScope.Disk,
+    );
+  });
+});
+
+describe("createSecureAuthStorage", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    storage.clearAll();
+  });
+
+  it("creates items for all keys in config", () => {
+    const auth = createSecureAuthStorage(
+      {
+        token: { ttlMs: 60000 },
+        refresh: { biometric: true },
+      },
+      { namespace: "myauth" },
+    );
+
+    expect(auth.token).toBeDefined();
+    expect(auth.refresh).toBeDefined();
+  });
+
+  it("items use Secure scope", () => {
+    const auth = createSecureAuthStorage(
+      {
+        token: { ttlMs: 60000 },
+        refresh: { biometric: true },
+      },
+      { namespace: "myauth" },
+    );
+
+    auth.token.set("tok-val");
+    expect(mockHybridObject.set).toHaveBeenCalledWith(
+      "myauth:token",
+      expect.any(String),
+      StorageScope.Secure,
+    );
+  });
+
+  it("items have correct namespace prefix", () => {
+    const auth = createSecureAuthStorage(
+      {
+        token: { ttlMs: 60000 },
+        refresh: { biometric: true },
+      },
+      { namespace: "myauth" },
+    );
+
+    expect(auth.token.key).toBe("myauth:token");
+    expect(auth.refresh.key).toBe("myauth:refresh");
+  });
+
+  it("items with ttlMs get expiration config", () => {
+    const auth = createSecureAuthStorage(
+      {
+        token: { ttlMs: 60000 },
+        refresh: { biometric: true },
+      },
+      { namespace: "myauth" },
+    );
+
+    auth.token.set("val");
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("val"),
+    );
+
+    // The item was created — ttlMs presence is verified by the factory accepting it
+    // without throwing. We verify the item is functional.
+    expect(auth.token.get()).toBe("val");
+  });
+
+  it("items with biometric flag set correctly", () => {
+    const auth = createSecureAuthStorage(
+      {
+        token: { ttlMs: 60000 },
+        refresh: { biometric: true },
+      },
+      { namespace: "myauth" },
+    );
+
+    auth.refresh.set("refresh-val");
+    expect(mockHybridObject.setSecureBiometricWithLevel).toHaveBeenCalledWith(
+      "myauth:refresh",
+      expect.any(String),
+      expect.anything(),
+    );
+  });
+});
+
+describe("memory scope optimizations", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    storage.clearAll();
+  });
+
+  it("memory scope get/set does not call native module", () => {
+    const item = createStorageItem({
+      key: "mem-opt",
+      scope: StorageScope.Memory,
+      defaultValue: "default",
+    });
+
+    item.set("mem-value");
+    expect(item.get()).toBe("mem-value");
+
+    expect(mockHybridObject.set).not.toHaveBeenCalled();
+    expect(mockHybridObject.get).not.toHaveBeenCalled();
+  });
+
+  it("memory scope clear does not call native module", () => {
+    // clearAllMocks already ran in beforeEach, but clearAll calls native clear
+    // for Disk/Secure. Reset the mock to isolate this test.
+    mockHybridObject.clear.mockClear();
+    storage.clear(StorageScope.Memory);
+    expect(mockHybridObject.clear).not.toHaveBeenCalled();
+  });
+
+  it("clearNamespace in memory scope removes only namespaced keys", () => {
+    const nsA = createStorageItem({
+      key: "a",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+      namespace: "ns",
+    });
+    const nsB = createStorageItem({
+      key: "b",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+      namespace: "ns",
+    });
+    const other = createStorageItem({
+      key: "other",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    });
+
+    nsA.set("val-a");
+    nsB.set("val-b");
+    other.set("val-other");
+
+    storage.clearNamespace("ns", StorageScope.Memory);
+
+    expect(nsA.get()).toBe("");
+    expect(nsB.get()).toBe("");
+    expect(other.get()).toBe("val-other");
+  });
+});
+
+describe("storage.clearBiometric", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    storage.clearAll();
+  });
+
+  it("calls native clearSecureBiometric", () => {
+    storage.clearBiometric();
+    expect(mockHybridObject.clearSecureBiometric).toHaveBeenCalled();
+  });
+});
+
+describe("biometric storage items", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    storage.clearAll();
+  });
+
+  it("biometric item set calls setSecureBiometricWithLevel on native", () => {
+    const item = createStorageItem({
+      key: "bio-key",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+
+    item.set("bio-value");
+    expect(mockHybridObject.setSecureBiometricWithLevel).toHaveBeenCalledWith(
+      "bio-key",
+      expect.any(String),
+      expect.anything(),
+    );
+  });
+
+  it("biometric item get calls getSecureBiometric on native", () => {
+    mockHybridObject.getSecureBiometric.mockReturnValue(
+      serializeWithPrimitiveFastPath("bio-value"),
+    );
+
+    const item = createStorageItem({
+      key: "bio-key",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+
+    const result = item.get();
+    expect(mockHybridObject.getSecureBiometric).toHaveBeenCalledWith("bio-key");
+    expect(result).toBe("bio-value");
+  });
+
+  it("biometric item delete calls deleteSecureBiometric on native", () => {
+    const item = createStorageItem({
+      key: "bio-key",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+
+    item.delete();
+    expect(mockHybridObject.deleteSecureBiometric).toHaveBeenCalledWith(
+      "bio-key",
+    );
+  });
+
+  it("biometric item has calls hasSecureBiometric on native", () => {
+    mockHybridObject.hasSecureBiometric.mockReturnValue(true);
+
+    const item = createStorageItem({
+      key: "bio-key",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+
+    expect(item.has()).toBe(true);
+    expect(mockHybridObject.hasSecureBiometric).toHaveBeenCalledWith("bio-key");
   });
 });

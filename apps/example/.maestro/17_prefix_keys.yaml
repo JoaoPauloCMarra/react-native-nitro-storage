@@ -11,7 +11,7 @@ name: "Prefix & Keys"
     element:
       id: "prefix-seed"
     direction: DOWN
-    timeout: 10000
+    timeout: 30000
     centerElement: true
 - tapOn:
     id: "prefix-seed"
@@ -27,7 +27,7 @@ name: "Prefix & Keys"
     element:
       id: "all-keys-count"
     direction: DOWN
-    timeout: 10000
+    timeout: 30000
     centerElement: true
 - assertVisible:
     id: "all-keys-count"

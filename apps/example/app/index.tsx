@@ -61,9 +61,10 @@ const configItem = createStorageItem<AppConfig>({
   defaultValue: { theme: "dark", notifications: true },
 });
 
-const authStorage = createSecureAuthStorage(
-  { accessToken: {}, refreshToken: {} },
-);
+const authStorage = createSecureAuthStorage({
+  accessToken: {},
+  refreshToken: {},
+});
 
 const nsAuthStorage = createSecureAuthStorage(
   { accessToken: {}, refreshToken: {} },
@@ -86,8 +87,7 @@ const ageItem = createStorageItem<number>({
   key: "user-age",
   scope: StorageScope.Disk,
   defaultValue: 21,
-  validate: (v): v is number =>
-    typeof v === "number" && v >= 13 && v <= 120,
+  validate: (v): v is number => typeof v === "number" && v >= 13 && v <= 120,
   onValidationError: () => 21,
 });
 
@@ -200,12 +200,20 @@ export default function HomeScreen() {
   const [batchResponse, setBatchResponse] = useState<string | null>(null);
 
   // 8. Storage Utils — reactive size state
-  const [diskSize, setDiskSize] = useState(() => storage.size(StorageScope.Disk));
-  const [memorySize, setMemorySize] = useState(() => storage.size(StorageScope.Memory));
+  const [diskSize, setDiskSize] = useState(() =>
+    storage.size(StorageScope.Disk),
+  );
+  const [memorySize, setMemorySize] = useState(() =>
+    storage.size(StorageScope.Memory),
+  );
 
   // 15. Scope Control — reactive size state
-  const [scopeDiskSize, setScopeDiskSize] = useState(() => storage.size(StorageScope.Disk));
-  const [scopeMemorySize, setScopeMemorySize] = useState(() => storage.size(StorageScope.Memory));
+  const [scopeDiskSize, setScopeDiskSize] = useState(() =>
+    storage.size(StorageScope.Disk),
+  );
+  const [scopeMemorySize, setScopeMemorySize] = useState(() =>
+    storage.size(StorageScope.Memory),
+  );
 
   // 16. Raw String API
   const [rawValue, setRawValue] = useState<string | undefined>();
@@ -215,10 +223,7 @@ export default function HomeScreen() {
   const [allMemoryKeys, setAllMemoryKeys] = useState<string[]>([]);
 
   return (
-    <Page
-      title="Nitro Storage"
-      subtitle="Complete feature showcase"
-    >
+    <Page title="Nitro Storage" subtitle="Complete feature showcase">
       {/* 1. Memory Scope */}
       <Card
         title="Memory Scope"
@@ -235,21 +240,27 @@ export default function HomeScreen() {
           <Button
             testID="counter-decrement"
             title="-1"
-            onPress={() => setCounter(counter - 1)}
+            onPress={() => {
+              setCounter(counter - 1);
+            }}
             variant="danger"
             style={styles.flex1}
           />
           <Button
             testID="counter-reset"
             title="Reset"
-            onPress={() => setCounter(0)}
+            onPress={() => {
+              setCounter(0);
+            }}
             variant="secondary"
             style={styles.flex1}
           />
           <Button
             testID="counter-increment"
             title="+1"
-            onPress={() => setCounter(counter + 1)}
+            onPress={() => {
+              setCounter(counter + 1);
+            }}
             style={styles.flex1}
           />
         </View>
@@ -585,21 +596,19 @@ export default function HomeScreen() {
         <Button
           testID="hook-count-increment"
           title="+1"
-          onPress={() => setHookCount(hookCount + 1)}
+          onPress={() => {
+            setHookCount(hookCount + 1);
+          }}
           style={styles.flex1}
         />
-        <StatusRow
-          testID="hook-label-value"
-          label="label"
-          value={hookLabel}
-        />
+        <StatusRow testID="hook-label-value" label="label" value={hookLabel} />
         <Button
           testID="hook-label-change"
           title="Change Label"
           onPress={() => {
             const next = (hookLabelIdx + 1) % HOOK_LABELS.length;
             setHookLabelIdx(next);
-            setHookLabel(HOOK_LABELS[next]!);
+            setHookLabel(HOOK_LABELS[next]);
           }}
           variant="secondary"
         />
@@ -759,10 +768,7 @@ export default function HomeScreen() {
       </Card>
 
       {/* 13. Migrations */}
-      <Card
-        title="Migrations"
-        subtitle="registerMigration / migrateToLatest"
-      >
+      <Card title="Migrations" subtitle="registerMigration / migrateToLatest">
         <View style={styles.row}>
           <Button
             testID="mig-seed"
@@ -791,11 +797,7 @@ export default function HomeScreen() {
             style={styles.flex1}
           />
         </View>
-        <StatusRow
-          testID="mig-result"
-          label="Result"
-          value={migResult}
-        />
+        <StatusRow testID="mig-result" label="Result" value={migResult} />
       </Card>
 
       {/* 14. Batch Operations */}
@@ -974,9 +976,7 @@ export default function HomeScreen() {
             storage.setString("pfx_b", "2", StorageScope.Memory);
             storage.setString("pfx_c", "3", StorageScope.Memory);
             setAllMemoryKeys(storage.getAllKeys(StorageScope.Memory));
-            setPrefixKeys(
-              storage.getKeysByPrefix("pfx_", StorageScope.Memory),
-            );
+            setPrefixKeys(storage.getKeysByPrefix("pfx_", StorageScope.Memory));
           }}
         />
         <StatusRow
@@ -996,9 +996,7 @@ export default function HomeScreen() {
           size="sm"
           onPress={() => {
             setAllMemoryKeys(storage.getAllKeys(StorageScope.Memory));
-            setPrefixKeys(
-              storage.getKeysByPrefix("pfx_", StorageScope.Memory),
-            );
+            setPrefixKeys(storage.getKeysByPrefix("pfx_", StorageScope.Memory));
           }}
         />
       </Card>
