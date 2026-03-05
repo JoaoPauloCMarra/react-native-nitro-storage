@@ -20,11 +20,11 @@
     "test:coverage": "turbo run test:coverage --filter=react-native-nitro-storage",
     "benchmark": "turbo run benchmark --filter=react-native-nitro-storage",
     "test:cpp": "turbo run test:cpp --filter=react-native-nitro-storage",
-    "start": "turbo run start --filter=example --",
-    "example:ios": "turbo run ios --filter=example",
-    "example:android": "turbo run android --filter=example",
-    "example:prebuild": "turbo run prebuild --filter=example",
-    "example:prebuild:clean": "turbo run prebuild:clean --filter=example"
+    "example:start": "bun run --cwd apps/example start",
+    "example:ios": "bun run --cwd apps/example ios",
+    "example:android": "bun run --cwd apps/example android",
+    "example:prebuild": "bun run --cwd apps/example prebuild",
+    "example:prebuild:clean": "bun run --cwd apps/example prebuild:clean"
   },
   "devDependencies": {
     "@swc/core": "^1.15.18",

@@ -202,6 +202,9 @@ function measureOperation<T>(
   fn: () => T,
   keysCount = 1,
 ): T {
+  if (!metricsObserver) {
+    return fn();
+  }
   const start = Date.now();
   try {
     return fn();
@@ -234,6 +237,9 @@ function createLocalStorageWebSecureBackend(): WebSecureStorageBackend {
 let webSecureStorageBackend: WebSecureStorageBackend | undefined =
   createLocalStorageWebSecureBackend();
 
+let cachedSecureBrowserStorage: BrowserStorageLike | undefined;
+let cachedSecureBackendRef: WebSecureStorageBackend | undefined;
+
 function getBrowserStorage(scope: number): BrowserStorageLike | undefined {
   if (scope === StorageScope.Disk) {
     return globalThis.localStorage;
@@ -242,16 +248,24 @@ function getBrowserStorage(scope: number): BrowserStorageLike | undefined {
     if (!webSecureStorageBackend) {
       return undefined;
     }
-    return {
-      setItem: (key, value) => webSecureStorageBackend?.setItem(key, value),
-      getItem: (key) => webSecureStorageBackend?.getItem(key) ?? null,
-      removeItem: (key) => webSecureStorageBackend?.removeItem(key),
-      clear: () => webSecureStorageBackend?.clear(),
-      key: (index) => webSecureStorageBackend?.getAllKeys()[index] ?? null,
+    if (
+      cachedSecureBackendRef === webSecureStorageBackend &&
+      cachedSecureBrowserStorage
+    ) {
+      return cachedSecureBrowserStorage;
+    }
+    cachedSecureBackendRef = webSecureStorageBackend;
+    cachedSecureBrowserStorage = {
+      setItem: (key, value) => webSecureStorageBackend!.setItem(key, value),
+      getItem: (key) => webSecureStorageBackend!.getItem(key) ?? null,
+      removeItem: (key) => webSecureStorageBackend!.removeItem(key),
+      clear: () => webSecureStorageBackend!.clear(),
+      key: (index) => webSecureStorageBackend!.getAllKeys()[index] ?? null,
       get length() {
-        return webSecureStorageBackend?.getAllKeys().length ?? 0;
+        return webSecureStorageBackend!.getAllKeys().length;
       },
     };
+    return cachedSecureBrowserStorage;
   }
   return undefined;
 }
@@ -429,13 +443,20 @@ function clearScopeRawCache(scope: NonMemoryScope): void {
 }
 
 function notifyKeyListeners(registry: KeyListenerRegistry, key: string): void {
-  registry.get(key)?.forEach((listener) => listener());
+  const listeners = registry.get(key);
+  if (listeners) {
+    for (const listener of listeners) {
+      listener();
+    }
+  }
 }
 
 function notifyAllListeners(registry: KeyListenerRegistry): void {
-  registry.forEach((listeners) => {
-    listeners.forEach((listener) => listener());
-  });
+  for (const listeners of registry.values()) {
+    for (const listener of listeners) {
+      listener();
+    }
+  }
 }
 
 function addKeyListener(
@@ -1077,6 +1098,8 @@ export function setWebSecureStorageBackend(
   backend?: WebSecureStorageBackend,
 ): void {
   webSecureStorageBackend = backend ?? createLocalStorageWebSecureBackend();
+  cachedSecureBrowserStorage = undefined;
+  cachedSecureBackendRef = undefined;
   hydratedWebScopeKeyIndex.delete(StorageScope.Secure);
   clearScopeRawCache(StorageScope.Secure);
 }
@@ -1250,17 +1273,18 @@ export function createStorageItem<T = undefined>(
       return memoryStore.get(storageKey);
     }
 
-    if (
-      nonMemoryScope === StorageScope.Secure &&
-      !isBiometric &&
-      hasPendingSecureWrite(storageKey)
-    ) {
-      return readPendingSecureWrite(storageKey);
+    if (nonMemoryScope === StorageScope.Secure && !isBiometric) {
+      const pending = pendingSecureWrites.get(storageKey);
+      if (pending !== undefined) {
+        return pending.value;
+      }
     }
 
     if (readCache) {
-      if (hasCachedRawValue(nonMemoryScope!, storageKey)) {
-        return readCachedRawValue(nonMemoryScope!, storageKey);
+      const cache = getScopeRawCache(nonMemoryScope!);
+      const cached = cache.get(storageKey);
+      if (cached !== undefined || cache.has(storageKey)) {
+        return cached;
       }
     }
 
@@ -1474,14 +1498,13 @@ export function createStorageItem<T = undefined>(
         ? valueOrFn(getInternal())
         : valueOrFn;
 
-      invalidateParsedCache();
-
       if (validate && !validate(newValue)) {
         throw new Error(
           `Validation failed for key "${storageKey}" in scope "${StorageScope[config.scope]}".`,
         );
       }
 
+      invalidateParsedCache();
       writeValueWithoutValidation(newValue);
     });
   };
@@ -1620,15 +1643,18 @@ export function getBatch(
 
       items.forEach((item, index) => {
         if (scope === StorageScope.Secure) {
-          if (hasPendingSecureWrite(item.key)) {
-            rawValues[index] = readPendingSecureWrite(item.key);
+          const pending = pendingSecureWrites.get(item.key);
+          if (pending !== undefined) {
+            rawValues[index] = pending.value;
             return;
           }
         }
 
         if (item._readCacheEnabled === true) {
-          if (hasCachedRawValue(scope, item.key)) {
-            rawValues[index] = readCachedRawValue(scope, item.key);
+          const cache = getScopeRawCache(scope);
+          const cached = cache.get(item.key);
+          if (cached !== undefined || cache.has(item.key)) {
+            rawValues[index] = cached;
             return;
           }
         }

@@ -1,5 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "telemetry": false,
   "globalPassThroughEnv": ["ANDROID_HOME", "ANDROID_SDK_ROOT", "JAVA_HOME"],
   "tasks": {
     "build": {
@@ -27,22 +28,6 @@
     "benchmark": {
       "dependsOn": ["build"],
       "cache": false
-    },
-    "prebuild": {
-      "cache": false
-    },
-    "prebuild:clean": {
-      "cache": false
-    },
-    "ios": {
-      "cache": false
-    },
-    "android": {
-      "cache": false
-    },
-    "start": {
-      "cache": false,
-      "persistent": true
     },
     "test:cpp": {
       "cache": false
