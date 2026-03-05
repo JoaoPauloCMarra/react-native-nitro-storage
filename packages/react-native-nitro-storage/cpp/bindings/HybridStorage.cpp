@@ -1,4 +1,5 @@
 #include "HybridStorage.hpp"
+#include <cmath>
 #include <stdexcept>
 
 #ifndef NITRO_STORAGE_DISABLE_PLATFORM_ADAPTER
@@ -33,7 +34,7 @@ HybridStorage::HybridStorage(std::shared_ptr<::NitroStorage::NativeStorageAdapte
     : HybridObject(TAG), HybridStorageSpec(), nativeAdapter_(std::move(adapter)) {}
 
 HybridStorage::Scope HybridStorage::toScope(double scopeValue) {
-    if (scopeValue < 0.0 || scopeValue > 2.0) {
+    if (std::isnan(scopeValue) || scopeValue < 0.0 || scopeValue > 2.0) {
         throw std::runtime_error("NitroStorage: Invalid scope value");
     }
 
@@ -58,20 +59,20 @@ void HybridStorage::set(const std::string& key, const std::string& value, double
             ensureAdapter();
             try {
                 nativeAdapter_->setDisk(key, value);
-            } catch (const std::exception& e) {
-                throw std::runtime_error(std::string("NitroStorage: Disk set failed: ") + e.what());
+            } catch (const std::exception&) {
+                throw;
             } catch (...) {
-                throw std::runtime_error("NitroStorage: Disk set failed");
+                throw std::runtime_error("NitroStorage: Disk set failed (unknown error)");
             }
             break;
         case Scope::Secure:
             ensureAdapter();
             try {
                 nativeAdapter_->setSecure(key, value);
-            } catch (const std::exception& e) {
-                throw std::runtime_error(std::string("NitroStorage: Secure set failed: ") + e.what());
+            } catch (const std::exception&) {
+                throw;
             } catch (...) {
-                throw std::runtime_error("NitroStorage: Secure set failed");
+                throw std::runtime_error("NitroStorage: Secure set failed (unknown error)");
             }
             break;
     }
@@ -96,19 +97,19 @@ std::optional<std::string> HybridStorage::get(const std::string& key, double sco
             ensureAdapter();
             try {
                 return nativeAdapter_->getDisk(key);
-            } catch (const std::exception& e) {
-                throw std::runtime_error(std::string("NitroStorage: Disk get failed: ") + e.what());
+            } catch (const std::exception&) {
+                throw;
             } catch (...) {
-                throw std::runtime_error("NitroStorage: Disk get failed");
+                throw std::runtime_error("NitroStorage: Disk get failed (unknown error)");
             }
         case Scope::Secure:
             ensureAdapter();
             try {
                 return nativeAdapter_->getSecure(key);
-            } catch (const std::exception& e) {
-                throw std::runtime_error(std::string("NitroStorage: Secure get failed: ") + e.what());
+            } catch (const std::exception&) {
+                throw;
             } catch (...) {
-                throw std::runtime_error("NitroStorage: Secure get failed");
+                throw std::runtime_error("NitroStorage: Secure get failed (unknown error)");
             }
     }
     
@@ -128,20 +129,20 @@ void HybridStorage::remove(const std::string& key, double scope) {
             ensureAdapter();
             try {
                 nativeAdapter_->deleteDisk(key);
-            } catch (const std::exception& e) {
-                throw std::runtime_error(std::string("NitroStorage: Disk delete failed: ") + e.what());
+            } catch (const std::exception&) {
+                throw;
             } catch (...) {
-                throw std::runtime_error("NitroStorage: Disk delete failed");
+                throw std::runtime_error("NitroStorage: Disk delete failed (unknown error)");
             }
             break;
         case Scope::Secure:
             ensureAdapter();
             try {
                 nativeAdapter_->deleteSecure(key);
-            } catch (const std::exception& e) {
-                throw std::runtime_error(std::string("NitroStorage: Secure delete failed: ") + e.what());
+            } catch (const std::exception&) {
+                throw;
             } catch (...) {
-                throw std::runtime_error("NitroStorage: Secure delete failed");
+                throw std::runtime_error("NitroStorage: Secure delete failed (unknown error)");
             }
             break;
     }
@@ -159,11 +160,16 @@ bool HybridStorage::has(const std::string& key, double scope) {
             return memoryStore_.find(key) != memoryStore_.end();
         }
         case Scope::Disk:
-            ensureAdapter();
-            return nativeAdapter_->hasDisk(key);
-        case Scope::Secure:
-            ensureAdapter();
-            return nativeAdapter_->hasSecure(key);
+        case Scope::Secure: {
+            const int scopeValue = static_cast<int>(s);
+            ensureKeyIndexHydrated(scopeValue);
+            std::lock_guard<std::mutex> lock(keyIndexMutex_);
+            auto indexIt = keyIndex_.find(scopeValue);
+            if (indexIt == keyIndex_.end()) {
+                return false;
+            }
+            return indexIt->second.count(key) > 0;
+        }
     }
     return false;
 }
@@ -263,7 +269,7 @@ std::function<void()> HybridStorage::addOnChange(
     double scope,
     const std::function<void(const std::string&, const std::optional<std::string>&)>& callback
 ) {
-    int intScope = static_cast<int>(scope);
+    int intScope = static_cast<int>(toScope(scope)); // validates scope, throws on invalid
     size_t listenerId;
 
     {
@@ -272,15 +278,22 @@ std::function<void()> HybridStorage::addOnChange(
         listeners_[intScope].push_back({listenerId, callback});
     }
     
-    return [this, intScope, listenerId]() {
-        std::lock_guard<std::mutex> lock(listenersMutex_);
-        auto& scopeListeners = listeners_[intScope];
+    std::weak_ptr<HybridStorage> weakSelf = std::dynamic_pointer_cast<HybridStorage>(shared_from_this());
+    return [weakSelf, intScope, listenerId]() {
+        auto self = weakSelf.lock();
+        if (!self) return;  // HybridStorage was destroyed — safe no-op
+        std::lock_guard<std::mutex> lock(self->listenersMutex_);
+        auto& scopeListeners = self->listeners_[intScope];
+        bool found = false;
         for (auto it = scopeListeners.begin(); it != scopeListeners.end(); ++it) {
             if (it->id == listenerId) {
                 scopeListeners.erase(it);
+                found = true;
                 break;
             }
         }
+        // Silently ignore double-unsubscribe (listener already removed)
+        (void)found;
     };
 }
 
@@ -297,26 +310,26 @@ void HybridStorage::clear(double scope) {
             ensureAdapter();
             try {
                 nativeAdapter_->clearDisk();
-            } catch (const std::exception& e) {
-                throw std::runtime_error(std::string("NitroStorage: Disk clear failed: ") + e.what());
+            } catch (const std::exception&) {
+                throw;
             } catch (...) {
-                throw std::runtime_error("NitroStorage: Disk clear failed");
+                throw std::runtime_error("NitroStorage: Disk clear failed (unknown error)");
             }
             break;
         case Scope::Secure:
             ensureAdapter();
             try {
                 nativeAdapter_->clearSecure();
-            } catch (const std::exception& e) {
-                throw std::runtime_error(std::string("NitroStorage: Secure clear failed: ") + e.what());
+            } catch (const std::exception&) {
+                throw;
             } catch (...) {
-                throw std::runtime_error("NitroStorage: Secure clear failed");
+                throw std::runtime_error("NitroStorage: Secure clear failed (unknown error)");
             }
             break;
     }
 
     onScopeClear(static_cast<int>(s));
-    notifyListeners(static_cast<int>(s), "", std::nullopt);
+    notifyListeners(static_cast<int>(s), kClearSentinelKey, std::nullopt);
 }
 
 void HybridStorage::setBatch(const std::vector<std::string>& keys, const std::vector<std::string>& values, double scope) {
@@ -338,20 +351,20 @@ void HybridStorage::setBatch(const std::vector<std::string>& keys, const std::ve
             ensureAdapter();
             try {
                 nativeAdapter_->setDiskBatch(keys, values);
-            } catch (const std::exception& e) {
-                throw std::runtime_error(std::string("NitroStorage: Disk setBatch failed: ") + e.what());
+            } catch (const std::exception&) {
+                throw;
             } catch (...) {
-                throw std::runtime_error("NitroStorage: Disk setBatch failed");
+                throw std::runtime_error("NitroStorage: Disk setBatch failed (unknown error)");
             }
             break;
         case Scope::Secure:
             ensureAdapter();
             try {
                 nativeAdapter_->setSecureBatch(keys, values);
-            } catch (const std::exception& e) {
-                throw std::runtime_error(std::string("NitroStorage: Secure setBatch failed: ") + e.what());
+            } catch (const std::exception&) {
+                throw;
             } catch (...) {
-                throw std::runtime_error("NitroStorage: Secure setBatch failed");
+                throw std::runtime_error("NitroStorage: Secure setBatch failed (unknown error)");
             }
             break;
     }
@@ -390,10 +403,10 @@ std::vector<std::string> HybridStorage::getBatch(const std::vector<std::string>&
             std::vector<std::optional<std::string>> values;
             try {
                 values = nativeAdapter_->getDiskBatch(keys);
-            } catch (const std::exception& e) {
-                throw std::runtime_error(std::string("NitroStorage: Disk getBatch failed: ") + e.what());
+            } catch (const std::exception&) {
+                throw;
             } catch (...) {
-                throw std::runtime_error("NitroStorage: Disk getBatch failed");
+                throw std::runtime_error("NitroStorage: Disk getBatch failed (unknown error)");
             }
 
             for (const auto& value : values) {
@@ -406,10 +419,10 @@ std::vector<std::string> HybridStorage::getBatch(const std::vector<std::string>&
             std::vector<std::optional<std::string>> values;
             try {
                 values = nativeAdapter_->getSecureBatch(keys);
-            } catch (const std::exception& e) {
-                throw std::runtime_error(std::string("NitroStorage: Secure getBatch failed: ") + e.what());
+            } catch (const std::exception&) {
+                throw;
             } catch (...) {
-                throw std::runtime_error("NitroStorage: Secure getBatch failed");
+                throw std::runtime_error("NitroStorage: Secure getBatch failed (unknown error)");
             }
 
             for (const auto& value : values) {
@@ -437,20 +450,20 @@ void HybridStorage::removeBatch(const std::vector<std::string>& keys, double sco
             ensureAdapter();
             try {
                 nativeAdapter_->deleteDiskBatch(keys);
-            } catch (const std::exception& e) {
-                throw std::runtime_error(std::string("NitroStorage: Disk removeBatch failed: ") + e.what());
+            } catch (const std::exception&) {
+                throw;
             } catch (...) {
-                throw std::runtime_error("NitroStorage: Disk removeBatch failed");
+                throw std::runtime_error("NitroStorage: Disk removeBatch failed (unknown error)");
             }
             break;
         case Scope::Secure:
             ensureAdapter();
             try {
                 nativeAdapter_->deleteSecureBatch(keys);
-            } catch (const std::exception& e) {
-                throw std::runtime_error(std::string("NitroStorage: Secure removeBatch failed: ") + e.what());
+            } catch (const std::exception&) {
+                throw;
             } catch (...) {
-                throw std::runtime_error("NitroStorage: Secure removeBatch failed");
+                throw std::runtime_error("NitroStorage: Secure removeBatch failed (unknown error)");
             }
             break;
     }
@@ -482,8 +495,17 @@ void HybridStorage::removeByPrefix(const std::string& prefix, double scope) {
 // --- Configuration ---
 
 void HybridStorage::setSecureAccessControl(double level) {
+    if (std::isnan(level) || std::isinf(level)) {
+        throw std::runtime_error("NitroStorage: Invalid access control level");
+    }
+    int intLevel = static_cast<int>(level);
+    if (intLevel < 0 || intLevel > 4) {
+        throw std::runtime_error(
+            "NitroStorage: Invalid access control level " + std::to_string(intLevel) +
+            ". Expected 0-4.");
+    }
     ensureAdapter();
-    nativeAdapter_->setSecureAccessControl(static_cast<int>(level));
+    nativeAdapter_->setSecureAccessControl(intLevel);
 }
 
 void HybridStorage::setSecureWritesAsync(bool enabled) {
@@ -503,17 +525,29 @@ void HybridStorage::setSecureBiometric(const std::string& key, const std::string
 }
 
 void HybridStorage::setSecureBiometricWithLevel(const std::string& key, const std::string& value, double level) {
+    if (std::isnan(level) || std::isinf(level)) {
+        throw std::runtime_error(
+            "NitroStorage: Invalid biometric level");
+    }
+    int intLevel = static_cast<int>(level);
+    if (intLevel < 0 || intLevel > 2) {
+        throw std::runtime_error(
+            "NitroStorage: Invalid biometric level " + std::to_string(intLevel) +
+            ". Expected 0 (none), 1 (user presence), or 2 (biometric only).");
+    }
     ensureAdapter();
     try {
         nativeAdapter_->setSecureBiometricWithLevel(
             key,
             value,
-            static_cast<int>(level)
+            intLevel
         );
         onKeySet(static_cast<int>(Scope::Secure), key);
         notifyListeners(static_cast<int>(Scope::Secure), key, value);
-    } catch (const std::exception& e) {
-        throw std::runtime_error(std::string("NitroStorage: Biometric set failed: ") + e.what());
+    } catch (const std::exception&) {
+        throw;
+    } catch (...) {
+        throw std::runtime_error("NitroStorage: Biometric set failed (unknown error)");
     }
 }
 
@@ -521,8 +555,10 @@ std::optional<std::string> HybridStorage::getSecureBiometric(const std::string& 
     ensureAdapter();
     try {
         return nativeAdapter_->getSecureBiometric(key);
-    } catch (const std::exception& e) {
-        throw std::runtime_error(std::string("NitroStorage: Biometric get failed: ") + e.what());
+    } catch (const std::exception&) {
+        throw;
+    } catch (...) {
+        throw std::runtime_error("NitroStorage: Biometric get failed (unknown error)");
     }
 }
 
@@ -532,8 +568,10 @@ void HybridStorage::deleteSecureBiometric(const std::string& key) {
         nativeAdapter_->deleteSecureBiometric(key);
         onKeyRemove(static_cast<int>(Scope::Secure), key);
         notifyListeners(static_cast<int>(Scope::Secure), key, std::nullopt);
-    } catch (const std::exception& e) {
-        throw std::runtime_error(std::string("NitroStorage: Biometric delete failed: ") + e.what());
+    } catch (const std::exception&) {
+        throw;
+    } catch (...) {
+        throw std::runtime_error("NitroStorage: Biometric delete failed (unknown error)");
     }
 }
 
@@ -546,10 +584,19 @@ void HybridStorage::clearSecureBiometric() {
     ensureAdapter();
     try {
         nativeAdapter_->clearSecureBiometric();
-        onScopeClear(static_cast<int>(Scope::Secure));
-        notifyListeners(static_cast<int>(Scope::Secure), "", std::nullopt);
-    } catch (const std::exception& e) {
-        throw std::runtime_error(std::string("NitroStorage: Biometric clear failed: ") + e.what());
+        // Invalidate the secure key index so next access re-hydrates from native adapter
+        // (which will now correctly exclude the cleared biometric keys).
+        // We do NOT call onScopeClear() here because that would also clear the index
+        // contents for regular secure keys; marking stale is sufficient.
+        {
+            std::lock_guard<std::mutex> lock(keyIndexMutex_);
+            keyIndexHydrated_[static_cast<int>(Scope::Secure)] = false;
+        }
+        notifyListeners(static_cast<int>(Scope::Secure), kClearSentinelKey, std::nullopt);
+    } catch (const std::exception&) {
+        throw;
+    } catch (...) {
+        throw std::runtime_error("NitroStorage: Biometric clear failed (unknown error)");
     }
 }
 
@@ -561,7 +608,6 @@ std::vector<HybridStorage::Listener> HybridStorage::copyListenersForScope(int sc
         std::lock_guard<std::mutex> lock(listenersMutex_);
         auto it = listeners_.find(scope);
         if (it != listeners_.end()) {
-            listenersCopy.reserve(it->second.size());
             listenersCopy = it->second;
         }
     }
@@ -621,13 +667,18 @@ void HybridStorage::ensureKeyIndexHydrated(int scope) {
         } else {
             keys = nativeAdapter_->getAllKeysSecure();
         }
-    } catch (const std::exception& e) {
-        throw std::runtime_error(std::string("NitroStorage: Key index hydration failed: ") + e.what());
+    } catch (const std::exception&) {
+        throw;
     } catch (...) {
-        throw std::runtime_error("NitroStorage: Key index hydration failed");
+        throw std::runtime_error("NitroStorage: Key index hydration failed (unknown error)");
     }
 
     std::lock_guard<std::mutex> lock(keyIndexMutex_);
+    // Double-check: another thread may have hydrated while we fetched
+    auto hydratedIt = keyIndexHydrated_.find(scope);
+    if (hydratedIt != keyIndexHydrated_.end() && hydratedIt->second) {
+        return; // discard our results
+    }
     auto& index = keyIndex_[scope];
     index.clear();
     for (const auto& key : keys) {

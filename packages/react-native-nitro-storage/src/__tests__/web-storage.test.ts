@@ -2000,3 +2000,383 @@ describe("TTL expiry subscriber notification (web)", () => {
     nowSpy.mockRestore();
   });
 });
+
+describe("web secure backend switching", () => {
+  beforeEach(() => {
+    Object.defineProperty(globalThis, "localStorage", {
+      value: createStorageMock(),
+      configurable: true,
+      writable: true,
+    });
+    if (
+      typeof globalThis.window === "undefined" ||
+      typeof globalThis.window.addEventListener !== "function" ||
+      typeof (globalThis.window as unknown as { dispatchEvent?: unknown })
+        .dispatchEvent !== "function"
+    ) {
+      Object.defineProperty(globalThis, "window", {
+        value: createWindowMock() as unknown as Window & typeof globalThis,
+        configurable: true,
+        writable: true,
+      });
+    }
+    setWebSecureStorageBackend(undefined);
+    storage.clearAll();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("getWebSecureStorageBackend returns default backend when reset to undefined", () => {
+    const custom = createWebSecureBackendMock();
+    setWebSecureStorageBackend(custom);
+    expect(getWebSecureStorageBackend()).toBe(custom);
+
+    // Resetting with undefined falls back to the default localStorage-based backend
+    setWebSecureStorageBackend(undefined);
+    const backend = getWebSecureStorageBackend();
+    expect(backend).toBeDefined();
+    expect(backend).not.toBe(custom);
+  });
+
+  it("setting a new backend allows secure writes to go to it", () => {
+    const backend = createWebSecureBackendMock();
+    setWebSecureStorageBackend(backend);
+
+    const secureItem = createStorageItem({
+      key: "backend-write",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+    });
+    secureItem.set("value");
+
+    expect(backend.setItem).toHaveBeenCalledWith(
+      "__secure_backend-write",
+      serializeWithPrimitiveFastPath("value"),
+    );
+  });
+
+  it("switching backend mid-session still reads from new backend", () => {
+    const backendA = createWebSecureBackendMock();
+    setWebSecureStorageBackend(backendA);
+
+    const secureItem = createStorageItem({
+      key: "switch-read",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+    });
+    secureItem.set("from-a");
+
+    const backendB = createWebSecureBackendMock();
+    // Seed backend B with the same key/value
+    backendB.setItem(
+      "__secure_switch-read",
+      serializeWithPrimitiveFastPath("from-b"),
+    );
+    setWebSecureStorageBackend(backendB);
+
+    expect(secureItem.get()).toBe("from-b");
+    expect(backendB.getItem).toHaveBeenCalledWith("__secure_switch-read");
+  });
+});
+
+describe("cross-tab StorageEvent handling", () => {
+  beforeEach(() => {
+    Object.defineProperty(globalThis, "localStorage", {
+      value: createStorageMock(),
+      configurable: true,
+      writable: true,
+    });
+    if (
+      typeof globalThis.window === "undefined" ||
+      typeof globalThis.window.addEventListener !== "function" ||
+      typeof (globalThis.window as unknown as { dispatchEvent?: unknown })
+        .dispatchEvent !== "function"
+    ) {
+      Object.defineProperty(globalThis, "window", {
+        value: createWindowMock() as unknown as Window & typeof globalThis,
+        configurable: true,
+        writable: true,
+      });
+    }
+    setWebSecureStorageBackend(undefined);
+    storage.clearAll();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("StorageEvent with null newValue removes key from cache", () => {
+    const item = createStorageItem({
+      key: "cross-tab-remove",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+      readCache: true,
+    });
+    item.set("cached");
+    expect(item.get()).toBe("cached");
+
+    // Simulate external tab removing the key
+    globalThis.localStorage.removeItem("cross-tab-remove");
+    dispatchStorageEvent("cross-tab-remove", null);
+
+    expect(item.get()).toBe("default");
+  });
+
+  it("StorageEvent with key=null (clear event) resets all cached values", () => {
+    const item1 = createStorageItem({
+      key: "clear-evt-1",
+      scope: StorageScope.Disk,
+      defaultValue: "d1",
+      readCache: true,
+    });
+    const item2 = createStorageItem({
+      key: "clear-evt-2",
+      scope: StorageScope.Disk,
+      defaultValue: "d2",
+      readCache: true,
+    });
+    item1.set("v1");
+    item2.set("v2");
+    expect(item1.get()).toBe("v1");
+    expect(item2.get()).toBe("v2");
+
+    // Simulate external clear
+    globalThis.localStorage.clear();
+    dispatchStorageEvent(null, null);
+
+    expect(item1.get()).toBe("d1");
+    expect(item2.get()).toBe("d2");
+  });
+
+  it("listener fires on external StorageEvent update", () => {
+    const item = createStorageItem({
+      key: "cross-tab-listener",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+      readCache: true,
+    });
+    const listener = jest.fn();
+    item.subscribe(listener);
+
+    globalThis.localStorage.setItem(
+      "cross-tab-listener",
+      serializeWithPrimitiveFastPath("external"),
+    );
+    dispatchStorageEvent(
+      "cross-tab-listener",
+      serializeWithPrimitiveFastPath("external"),
+    );
+
+    expect(listener).toHaveBeenCalled();
+  });
+
+  it("unsubscribed listener does not fire", () => {
+    const item = createStorageItem({
+      key: "cross-tab-unsub",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+      readCache: true,
+    });
+    const listener = jest.fn();
+    const unsub = item.subscribe(listener);
+    unsub();
+
+    globalThis.localStorage.setItem(
+      "cross-tab-unsub",
+      serializeWithPrimitiveFastPath("external"),
+    );
+    dispatchStorageEvent(
+      "cross-tab-unsub",
+      serializeWithPrimitiveFastPath("external"),
+    );
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe("biometric web storage", () => {
+  beforeEach(() => {
+    Object.defineProperty(globalThis, "localStorage", {
+      value: createStorageMock(),
+      configurable: true,
+      writable: true,
+    });
+    if (
+      typeof globalThis.window === "undefined" ||
+      typeof globalThis.window.addEventListener !== "function" ||
+      typeof (globalThis.window as unknown as { dispatchEvent?: unknown })
+        .dispatchEvent !== "function"
+    ) {
+      Object.defineProperty(globalThis, "window", {
+        value: createWindowMock() as unknown as Window & typeof globalThis,
+        configurable: true,
+        writable: true,
+      });
+    }
+    setWebSecureStorageBackend(undefined);
+    storage.clearAll();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("setSecureBiometric stores value with biometric prefix", () => {
+    const item = createStorageItem({
+      key: "bio",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+
+    item.set("biometric-secret");
+
+    expect(globalThis.localStorage.getItem("__bio_bio")).toBe(
+      serializeWithPrimitiveFastPath("biometric-secret"),
+    );
+    // Should NOT be stored under the regular secure prefix
+    expect(globalThis.localStorage.getItem("__secure_bio")).toBeNull();
+  });
+
+  it("getSecureBiometric reads from biometric-prefixed key", () => {
+    const item = createStorageItem({
+      key: "bio",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+
+    globalThis.localStorage.setItem(
+      "__bio_bio",
+      serializeWithPrimitiveFastPath("stored-bio"),
+    );
+
+    expect(item.get()).toBe("stored-bio");
+  });
+
+  it("deleteSecureBiometric removes biometric-prefixed key", () => {
+    const item = createStorageItem({
+      key: "bio",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+
+    item.set("to-delete");
+    expect(globalThis.localStorage.getItem("__bio_bio")).not.toBeNull();
+
+    item.delete();
+    expect(globalThis.localStorage.getItem("__bio_bio")).toBeNull();
+    expect(item.get()).toBe("");
+  });
+
+  it("clearBiometric removes all biometric keys", () => {
+    const item1 = createStorageItem({
+      key: "bio-a",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+    const item2 = createStorageItem({
+      key: "bio-b",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+
+    item1.set("secret-a");
+    item2.set("secret-b");
+
+    storage.clearBiometric();
+
+    expect(globalThis.localStorage.getItem("__bio_bio-a")).toBeNull();
+    expect(globalThis.localStorage.getItem("__bio_bio-b")).toBeNull();
+    expect(item1.get()).toBe("");
+    expect(item2.get()).toBe("");
+  });
+});
+
+describe("web transaction edge cases", () => {
+  beforeEach(() => {
+    Object.defineProperty(globalThis, "localStorage", {
+      value: createStorageMock(),
+      configurable: true,
+      writable: true,
+    });
+    if (
+      typeof globalThis.window === "undefined" ||
+      typeof globalThis.window.addEventListener !== "function" ||
+      typeof (globalThis.window as unknown as { dispatchEvent?: unknown })
+        .dispatchEvent !== "function"
+    ) {
+      Object.defineProperty(globalThis, "window", {
+        value: createWindowMock() as unknown as Window & typeof globalThis,
+        configurable: true,
+        writable: true,
+      });
+    }
+    setWebSecureStorageBackend(undefined);
+    storage.clearAll();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("transaction rollback in Disk scope restores values", () => {
+    const item = createStorageItem({
+      key: "txn-rb-disk",
+      scope: StorageScope.Disk,
+      defaultValue: "init",
+    });
+    item.set("original");
+
+    expect(() =>
+      runTransaction(StorageScope.Disk, (tx) => {
+        tx.setItem(item, "modified");
+        throw new Error("abort");
+      }),
+    ).toThrow("abort");
+
+    expect(item.get()).toBe("original");
+  });
+
+  it("transaction rollback for new key removes it", () => {
+    const item = createStorageItem({
+      key: "txn-rb-new",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+    });
+
+    expect(() =>
+      runTransaction(StorageScope.Disk, (tx) => {
+        tx.setItem(item, "created");
+        throw new Error("abort");
+      }),
+    ).toThrow("abort");
+
+    expect(item.get()).toBe("default");
+    expect(globalThis.localStorage.getItem("txn-rb-new")).toBeNull();
+  });
+
+  it("transaction in Memory scope rolls back correctly", () => {
+    const item = createStorageItem({
+      key: "txn-rb-mem",
+      scope: StorageScope.Memory,
+      defaultValue: "init",
+    });
+    item.set("before");
+
+    expect(() =>
+      runTransaction(StorageScope.Memory, (tx) => {
+        tx.setItem(item, "during");
+        throw new Error("abort");
+      }),
+    ).toThrow("abort");
+
+    expect(item.get()).toBe("before");
+  });
+});

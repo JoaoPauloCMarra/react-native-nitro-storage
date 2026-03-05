@@ -52,6 +52,7 @@ type ButtonProps = {
   style?: ViewStyle;
   disabled?: boolean;
   size?: ButtonSize;
+  testID?: string;
 };
 
 const buttonBackground: Record<ButtonVariant, string> = {
@@ -77,8 +78,10 @@ export const Button = ({
   style,
   disabled = false,
   size = "md",
+  testID,
 }: ButtonProps) => (
   <Pressable
+    testID={testID}
     hitSlop={6}
     style={({ pressed }) => [
       styles.button,
@@ -164,6 +167,9 @@ export const Input = ({
       style={styles.textInput}
       value={value}
       onChangeText={onChangeText}
+      onEndEditing={(e) => {
+        onChangeText(e.nativeEvent.text);
+      }}
       placeholder={placeholder}
       placeholderTextColor={Colors.muted}
       selectionColor={Colors.primary}
@@ -221,20 +227,35 @@ export const StatusRow = ({
   label,
   value,
   color,
+  testID,
 }: {
   label: string;
   value: string;
   color?: string;
+  testID?: string;
 }) => (
   <View style={styles.statusRow}>
     <Text style={styles.statusLabel}>{label}</Text>
-    <Text style={[styles.statusValue, color ? { color } : null]}>{value}</Text>
+    <Text
+      testID={testID}
+      style={[styles.statusValue, color ? { color } : null]}
+    >
+      {value}
+    </Text>
   </View>
 );
 
-export const CodeBlock = ({ children }: { children: string }) => (
+export const CodeBlock = ({
+  children,
+  testID,
+}: {
+  children: string;
+  testID?: string;
+}) => (
   <View style={styles.codeBlock}>
-    <Text style={styles.codeBlockText}>{children}</Text>
+    <Text testID={testID} style={styles.codeBlockText}>
+      {children}
+    </Text>
   </View>
 );
 

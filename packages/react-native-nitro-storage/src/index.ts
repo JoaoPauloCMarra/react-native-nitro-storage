@@ -173,6 +173,9 @@ function measureOperation<T>(
   fn: () => T,
   keysCount = 1,
 ): T {
+  if (!metricsObserver) {
+    return fn();
+  }
   const start = Date.now();
   try {
     return fn();
@@ -215,13 +218,20 @@ function clearScopeRawCache(scope: NonMemoryScope): void {
 }
 
 function notifyKeyListeners(registry: KeyListenerRegistry, key: string): void {
-  registry.get(key)?.forEach((listener) => listener());
+  const listeners = registry.get(key);
+  if (listeners) {
+    for (const listener of listeners) {
+      listener();
+    }
+  }
 }
 
 function notifyAllListeners(registry: KeyListenerRegistry): void {
-  registry.forEach((listeners) => {
-    listeners.forEach((listener) => listener());
-  });
+  for (const listeners of registry.values()) {
+    for (const listener of listeners) {
+      listener();
+    }
+  }
 }
 
 function addKeyListener(
@@ -470,7 +480,12 @@ export const storage = {
         flushSecureWrites();
       }
 
-      clearScopeRawCache(scope);
+      const scopeCache = getScopeRawCache(scope);
+      for (const key of scopeCache.keys()) {
+        if (isNamespaced(key, namespace)) {
+          scopeCache.delete(key);
+        }
+      }
       getStorageModule().removeByPrefix(keyPrefix, scope);
     });
   },
@@ -616,13 +631,28 @@ export const storage = {
   resetMetrics: () => {
     metricsCounters.clear();
   },
+  getString: (key: string, scope: StorageScope): string | undefined => {
+    return measureOperation("storage:getString", scope, () => {
+      return getRawValue(key, scope);
+    });
+  },
+  setString: (key: string, value: string, scope: StorageScope): void => {
+    measureOperation("storage:setString", scope, () => {
+      setRawValue(key, value, scope);
+    });
+  },
+  deleteString: (key: string, scope: StorageScope): void => {
+    measureOperation("storage:deleteString", scope, () => {
+      removeRawValue(key, scope);
+    });
+  },
   import: (data: Record<string, string>, scope: StorageScope): void => {
+    const keys = Object.keys(data);
     measureOperation(
       "storage:import",
       scope,
       () => {
         assertValidScope(scope);
-        const keys = Object.keys(data);
         if (keys.length === 0) return;
         const values = keys.map((k) => data[k]!);
 
@@ -642,7 +672,7 @@ export const storage = {
         getStorageModule().setBatch(keys, values, scope);
         keys.forEach((key, index) => cacheRawValue(scope, key, values[index]));
       },
-      Object.keys(data).length,
+      keys.length,
     );
   },
 };
@@ -822,17 +852,18 @@ export function createStorageItem<T = undefined>(
       return memoryStore.get(storageKey);
     }
 
-    if (
-      nonMemoryScope === StorageScope.Secure &&
-      !isBiometric &&
-      hasPendingSecureWrite(storageKey)
-    ) {
-      return readPendingSecureWrite(storageKey);
+    if (nonMemoryScope === StorageScope.Secure && !isBiometric) {
+      const pending = pendingSecureWrites.get(storageKey);
+      if (pending !== undefined) {
+        return pending.value;
+      }
     }
 
     if (readCache) {
-      if (hasCachedRawValue(nonMemoryScope!, storageKey)) {
-        return readCachedRawValue(nonMemoryScope!, storageKey);
+      const cache = getScopeRawCache(nonMemoryScope!);
+      const cached = cache.get(storageKey);
+      if (cached !== undefined || cache.has(storageKey)) {
+        return cached;
       }
     }
 
@@ -1049,14 +1080,13 @@ export function createStorageItem<T = undefined>(
         ? valueOrFn(getInternal())
         : valueOrFn;
 
-      invalidateParsedCache();
-
       if (validate && !validate(newValue)) {
         throw new Error(
           `Validation failed for key "${storageKey}" in scope "${StorageScope[config.scope]}".`,
         );
       }
 
+      invalidateParsedCache();
       writeValueWithoutValidation(newValue);
     });
   };
@@ -1195,15 +1225,18 @@ export function getBatch(
 
       items.forEach((item, index) => {
         if (scope === StorageScope.Secure) {
-          if (hasPendingSecureWrite(item.key)) {
-            rawValues[index] = readPendingSecureWrite(item.key);
+          const pending = pendingSecureWrites.get(item.key);
+          if (pending !== undefined) {
+            rawValues[index] = pending.value;
             return;
           }
         }
 
         if (item._readCacheEnabled === true) {
-          if (hasCachedRawValue(scope, item.key)) {
-            rawValues[index] = readCachedRawValue(scope, item.key);
+          const cache = getScopeRawCache(scope);
+          const cached = cache.get(item.key);
+          if (cached !== undefined || cache.has(item.key)) {
+            rawValues[index] = cached;
             return;
           }
         }
@@ -1400,9 +1433,12 @@ export function migrateToLatest(
         return;
       }
       migration(context);
-      writeMigrationVersion(scope, version);
       appliedVersion = version;
     });
+
+    if (appliedVersion !== currentVersion) {
+      writeMigrationVersion(scope, appliedVersion);
+    }
 
     return appliedVersion;
   });
@@ -1418,13 +1454,18 @@ export function runTransaction<T>(
       flushSecureWrites();
     }
 
-    const rollback = new Map<string, string | undefined>();
+    const NOT_SET = Symbol();
+    const rollback = new Map<string, unknown>();
 
     const rememberRollback = (key: string) => {
       if (rollback.has(key)) {
         return;
       }
-      rollback.set(key, getRawValue(key, scope));
+      if (scope === StorageScope.Memory) {
+        rollback.set(key, memoryStore.has(key) ? memoryStore.get(key) : NOT_SET);
+      } else {
+        rollback.set(key, getRawValue(key, scope));
+      }
     };
 
     const tx: TransactionContext = {
@@ -1460,11 +1501,12 @@ export function runTransaction<T>(
       const rollbackEntries = Array.from(rollback.entries()).reverse();
       if (scope === StorageScope.Memory) {
         rollbackEntries.forEach(([key, previousValue]) => {
-          if (previousValue === undefined) {
-            removeRawValue(key, scope);
+          if (previousValue === NOT_SET) {
+            memoryStore.delete(key);
           } else {
-            setRawValue(key, previousValue, scope);
+            memoryStore.set(key, previousValue);
           }
+          notifyKeyListeners(memoryListeners, key);
         });
       } else {
         const keysToSet: string[] = [];
@@ -1476,7 +1518,7 @@ export function runTransaction<T>(
             keysToRemove.push(key);
           } else {
             keysToSet.push(key);
-            valuesToSet.push(previousValue);
+            valuesToSet.push(previousValue as string);
           }
         });
 
@@ -1508,6 +1550,19 @@ export type SecureAuthStorageConfig<K extends string = string> = Record<
     accessControl?: AccessControl;
   }
 >;
+
+export function isKeychainLockedError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message;
+  return (
+    msg.includes("errSecInteractionNotAllowed") ||
+    msg.includes("UserNotAuthenticatedException") ||
+    msg.includes("KeyStoreException") ||
+    msg.includes("KeyPermanentlyInvalidatedException") ||
+    msg.includes("InvalidKeyException") ||
+    msg.includes("android.security.keystore")
+  );
+}
 
 export function createSecureAuthStorage<K extends string>(
   config: SecureAuthStorageConfig<K>,

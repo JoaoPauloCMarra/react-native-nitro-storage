@@ -240,15 +240,15 @@ void testBatchMissingSentinel() {
 
 void testBatchListeners() {
     auto adapter = std::make_shared<MockAdapter>();
-    HybridStorage storage(adapter);
+    auto storage = std::make_shared<HybridStorage>(adapter);
     std::vector<std::pair<std::string, std::optional<std::string>>> events;
 
-    auto unsubscribe = storage.addOnChange(1.0, [&](const std::string& key, const std::optional<std::string>& value) {
+    auto unsubscribe = storage->addOnChange(1.0, [&](const std::string& key, const std::optional<std::string>& value) {
         events.push_back({key, value});
     });
 
-    storage.setBatch({"a", "b"}, {"1", "2"}, 1.0);
-    storage.removeBatch({"a", "b"}, 1.0);
+    storage->setBatch({"a", "b"}, {"1", "2"}, 1.0);
+    storage->removeBatch({"a", "b"}, 1.0);
 
     assert(events.size() == 4);
     assert(events[0].first == "a" && events[0].second.has_value() && events[0].second.value() == "1");
@@ -310,14 +310,14 @@ void testBiometricLevelPassThrough() {
 
 void testClearNotifiesScope() {
     auto adapter = std::make_shared<MockAdapter>();
-    HybridStorage storage(adapter);
+    auto storage = std::make_shared<HybridStorage>(adapter);
     std::vector<std::string> keys;
 
-    auto unsubscribe = storage.addOnChange(2.0, [&](const std::string& key, const std::optional<std::string>&) {
+    auto unsubscribe = storage->addOnChange(2.0, [&](const std::string& key, const std::optional<std::string>&) {
         keys.push_back(key);
     });
 
-    storage.clear(2.0);
+    storage->clear(2.0);
     assert(keys.size() == 1);
     assert(keys[0].empty());
     unsubscribe();

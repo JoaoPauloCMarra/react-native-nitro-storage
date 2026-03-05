@@ -9,6 +9,7 @@ import {
   prefixKey,
   isNamespaced,
   serializeWithPrimitiveFastPath,
+  toVersionToken,
 } from "../internal";
 
 describe("internal helpers", () => {
@@ -86,7 +87,7 @@ describe("internal helpers", () => {
       "__nitro_storage_primitive__:l",
     );
     expect(serializeWithPrimitiveFastPath(Number.POSITIVE_INFINITY)).toBe(
-      "null",
+      "__nitro_storage_primitive__:n:Infinity",
     );
     expect(serializeWithPrimitiveFastPath({ nested: "ok" })).toBe(
       '{"nested":"ok"}',
@@ -164,5 +165,98 @@ describe("internal helpers", () => {
   it("does not false-positive on partial namespace matches", () => {
     expect(isNamespaced("auth2:token", "auth")).toBe(false);
     expect(isNamespaced("authentication:token", "auth")).toBe(false);
+  });
+});
+
+describe("special number serialization", () => {
+  it("serializes NaN via fast path", () => {
+    expect(serializeWithPrimitiveFastPath(NaN)).toBe(
+      "__nitro_storage_primitive__:n:NaN",
+    );
+  });
+
+  it("deserializes NaN correctly", () => {
+    expect(
+      deserializeWithPrimitiveFastPath("__nitro_storage_primitive__:n:NaN"),
+    ).toBeNaN();
+  });
+
+  it("serializes -Infinity via fast path", () => {
+    expect(serializeWithPrimitiveFastPath(-Infinity)).toBe(
+      "__nitro_storage_primitive__:n:-Infinity",
+    );
+  });
+
+  it("deserializes -Infinity correctly", () => {
+    expect(
+      deserializeWithPrimitiveFastPath(
+        "__nitro_storage_primitive__:n:-Infinity",
+      ),
+    ).toBe(-Infinity);
+  });
+
+  it("round-trips NaN through serialize/deserialize", () => {
+    const serialized = serializeWithPrimitiveFastPath(NaN);
+    const deserialized = deserializeWithPrimitiveFastPath<number>(serialized);
+    expect(deserialized).toBeNaN();
+  });
+
+  it("round-trips Infinity through serialize/deserialize", () => {
+    const serialized = serializeWithPrimitiveFastPath(Infinity);
+    const deserialized = deserializeWithPrimitiveFastPath<number>(serialized);
+    expect(deserialized).toBe(Infinity);
+  });
+
+  it("round-trips -Infinity through serialize/deserialize", () => {
+    const serialized = serializeWithPrimitiveFastPath(-Infinity);
+    const deserialized = deserializeWithPrimitiveFastPath<number>(serialized);
+    expect(deserialized).toBe(-Infinity);
+  });
+});
+
+describe("toVersionToken", () => {
+  it('returns "missing" token for undefined', () => {
+    expect(toVersionToken(undefined)).toBe("__nitro_storage_version__:missing");
+  });
+
+  it("returns consistent hash for same string", () => {
+    const a = toVersionToken("hello");
+    const b = toVersionToken("hello");
+    expect(a).toBe(b);
+  });
+
+  it("returns different hash for different strings", () => {
+    expect(toVersionToken("hello")).not.toBe(toVersionToken("world"));
+  });
+
+  it("handles objects by JSON.stringify", () => {
+    const token = toVersionToken({ a: 1 });
+    expect(token).toContain("__nitro_storage_version__:");
+  });
+
+  it("returns consistent hash for same object", () => {
+    expect(toVersionToken({ a: 1 })).toBe(toVersionToken({ a: 1 }));
+  });
+
+  it("returns different hash for different objects", () => {
+    expect(toVersionToken({ a: 1 })).not.toBe(toVersionToken({ a: 2 }));
+  });
+
+  it("handles cyclic object without throwing (falls back to String())", () => {
+    const obj: Record<string, unknown> = {};
+    obj.self = obj;
+    expect(() => toVersionToken(obj)).not.toThrow();
+  });
+
+  it("handles numbers", () => {
+    expect(toVersionToken(42)).toContain("__nitro_storage_version__:");
+  });
+
+  it("handles booleans", () => {
+    expect(toVersionToken(true)).not.toBe(toVersionToken(false));
+  });
+
+  it("handles null", () => {
+    expect(toVersionToken(null)).toContain("__nitro_storage_version__:");
   });
 });

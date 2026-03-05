@@ -8,15 +8,29 @@ import androidx.security.crypto.MasterKey
 import java.security.KeyStore
 import javax.crypto.AEADBadTagException
 
+private fun Throwable.hasCause(type: Class<*>): Boolean {
+    var current: Throwable? = this
+    while (current != null) {
+        if (type.isInstance(current)) return true
+        current = current.cause
+    }
+    return false
+}
+
 class AndroidStorageAdapter private constructor(private val context: Context) {
-    private val sharedPreferences: SharedPreferences = 
+    private val sharedPreferences: SharedPreferences =
         context.getSharedPreferences("NitroStorage", Context.MODE_PRIVATE)
 
     private val masterKeyAlias = "${context.packageName}.nitro_storage.master_key"
-    private val masterKey: MasterKey = MasterKey.Builder(context, masterKeyAlias)
-        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-        .build()
-    
+
+    private val masterKey: MasterKey = try {
+        MasterKey.Builder(context, masterKeyAlias)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+    } catch (e: Exception) {
+        throw RuntimeException("NitroStorage: Cannot create encryption key. Device may not support AES256-GCM.", e)
+    }
+
     private val encryptedPreferences: SharedPreferences = initializeEncryptedPreferences("NitroStorageSecure", masterKey)
 
     private val biometricMasterKeyAlias = "${context.packageName}.nitro_storage.biometric_key"
@@ -29,8 +43,9 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
                 .build()
             initializeEncryptedPreferences("NitroStorageBiometric", bioKey)
         } catch (e: Exception) {
-            Log.w("NitroStorage", "Biometric storage unavailable, falling back to regular encrypted storage: ${e.message}")
-            encryptedPreferences
+            Log.e("NitroStorage", "Biometric storage unavailable: ${e.message}")
+            throw RuntimeException("NitroStorage: Biometric storage is not available on this device. " +
+                "Ensure biometric hardware is present and credentials are enrolled.", e)
         }
     }
 
@@ -39,47 +54,63 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
 
     @Volatile
     private var secureKeysCache: Array<String>? = null
-    
+
     private fun initializeEncryptedPreferences(name: String, key: MasterKey): SharedPreferences {
         return try {
             EncryptedSharedPreferences.create(
-                context,
-                name,
-                key,
+                context, name, key,
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
         } catch (e: Exception) {
-            if (e is AEADBadTagException || e.cause is AEADBadTagException) {
-                Log.w("NitroStorage", "Detected corrupted encryption keys for $name, clearing...")
-                clearCorruptedStorage(name, key)
-                EncryptedSharedPreferences.create(
-                    context,
-                    name,
-                    key,
-                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-                )
-            } else {
-                throw RuntimeException(
-                    "NitroStorage: Failed to initialize $name. " +
-                    "This may be due to corrupted encryption keys. " +
-                    "Try clearing app data or reinstalling the app.", e
-                )
+            when {
+                e.hasCause(AEADBadTagException::class.java) -> {
+                    Log.w("NitroStorage", "Corrupted encryption keys for $name, attempting recovery...")
+                    clearCorruptedStorage(name, key)
+                    val freshAlias = if (name == "NitroStorageBiometric") biometricMasterKeyAlias else masterKeyAlias
+                    val freshKey = MasterKey.Builder(context, freshAlias)
+                        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                        .apply {
+                            if (name == "NitroStorageBiometric") {
+                                setUserAuthenticationRequired(true, 30)
+                            }
+                        }
+                        .build()
+                    try {
+                        EncryptedSharedPreferences.create(
+                            context, name, freshKey,
+                            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                        )
+                    } catch (retryEx: Exception) {
+                        throw RuntimeException("NitroStorage: Unrecoverable storage corruption in $name", retryEx)
+                    }
+                }
+                else -> {
+                    // Don't wipe on non-corruption failures (e.g., locked keystore)
+                    throw RuntimeException(
+                        "NitroStorage: Failed to initialize $name (${e::class.simpleName}). " +
+                        "This may be a temporary keystore issue. If it persists, clear app data.", e
+                    )
+                }
             }
         }
     }
-    
+
     private fun clearCorruptedStorage(name: String, key: MasterKey) {
         try {
             context.deleteSharedPreferences(name)
             val keyStore = KeyStore.getInstance("AndroidKeyStore")
             keyStore.load(null)
-            val alias = if (key === masterKey) masterKeyAlias else biometricMasterKeyAlias
+            val alias = when {
+                name == "NitroStorageSecure" -> masterKeyAlias
+                name == "NitroStorageBiometric" -> biometricMasterKeyAlias
+                else -> masterKeyAlias
+            }
             keyStore.deleteEntry(alias)
             Log.i("NitroStorage", "Cleared corrupted storage: $name")
         } catch (e: Exception) {
-            Log.e("NitroStorage", "Failed to clear corrupted storage: $name", e)
+            Log.e("NitroStorage", "Failed to clear corrupted storage $name: ${e.message}", e)
         }
     }
 
@@ -87,7 +118,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         return try {
             prefs.getString(key, null)
         } catch (e: Exception) {
-            if (e is AEADBadTagException || e.cause is AEADBadTagException) {
+            if (e.hasCause(AEADBadTagException::class.java)) {
                 Log.w("NitroStorage", "Corrupt entry for key '$key', removing")
                 prefs.edit().remove(key).commit()
                 null
@@ -98,15 +129,21 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
     }
 
     private fun applySecureEditor(editor: SharedPreferences.Editor) {
-        if (secureWritesAsync) {
-            editor.apply()
-        } else {
-            editor.commit()
+        try {
+            if (secureWritesAsync) {
+                editor.apply()
+            } else {
+                editor.commit()
+            }
+        } catch (e: Exception) {
+            throw RuntimeException("NitroStorage: Failed to write to secure storage: ${e.message}", e)
         }
     }
 
     private fun invalidateSecureKeysCache() {
-        secureKeysCache = null
+        synchronized(this) {
+            secureKeysCache = null
+        }
     }
 
     private fun getSecureKeysCached(): Array<String> {
@@ -120,15 +157,20 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             if (existing != null) {
                 return existing
             }
+            val INTERNAL_PREFIX = "__androidx_security_crypto_encrypted_prefs_"
             val keys = linkedSetOf<String>()
-            keys.addAll(encryptedPreferences.all.keys)
-            keys.addAll(biometricPreferences.all.keys)
+            keys.addAll(encryptedPreferences.all.keys.filter { !it.startsWith(INTERNAL_PREFIX) })
+            try {
+                keys.addAll(biometricPreferences.all.keys.filter { !it.startsWith(INTERNAL_PREFIX) })
+            } catch (e: Exception) {
+                Log.d("NitroStorage", "Biometric storage unavailable: ${e.message}")
+            }
             val built = keys.toTypedArray()
             secureKeysCache = built
             return built
         }
     }
-    
+
     companion object {
         @Volatile
         private var instance: AndroidStorageAdapter? = null
@@ -162,7 +204,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         }
 
         // --- Disk ---
-        
+
         @JvmStatic
         fun setDisk(key: String, value: String) {
             getInstanceOrThrow().sharedPreferences.edit().putString(key, value).apply()
@@ -177,7 +219,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             }
             editor.apply()
         }
-        
+
         @JvmStatic
         fun getDisk(key: String): String? {
             return getInstanceOrThrow().sharedPreferences.getString(key, null)
@@ -190,7 +232,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
                 prefs.getString(keys[index], null)
             }
         }
-        
+
         @JvmStatic
         fun deleteDisk(key: String) {
             getInstanceOrThrow().sharedPreferences.edit().remove(key).apply()
@@ -233,30 +275,35 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         }
 
         // --- Secure (sync commit by default, async apply when enabled) ---
-        
+
         @JvmStatic
         fun setSecure(key: String, value: String) {
             val inst = getInstanceOrThrow()
-            val editor = inst.encryptedPreferences.edit().putString(key, value)
-            inst.applySecureEditor(editor)
-            inst.invalidateSecureKeysCache()
+            synchronized(inst) {
+                val editor = inst.encryptedPreferences.edit().putString(key, value)
+                inst.applySecureEditor(editor)
+                inst.invalidateSecureKeysCache()
+            }
         }
 
         @JvmStatic
         fun setSecureBatch(keys: Array<String>, values: Array<String>) {
             val inst = getInstanceOrThrow()
-            val editor = inst.encryptedPreferences.edit()
-            val count = minOf(keys.size, values.size)
-            for (index in 0 until count) {
-                editor.putString(keys[index], values[index])
+            synchronized(inst) {
+                val editor = inst.encryptedPreferences.edit()
+                val count = minOf(keys.size, values.size)
+                for (index in 0 until count) {
+                    editor.putString(keys[index], values[index])
+                }
+                inst.applySecureEditor(editor)
+                inst.invalidateSecureKeysCache()
             }
-            inst.applySecureEditor(editor)
-            inst.invalidateSecureKeysCache()
         }
-        
+
         @JvmStatic
         fun getSecure(key: String): String? {
-            return getInstanceOrThrow().getSecureSafe(getInstanceOrThrow().encryptedPreferences, key)
+            val inst = getInstanceOrThrow()
+            return inst.getSecureSafe(inst.encryptedPreferences, key)
         }
 
         @JvmStatic
@@ -266,33 +313,54 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
                 inst.getSecureSafe(inst.encryptedPreferences, keys[index])
             }
         }
-        
+
         @JvmStatic
         fun deleteSecure(key: String) {
             val inst = getInstanceOrThrow()
-            inst.applySecureEditor(inst.encryptedPreferences.edit().remove(key))
-            inst.applySecureEditor(inst.biometricPreferences.edit().remove(key))
-            inst.invalidateSecureKeysCache()
+            synchronized(inst) {
+                inst.applySecureEditor(inst.encryptedPreferences.edit().remove(key))
+                try {
+                    inst.applySecureEditor(inst.biometricPreferences.edit().remove(key))
+                } catch (e: Exception) {
+                    Log.d("NitroStorage", "Biometric storage unavailable: ${e.message}")
+                }
+                inst.invalidateSecureKeysCache()
+            }
         }
 
         @JvmStatic
         fun deleteSecureBatch(keys: Array<String>) {
             val inst = getInstanceOrThrow()
-            val secureEditor = inst.encryptedPreferences.edit()
-            val biometricEditor = inst.biometricPreferences.edit()
-            for (key in keys) {
-                secureEditor.remove(key)
-                biometricEditor.remove(key)
+            synchronized(inst) {
+                val editor = inst.encryptedPreferences.edit()
+                for (key in keys) {
+                    editor.remove(key)
+                }
+                inst.applySecureEditor(editor)
+                try {
+                    val biometricEditor = inst.biometricPreferences.edit()
+                    for (key in keys) {
+                        biometricEditor.remove(key)
+                    }
+                    inst.applySecureEditor(biometricEditor)
+                } catch (e: Exception) {
+                    Log.d("NitroStorage", "Biometric storage unavailable: ${e.message}")
+                }
+                inst.invalidateSecureKeysCache()
             }
-            inst.applySecureEditor(secureEditor)
-            inst.applySecureEditor(biometricEditor)
-            inst.invalidateSecureKeysCache()
         }
 
         @JvmStatic
         fun hasSecure(key: String): Boolean {
             val inst = getInstanceOrThrow()
-            return inst.encryptedPreferences.contains(key) || inst.biometricPreferences.contains(key)
+            val hasInEncrypted = inst.encryptedPreferences.contains(key)
+            val hasInBiometric = try {
+                inst.biometricPreferences.contains(key)
+            } catch (e: Exception) {
+                Log.d("NitroStorage", "Biometric storage unavailable: ${e.message}")
+                false
+            }
+            return hasInEncrypted || hasInBiometric
         }
 
         @JvmStatic
@@ -315,7 +383,11 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         fun clearSecure() {
             val inst = getInstanceOrThrow()
             inst.applySecureEditor(inst.encryptedPreferences.edit().clear())
-            inst.applySecureEditor(inst.biometricPreferences.edit().clear())
+            try {
+                inst.applySecureEditor(inst.biometricPreferences.edit().clear())
+            } catch (e: Exception) {
+                Log.d("NitroStorage", "Biometric storage unavailable: ${e.message}")
+            }
             inst.invalidateSecureKeysCache()
         }
 
@@ -329,33 +401,56 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         @JvmStatic
         fun setSecureBiometricWithLevel(key: String, value: String, @Suppress("UNUSED_PARAMETER") level: Int) {
             val inst = getInstanceOrThrow()
-            val editor = inst.biometricPreferences.edit().putString(key, value)
-            inst.applySecureEditor(editor)
-            inst.invalidateSecureKeysCache()
+            try {
+                val editor = inst.biometricPreferences.edit().putString(key, value)
+                inst.applySecureEditor(editor)
+                inst.invalidateSecureKeysCache()
+            } catch (e: Exception) {
+                throw RuntimeException("NitroStorage: Biometric storage unavailable on this device", e)
+            }
         }
 
         @JvmStatic
         fun getSecureBiometric(key: String): String? {
-            return getInstanceOrThrow().getSecureSafe(getInstanceOrThrow().biometricPreferences, key)
+            val inst = getInstanceOrThrow()
+            return try {
+                inst.getSecureSafe(inst.biometricPreferences, key)
+            } catch (e: Exception) {
+                Log.d("NitroStorage", "Biometric storage unavailable: ${e.message}")
+                null
+            }
         }
 
         @JvmStatic
         fun deleteSecureBiometric(key: String) {
             val inst = getInstanceOrThrow()
-            inst.applySecureEditor(inst.biometricPreferences.edit().remove(key))
-            inst.invalidateSecureKeysCache()
+            try {
+                inst.applySecureEditor(inst.biometricPreferences.edit().remove(key))
+                inst.invalidateSecureKeysCache()
+            } catch (e: Exception) {
+                Log.d("NitroStorage", "Biometric storage unavailable: ${e.message}")
+            }
         }
 
         @JvmStatic
         fun hasSecureBiometric(key: String): Boolean {
-            return getInstanceOrThrow().biometricPreferences.contains(key)
+            return try {
+                getInstanceOrThrow().biometricPreferences.contains(key)
+            } catch (e: Exception) {
+                Log.d("NitroStorage", "Biometric storage unavailable: ${e.message}")
+                false
+            }
         }
 
         @JvmStatic
         fun clearSecureBiometric() {
             val inst = getInstanceOrThrow()
-            inst.applySecureEditor(inst.biometricPreferences.edit().clear())
-            inst.invalidateSecureKeysCache()
+            try {
+                inst.applySecureEditor(inst.biometricPreferences.edit().clear())
+                inst.invalidateSecureKeysCache()
+            } catch (e: Exception) {
+                Log.d("NitroStorage", "Biometric storage unavailable: ${e.message}")
+            }
         }
     }
 }

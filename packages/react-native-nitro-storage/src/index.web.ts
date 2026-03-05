@@ -163,10 +163,12 @@ const webScopeKeyIndex = new Map<NonMemoryScope, Set<string>>([
 const hydratedWebScopeKeyIndex = new Set<NonMemoryScope>();
 const pendingSecureWrites = new Map<string, PendingSecureWrite>();
 let secureFlushScheduled = false;
+let secureDefaultAccessControl: AccessControl = AccessControl.WhenUnlocked;
 const SECURE_WEB_PREFIX = "__secure_";
 const BIOMETRIC_WEB_PREFIX = "__bio_";
 let hasWarnedAboutWebBiometricFallback = false;
 let hasWebStorageEventSubscription = false;
+let webStorageSubscriberCount = 0;
 let metricsObserver: StorageMetricsObserver | undefined;
 const metricsCounters = new Map<
   string,
@@ -200,6 +202,9 @@ function measureOperation<T>(
   fn: () => T,
   keysCount = 1,
 ): T {
+  if (!metricsObserver) {
+    return fn();
+  }
   const start = Date.now();
   try {
     return fn();
@@ -232,6 +237,9 @@ function createLocalStorageWebSecureBackend(): WebSecureStorageBackend {
 let webSecureStorageBackend: WebSecureStorageBackend | undefined =
   createLocalStorageWebSecureBackend();
 
+let cachedSecureBrowserStorage: BrowserStorageLike | undefined;
+let cachedSecureBackendRef: WebSecureStorageBackend | undefined;
+
 function getBrowserStorage(scope: number): BrowserStorageLike | undefined {
   if (scope === StorageScope.Disk) {
     return globalThis.localStorage;
@@ -240,16 +248,24 @@ function getBrowserStorage(scope: number): BrowserStorageLike | undefined {
     if (!webSecureStorageBackend) {
       return undefined;
     }
-    return {
-      setItem: (key, value) => webSecureStorageBackend?.setItem(key, value),
-      getItem: (key) => webSecureStorageBackend?.getItem(key) ?? null,
-      removeItem: (key) => webSecureStorageBackend?.removeItem(key),
-      clear: () => webSecureStorageBackend?.clear(),
-      key: (index) => webSecureStorageBackend?.getAllKeys()[index] ?? null,
+    if (
+      cachedSecureBackendRef === webSecureStorageBackend &&
+      cachedSecureBrowserStorage
+    ) {
+      return cachedSecureBrowserStorage;
+    }
+    cachedSecureBackendRef = webSecureStorageBackend;
+    cachedSecureBrowserStorage = {
+      setItem: (key, value) => webSecureStorageBackend!.setItem(key, value),
+      getItem: (key) => webSecureStorageBackend!.getItem(key) ?? null,
+      removeItem: (key) => webSecureStorageBackend!.removeItem(key),
+      clear: () => webSecureStorageBackend!.clear(),
+      key: (index) => webSecureStorageBackend!.getAllKeys()[index] ?? null,
       get length() {
-        return webSecureStorageBackend?.getAllKeys().length ?? 0;
+        return webSecureStorageBackend!.getAllKeys().length;
       },
     };
+    return cachedSecureBrowserStorage;
   }
   return undefined;
 }
@@ -370,17 +386,27 @@ function handleWebStorageEvent(event: StorageEvent): void {
 }
 
 function ensureWebStorageEventSubscription(): void {
-  if (hasWebStorageEventSubscription) {
-    return;
-  }
+  webStorageSubscriberCount += 1;
   if (
-    typeof window === "undefined" ||
-    typeof window.addEventListener !== "function"
+    webStorageSubscriberCount === 1 &&
+    typeof window !== "undefined" &&
+    typeof window.addEventListener === "function"
   ) {
-    return;
+    window.addEventListener("storage", handleWebStorageEvent);
+    hasWebStorageEventSubscription = true;
   }
-  window.addEventListener("storage", handleWebStorageEvent);
-  hasWebStorageEventSubscription = true;
+}
+
+function maybeCleanupWebStorageSubscription(): void {
+  webStorageSubscriberCount = Math.max(0, webStorageSubscriberCount - 1);
+  if (
+    webStorageSubscriberCount === 0 &&
+    hasWebStorageEventSubscription &&
+    typeof window !== "undefined"
+  ) {
+    window.removeEventListener("storage", handleWebStorageEvent);
+    hasWebStorageEventSubscription = false;
+  }
 }
 
 function getScopedListeners(scope: NonMemoryScope): KeyListenerRegistry {
@@ -417,13 +443,20 @@ function clearScopeRawCache(scope: NonMemoryScope): void {
 }
 
 function notifyKeyListeners(registry: KeyListenerRegistry, key: string): void {
-  registry.get(key)?.forEach((listener) => listener());
+  const listeners = registry.get(key);
+  if (listeners) {
+    for (const listener of listeners) {
+      listener();
+    }
+  }
 }
 
 function notifyAllListeners(registry: KeyListenerRegistry): void {
-  registry.forEach((listeners) => {
-    listeners.forEach((listener) => listener());
-  });
+  for (const listeners of registry.values()) {
+    for (const listener of listeners) {
+      listener();
+    }
+  }
 }
 
 function addKeyListener(
@@ -482,7 +515,7 @@ function flushSecureWrites(): void {
     if (value === undefined) {
       keysToRemove.push(key);
     } else {
-      const resolvedAccessControl = accessControl ?? AccessControl.WhenUnlocked;
+      const resolvedAccessControl = accessControl ?? secureDefaultAccessControl;
       const existingGroup = groupedSetWrites.get(resolvedAccessControl);
       const group = existingGroup ?? { keys: [], values: [] };
       group.keys.push(key);
@@ -882,7 +915,12 @@ export const storage = {
       if (scope === StorageScope.Secure) {
         flushSecureWrites();
       }
-      clearScopeRawCache(scope);
+      const scopeCache = getScopeRawCache(scope);
+      for (const key of scopeCache.keys()) {
+        if (isNamespaced(key, namespace)) {
+          scopeCache.delete(key);
+        }
+      }
       WebStorage.removeByPrefix(keyPrefix, scope);
     });
   },
@@ -958,9 +996,13 @@ export const storage = {
         return result;
       }
       const keys = WebStorage.getAllKeys(scope);
-      keys.forEach((key) => {
-        const val = WebStorage.get(key, scope);
-        if (val !== undefined) result[key] = val;
+      if (keys.length === 0) return {};
+      const values = WebStorage.getBatch(keys, scope);
+      keys.forEach((key, index) => {
+        const val = values[index];
+        if (val !== undefined && val !== null) {
+          result[key] = val;
+        }
       });
       return result;
     });
@@ -972,7 +1014,8 @@ export const storage = {
       return WebStorage.size(scope);
     });
   },
-  setAccessControl: (_level: AccessControl) => {
+  setAccessControl: (level: AccessControl) => {
+    secureDefaultAccessControl = level;
     recordMetric("storage:setAccessControl", StorageScope.Secure, 0);
   },
   setSecureWritesAsync: (_enabled: boolean) => {
@@ -1005,13 +1048,28 @@ export const storage = {
   resetMetrics: () => {
     metricsCounters.clear();
   },
+  getString: (key: string, scope: StorageScope): string | undefined => {
+    return measureOperation("storage:getString", scope, () => {
+      return getRawValue(key, scope);
+    });
+  },
+  setString: (key: string, value: string, scope: StorageScope): void => {
+    measureOperation("storage:setString", scope, () => {
+      setRawValue(key, value, scope);
+    });
+  },
+  deleteString: (key: string, scope: StorageScope): void => {
+    measureOperation("storage:deleteString", scope, () => {
+      removeRawValue(key, scope);
+    });
+  },
   import: (data: Record<string, string>, scope: StorageScope): void => {
+    const keys = Object.keys(data);
     measureOperation(
       "storage:import",
       scope,
       () => {
         assertValidScope(scope);
-        const keys = Object.keys(data);
         if (keys.length === 0) return;
         const values = keys.map((k) => data[k]!);
 
@@ -1023,9 +1081,15 @@ export const storage = {
           return;
         }
 
+        if (scope === StorageScope.Secure) {
+          flushSecureWrites();
+          WebStorage.setSecureAccessControl(secureDefaultAccessControl);
+        }
+
         WebStorage.setBatch(keys, values, scope);
+        keys.forEach((key, index) => cacheRawValue(scope, key, values[index]));
       },
-      Object.keys(data).length,
+      keys.length,
     );
   },
 };
@@ -1034,6 +1098,8 @@ export function setWebSecureStorageBackend(
   backend?: WebSecureStorageBackend,
 ): void {
   webSecureStorageBackend = backend ?? createLocalStorageWebSecureBackend();
+  cachedSecureBrowserStorage = undefined;
+  cachedSecureBackendRef = undefined;
   hydratedWebScopeKeyIndex.delete(StorageScope.Secure);
   clearScopeRawCache(StorageScope.Secure);
 }
@@ -1207,17 +1273,18 @@ export function createStorageItem<T = undefined>(
       return memoryStore.get(storageKey);
     }
 
-    if (
-      nonMemoryScope === StorageScope.Secure &&
-      !isBiometric &&
-      hasPendingSecureWrite(storageKey)
-    ) {
-      return readPendingSecureWrite(storageKey);
+    if (nonMemoryScope === StorageScope.Secure && !isBiometric) {
+      const pending = pendingSecureWrites.get(storageKey);
+      if (pending !== undefined) {
+        return pending.value;
+      }
     }
 
     if (readCache) {
-      if (hasCachedRawValue(nonMemoryScope!, storageKey)) {
-        return readCachedRawValue(nonMemoryScope!, storageKey);
+      const cache = getScopeRawCache(nonMemoryScope!);
+      const cached = cache.get(storageKey);
+      if (cached !== undefined || cache.has(storageKey)) {
+        return cached;
       }
     }
 
@@ -1246,7 +1313,7 @@ export function createStorageItem<T = undefined>(
       scheduleSecureWrite(
         storageKey,
         rawValue,
-        secureAccessControl ?? AccessControl.WhenUnlocked,
+        secureAccessControl ?? secureDefaultAccessControl,
       );
       return;
     }
@@ -1270,7 +1337,7 @@ export function createStorageItem<T = undefined>(
       scheduleSecureWrite(
         storageKey,
         undefined,
-        secureAccessControl ?? AccessControl.WhenUnlocked,
+        secureAccessControl ?? secureDefaultAccessControl,
       );
       return;
     }
@@ -1431,14 +1498,13 @@ export function createStorageItem<T = undefined>(
         ? valueOrFn(getInternal())
         : valueOrFn;
 
-      invalidateParsedCache();
-
       if (validate && !validate(newValue)) {
         throw new Error(
           `Validation failed for key "${storageKey}" in scope "${StorageScope[config.scope]}".`,
         );
       }
 
+      invalidateParsedCache();
       writeValueWithoutValidation(newValue);
     });
   };
@@ -1488,6 +1554,9 @@ export function createStorageItem<T = undefined>(
       if (listeners.size === 0 && unsubscribe) {
         unsubscribe();
         unsubscribe = null;
+        if (!isMemory) {
+          maybeCleanupWebStorageSubscription();
+        }
       }
     };
   };
@@ -1574,15 +1643,18 @@ export function getBatch(
 
       items.forEach((item, index) => {
         if (scope === StorageScope.Secure) {
-          if (hasPendingSecureWrite(item.key)) {
-            rawValues[index] = readPendingSecureWrite(item.key);
+          const pending = pendingSecureWrites.get(item.key);
+          if (pending !== undefined) {
+            rawValues[index] = pending.value;
             return;
           }
         }
 
         if (item._readCacheEnabled === true) {
-          if (hasCachedRawValue(scope, item.key)) {
-            rawValues[index] = readCachedRawValue(scope, item.key);
+          const cache = getScopeRawCache(scope);
+          const cached = cache.get(item.key);
+          if (cached !== undefined || cache.has(item.key)) {
+            rawValues[index] = cached;
             return;
           }
         }
@@ -1674,7 +1746,7 @@ export function setBatch<T>(
 
         secureEntries.forEach(({ item, value, internal }) => {
           const accessControl =
-            internal._secureAccessControl ?? AccessControl.WhenUnlocked;
+            internal._secureAccessControl ?? secureDefaultAccessControl;
           const existingGroup = groupedByAccessControl.get(accessControl);
           const group = existingGroup ?? { keys: [], values: [] };
           group.keys.push(item.key);
@@ -1773,9 +1845,12 @@ export function migrateToLatest(
         return;
       }
       migration(context);
-      writeMigrationVersion(scope, version);
       appliedVersion = version;
     });
+
+    if (appliedVersion !== currentVersion) {
+      writeMigrationVersion(scope, appliedVersion);
+    }
 
     return appliedVersion;
   });
@@ -1791,13 +1866,18 @@ export function runTransaction<T>(
       flushSecureWrites();
     }
 
-    const rollback = new Map<string, string | undefined>();
+    const NOT_SET = Symbol();
+    const rollback = new Map<string, unknown>();
 
     const rememberRollback = (key: string) => {
       if (rollback.has(key)) {
         return;
       }
-      rollback.set(key, getRawValue(key, scope));
+      if (scope === StorageScope.Memory) {
+        rollback.set(key, memoryStore.has(key) ? memoryStore.get(key) : NOT_SET);
+      } else {
+        rollback.set(key, getRawValue(key, scope));
+      }
     };
 
     const tx: TransactionContext = {
@@ -1833,11 +1913,12 @@ export function runTransaction<T>(
       const rollbackEntries = Array.from(rollback.entries()).reverse();
       if (scope === StorageScope.Memory) {
         rollbackEntries.forEach(([key, previousValue]) => {
-          if (previousValue === undefined) {
-            removeRawValue(key, scope);
+          if (previousValue === NOT_SET) {
+            memoryStore.delete(key);
           } else {
-            setRawValue(key, previousValue, scope);
+            memoryStore.set(key, previousValue);
           }
+          notifyKeyListeners(memoryListeners, key);
         });
       } else {
         const keysToSet: string[] = [];
@@ -1849,7 +1930,7 @@ export function runTransaction<T>(
             keysToRemove.push(key);
           } else {
             keysToSet.push(key);
-            valuesToSet.push(previousValue);
+            valuesToSet.push(previousValue as string);
           }
         });
 
@@ -1914,4 +1995,8 @@ export function createSecureAuthStorage<K extends string>(
   }
 
   return result as Record<K, StorageItem<string>>;
+}
+
+export function isKeychainLockedError(_err: unknown): boolean {
+  return false;
 }

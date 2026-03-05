@@ -3,7 +3,9 @@
 #include "HybridStorageSpec.hpp"
 #include "../core/NativeStorageAdapter.hpp"
 #include <unordered_map>
+#ifdef NITRO_STORAGE_USE_ORDERED_MAP_FOR_TESTS
 #include <map>
+#endif
 #include <mutex>
 #include <functional>
 #include <memory>
@@ -90,6 +92,8 @@ private:
     void onScopeClear(int scope);
     void ensureAdapter() const;
     Scope toScope(double scopeValue);
+
+    static constexpr const char* kClearSentinelKey = "";
 };
 
 } // namespace margelo::nitro::NitroStorage

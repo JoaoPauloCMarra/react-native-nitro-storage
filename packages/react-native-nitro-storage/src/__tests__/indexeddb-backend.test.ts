@@ -250,4 +250,68 @@ describe("createIndexedDBBackend", () => {
       /IndexedDB is not available/,
     );
   });
+
+  it("overwriting a key updates the value", async () => {
+    const backend = await createIndexedDBBackend();
+    backend.setItem("key", "first");
+    backend.setItem("key", "second");
+    expect(backend.getItem("key")).toBe("second");
+  });
+
+  it("getAllKeys returns empty array after clear", async () => {
+    const backend = await createIndexedDBBackend();
+    backend.setItem("a", "1");
+    backend.setItem("b", "2");
+    backend.setItem("c", "3");
+    backend.clear();
+    expect(backend.getAllKeys()).toEqual([]);
+  });
+
+  it("removeItem for non-existent key does not throw", async () => {
+    const backend = await createIndexedDBBackend();
+    expect(() => backend.removeItem("ghost")).not.toThrow();
+  });
+
+  it("setItem after clear works correctly", async () => {
+    const backend = await createIndexedDBBackend();
+    backend.setItem("a", "1");
+    backend.setItem("b", "2");
+    backend.clear();
+    backend.setItem("c", "3");
+    expect(backend.getItem("c")).toBe("3");
+    expect(backend.getItem("a")).toBeNull();
+    expect(backend.getItem("b")).toBeNull();
+    expect(backend.getAllKeys()).toEqual(["c"]);
+  });
+
+  it("multiple backends on same DB share persistence", async () => {
+    const backendA = await createIndexedDBBackend("shared-db", "kv");
+    backendA.setItem("shared-key", "shared-value");
+
+    await new Promise<void>((r) => queueMicrotask(r));
+
+    const backendB = await createIndexedDBBackend("shared-db", "kv");
+    expect(backendB.getItem("shared-key")).toBe("shared-value");
+  });
+
+  it("getItem returns null after removeItem even if IndexedDB still has stale data", async () => {
+    const backend = await createIndexedDBBackend();
+    backend.setItem("stale", "data");
+    backend.removeItem("stale");
+    expect(backend.getItem("stale")).toBeNull();
+  });
+
+  it("handles large number of keys", async () => {
+    const backend = await createIndexedDBBackend();
+    for (let i = 0; i < 100; i++) {
+      backend.setItem(`key-${i}`, `value-${i}`);
+    }
+    expect(backend.getAllKeys()).toHaveLength(100);
+  });
+
+  it("custom dbName and storeName work correctly", async () => {
+    const backend = await createIndexedDBBackend("my-custom-db", "my-store");
+    backend.setItem("custom", "works");
+    expect(backend.getItem("custom")).toBe("works");
+  });
 });

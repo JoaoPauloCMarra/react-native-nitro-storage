@@ -9,7 +9,7 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.nitrostorage.example"
+      "bundleIdentifier": "com.nitrostorage.example",
     },
     "android": {
       "package": "com.nitrostorage.example"

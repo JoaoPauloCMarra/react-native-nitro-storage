@@ -4,6 +4,15 @@ export const MIGRATION_VERSION_KEY = "__nitro_storage_migration_version__";
 export const NATIVE_BATCH_MISSING_SENTINEL =
   "__nitro_storage_batch_missing__::v1";
 const PRIMITIVE_FAST_PATH_PREFIX = "__nitro_storage_primitive__:";
+const PRIM_NULL = "__nitro_storage_primitive__:l";
+const PRIM_UNDEFINED = "__nitro_storage_primitive__:u";
+const PRIM_TRUE = "__nitro_storage_primitive__:b:1";
+const PRIM_FALSE = "__nitro_storage_primitive__:b:0";
+const PRIM_STRING_PREFIX = "__nitro_storage_primitive__:s:";
+const PRIM_NUMBER_PREFIX = "__nitro_storage_primitive__:n:";
+const PRIM_INFINITY = "__nitro_storage_primitive__:n:Infinity";
+const PRIM_NEG_INFINITY = "__nitro_storage_primitive__:n:-Infinity";
+const PRIM_NAN = "__nitro_storage_primitive__:n:NaN";
 const NAMESPACE_SEPARATOR = ":";
 const VERSION_TOKEN_PREFIX = "__nitro_storage_version__:";
 
@@ -80,21 +89,30 @@ export function isNamespaced(key: string, namespace: string): boolean {
 
 export function serializeWithPrimitiveFastPath<T>(value: T): string {
   if (value === null) {
-    return `${PRIMITIVE_FAST_PATH_PREFIX}l`;
+    return PRIM_NULL;
   }
 
   switch (typeof value) {
     case "string":
-      return `${PRIMITIVE_FAST_PATH_PREFIX}s:${value}`;
+      return PRIM_STRING_PREFIX + (value as string);
     case "number":
       if (Number.isFinite(value)) {
-        return `${PRIMITIVE_FAST_PATH_PREFIX}n:${value}`;
+        return PRIM_NUMBER_PREFIX + String(value);
+      }
+      if (Number.isNaN(value as number)) {
+        return PRIM_NAN;
+      }
+      if (value === Infinity) {
+        return PRIM_INFINITY;
+      }
+      if (value === -Infinity) {
+        return PRIM_NEG_INFINITY;
       }
       break;
     case "boolean":
-      return `${PRIMITIVE_FAST_PATH_PREFIX}b:${value ? "1" : "0"}`;
+      return value ? PRIM_TRUE : PRIM_FALSE;
     case "undefined":
-      return `${PRIMITIVE_FAST_PATH_PREFIX}u`;
+      return PRIM_UNDEFINED;
     default:
       break;
   }
@@ -108,31 +126,41 @@ export function serializeWithPrimitiveFastPath<T>(value: T): string {
   return serialized;
 }
 
+// charCode constants for fast tag dispatch
+const CHAR_U = 117; // 'u'
+const CHAR_L = 108; // 'l'
+const CHAR_S = 115; // 's'
+const CHAR_B = 98; // 'b'
+const CHAR_N = 110; // 'n'
+
 export function deserializeWithPrimitiveFastPath<T>(value: string): T {
   if (value.startsWith(PRIMITIVE_FAST_PATH_PREFIX)) {
-    const encodedValue = value.slice(PRIMITIVE_FAST_PATH_PREFIX.length);
-    if (encodedValue === "u") {
+    const prefixLen = PRIMITIVE_FAST_PATH_PREFIX.length;
+    const tagChar = value.charCodeAt(prefixLen);
+
+    if (tagChar === CHAR_U) {
       return undefined as T;
     }
-    if (encodedValue === "l") {
+    if (tagChar === CHAR_L) {
       return null as T;
     }
 
-    const separatorIndex = encodedValue.indexOf(":");
-    if (separatorIndex > 0) {
-      const tag = encodedValue.slice(0, separatorIndex);
-      const payload = encodedValue.slice(separatorIndex + 1);
-      if (tag === "s") {
-        return payload as T;
-      }
-      if (tag === "b") {
-        return (payload === "1") as T;
-      }
-      if (tag === "n") {
-        const parsed = Number(payload);
-        if (Number.isFinite(parsed)) {
-          return parsed as T;
-        }
+    // Tagged values have format: prefix + tag + ':' + payload
+    const payload = value.slice(prefixLen + 2);
+
+    if (tagChar === CHAR_S) {
+      return payload as T;
+    }
+    if (tagChar === CHAR_B) {
+      return (payload === "1") as T;
+    }
+    if (tagChar === CHAR_N) {
+      if (payload === "NaN") return NaN as T;
+      if (payload === "Infinity") return Infinity as T;
+      if (payload === "-Infinity") return -Infinity as T;
+      const parsed = Number(payload);
+      if (Number.isFinite(parsed)) {
+        return parsed as T;
       }
     }
   }

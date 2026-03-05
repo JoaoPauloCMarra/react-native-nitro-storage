@@ -4,9 +4,12 @@ module.exports = {
   moduleFileExtensions: ["ts", "tsx", "js", "jsx"],
   transform: {
     "^.+\\.(ts|tsx)$": [
-      "ts-jest",
+      "@swc/jest",
       {
-        tsconfig: "tsconfig.test.json",
+        jsc: {
+          parser: { syntax: "typescript", tsx: true },
+          target: "es2022",
+        },
       },
     ],
   },
