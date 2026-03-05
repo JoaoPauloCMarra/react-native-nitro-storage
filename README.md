@@ -532,7 +532,7 @@ These are synchronous and go directly to the native backend without any serializ
 
 ### `isKeychainLockedError(err)`
 
-Utility to detect iOS Keychain locked errors in secure storage operations. Returns `true` if the error was caused by a locked keychain (device locked, first unlock not yet performed, etc.). Always returns `false` on web.
+Utility to detect iOS Keychain locked errors and Android key invalidation errors in secure storage operations. Returns `true` if the error was caused by a locked keychain (device locked, first unlock not yet performed, etc.) or an Android `KeyPermanentlyInvalidatedException` / `InvalidKeyException`. Always returns `false` on web.
 
 ```ts
 import { isKeychainLockedError } from "react-native-nitro-storage";
