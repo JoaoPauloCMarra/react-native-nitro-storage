@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
-## 0.4.2 - 2026-03-05
+## 0.4.2/0.4.3 - 2026-03-05
 
 ### Fixed
 
