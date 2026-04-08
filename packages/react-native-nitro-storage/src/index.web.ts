@@ -1874,7 +1874,10 @@ export function runTransaction<T>(
         return;
       }
       if (scope === StorageScope.Memory) {
-        rollback.set(key, memoryStore.has(key) ? memoryStore.get(key) : NOT_SET);
+        rollback.set(
+          key,
+          memoryStore.has(key) ? memoryStore.get(key) : NOT_SET,
+        );
       } else {
         rollback.set(key, getRawValue(key, scope));
       }

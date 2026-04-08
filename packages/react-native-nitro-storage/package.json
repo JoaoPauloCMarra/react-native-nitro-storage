@@ -1,6 +1,6 @@
 {
   "name": "react-native-nitro-storage",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "The fastest, most complete storage solution for React Native. Synchronous Memory, Disk, and Secure storage in one unified API. Built with Nitro Modules.",
   "main": "lib/commonjs/index.js",
   "module": "lib/module/index.js",
@@ -105,7 +105,7 @@
   "peerDependencies": {
     "react": ">=18.2.0",
     "react-native": ">=0.75.0",
-    "react-native-nitro-modules": ">=0.33.9"
+    "react-native-nitro-modules": ">=0.35.4"
   },
   "react-native-builder-bob": {
     "source": "src",
