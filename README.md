@@ -56,7 +56,7 @@ Every feature in this package is documented with at least one runnable example i
 | Dependency                   | Version     |
 | ---------------------------- | ----------- |
 | `react-native`               | `>= 0.75.0` |
-| `react-native-nitro-modules` | `>= 0.33.9` |
+| `react-native-nitro-modules` | `>= 0.35.4` |
 | `react`                      | `>= 18.2.0` |
 
 ## Installation
