@@ -170,6 +170,55 @@ function makeFakeIDB(): {
 }
 
 let fakeIDB: ReturnType<typeof makeFakeIDB>;
+let cleanupBroadcastChannels: (() => void) | undefined;
+
+function installBroadcastChannelMock(): () => void {
+  const listeners = new Map<string, Set<(event: { data: unknown }) => void>>();
+
+  class BroadcastChannelMock {
+    readonly name: string;
+
+    constructor(name: string) {
+      this.name = name;
+      listeners.set(name, listeners.get(name) ?? new Set());
+    }
+
+    addEventListener(
+      _type: "message",
+      listener: (event: { data: unknown }) => void,
+    ): void {
+      listeners.get(this.name)?.add(listener);
+    }
+
+    removeEventListener(
+      _type: "message",
+      listener: (event: { data: unknown }) => void,
+    ): void {
+      listeners.get(this.name)?.delete(listener);
+    }
+
+    postMessage(data: unknown): void {
+      const channelListeners = Array.from(listeners.get(this.name) ?? []);
+      channelListeners.forEach((listener) => {
+        queueMicrotask(() => listener({ data }));
+      });
+    }
+
+    close(): void {}
+  }
+
+  Object.defineProperty(globalThis, "BroadcastChannel", {
+    value: BroadcastChannelMock,
+    writable: true,
+    configurable: true,
+  });
+
+  return () => {
+    listeners.clear();
+    // @ts-expect-error intentional cleanup
+    delete globalThis.BroadcastChannel;
+  };
+}
 
 beforeEach(() => {
   fakeIDB = makeFakeIDB();
@@ -178,10 +227,12 @@ beforeEach(() => {
     writable: true,
     configurable: true,
   });
+  cleanupBroadcastChannels = installBroadcastChannelMock();
 });
 
 afterEach(() => {
   fakeIDB.reset();
+  cleanupBroadcastChannels?.();
   // @ts-expect-error — intentional cleanup
   delete globalThis.indexedDB;
 });
@@ -194,6 +245,8 @@ describe("createIndexedDBBackend", () => {
     expect(typeof backend.removeItem).toBe("function");
     expect(typeof backend.clear).toBe("function");
     expect(typeof backend.getAllKeys).toBe("function");
+    expect(typeof backend.flush).toBe("function");
+    expect(typeof backend.subscribe).toBe("function");
   });
 
   it("getItem returns null for a key that was never set", async () => {
@@ -313,5 +366,105 @@ describe("createIndexedDBBackend", () => {
     const backend = await createIndexedDBBackend("my-custom-db", "my-store");
     backend.setItem("custom", "works");
     expect(backend.getItem("custom")).toBe("works");
+  });
+
+  it("supports getMany, setMany, removeMany, and size", async () => {
+    const backend = await createIndexedDBBackend();
+
+    backend.setMany?.([
+      ["a", "1"],
+      ["b", "2"],
+    ]);
+    expect(backend.size?.()).toBe(2);
+    expect(backend.getMany?.(["a", "b", "c"])).toEqual(["1", "2", null]);
+
+    backend.removeMany?.(["a", "b"]);
+    expect(backend.size?.()).toBe(0);
+  });
+
+  it("flush waits for queued writes to settle", async () => {
+    const backend = await createIndexedDBBackend("flush-db", "kv");
+    backend.setItem("flush-key", "value");
+    await backend.flush?.();
+
+    const fresh = await createIndexedDBBackend("flush-db", "kv");
+    expect(fresh.getItem("flush-key")).toBe("value");
+  });
+
+  it("broadcasts external updates across backend instances", async () => {
+    const backendA = await createIndexedDBBackend("sync-db", "kv");
+    const backendB = await createIndexedDBBackend("sync-db", "kv");
+    const listener = jest.fn();
+    backendB.subscribe?.(listener);
+
+    backendA.setItem("shared", "value");
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+    expect(backendB.getItem("shared")).toBe("value");
+    expect(listener).toHaveBeenCalledWith({
+      key: "shared",
+      newValue: "value",
+    });
+  });
+
+  it("surfaces async queue failures through onError", async () => {
+    Object.defineProperty(globalThis, "indexedDB", {
+      value: {
+        open() {
+          const db = {
+            objectStoreNames: {
+              contains: () => true,
+            },
+            createObjectStore() {
+              return {};
+            },
+            transaction(_storeName: string, mode: IDBTransactionMode) {
+              if (mode === "readwrite") {
+                throw new Error("write failed");
+              }
+              return {
+                objectStore() {
+                  return {
+                    openCursor() {
+                      const request = {
+                        result: null,
+                        onsuccess: null as ((event: Event) => void) | null,
+                      };
+                      queueMicrotask(() => request.onsuccess?.({} as Event));
+                      return request;
+                    },
+                  };
+                },
+                set oncomplete(callback: (() => void) | null) {
+                  queueMicrotask(() => callback?.());
+                },
+                set onerror(_callback: ((event: Event) => void) | null) {},
+              };
+            },
+          };
+
+          const request = {
+            result: db,
+            error: null,
+            onupgradeneeded: null as
+              | ((event: IDBVersionChangeEvent) => void)
+              | null,
+            onsuccess: null as ((event: Event) => void) | null,
+            onerror: null as ((event: Event) => void) | null,
+          };
+          queueMicrotask(() => request.onsuccess?.({} as Event));
+          return request;
+        },
+      },
+      writable: true,
+      configurable: true,
+    });
+
+    const onError = jest.fn();
+    const backend = await createIndexedDBBackend("err-db", "kv", { onError });
+
+    backend.setItem("key", "value");
+
+    expect(onError).toHaveBeenCalledWith(expect.any(Error));
   });
 });

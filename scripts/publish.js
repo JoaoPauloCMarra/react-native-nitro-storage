@@ -19,6 +19,9 @@ const packageDir = path.join(
   "packages/react-native-nitro-storage"
 );
 const packageJsonPath = path.join(packageDir, "package.json");
+const packageFilter = "react-native-nitro-storage";
+const isCI =
+  process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
 
 function log(message, color = "green") {
   console.log(colors[color](message));
@@ -51,6 +54,20 @@ function execCommandWithOutput(command, options = {}) {
   }
 }
 
+function isInteractive() {
+  return process.stdin.isTTY && process.stdout.isTTY && !isCI;
+}
+
+function runCheck(label, command, options = {}) {
+  log(label, "cyan");
+  const ok = execCommand(command, options);
+  if (!ok) {
+    log(`✗ ${label.replace(/[^\w]+$/g, "")} failed`, "red");
+    process.exit(1);
+  }
+  console.log("");
+}
+
 function askQuestion(question) {
   const rl = readline.createInterface({
     input: process.stdin,
@@ -70,11 +87,14 @@ function getPackageVersion() {
   return packageJson.version;
 }
 
-function checkGitStatus() {
+function getGitStatus() {
   const status = execCommandWithOutput("git status --porcelain", {
     cwd: packageDir,
   });
-  return status === "" || status === null;
+  if (status === null || status === "") {
+    return [];
+  }
+  return status.split("\n").filter(Boolean);
 }
 
 function checkNpmAuth() {
@@ -82,10 +102,79 @@ function checkNpmAuth() {
   return whoami !== null && whoami !== "";
 }
 
+function formatGitStatus(statusLines) {
+  const preview = statusLines.slice(0, 10).join("\n");
+  const remainder =
+    statusLines.length > 10
+      ? `\n...and ${statusLines.length - 10} more changed path(s)`
+      : "";
+  return `${preview}${remainder}`;
+}
+
+async function confirmOrExit({
+  shouldSkip,
+  question,
+  onSkipMessage,
+  onDeclineMessage,
+}) {
+  if (shouldSkip) {
+    if (onSkipMessage) {
+      console.log(onSkipMessage);
+    }
+    return;
+  }
+
+  if (!isInteractive()) {
+    log(`${onDeclineMessage} Re-run with --yes if this is intentional.`, "red");
+    process.exit(1);
+  }
+
+  const answer = await askQuestion(question);
+  if (answer !== "y" && answer !== "yes") {
+    log(onDeclineMessage, "red");
+    process.exit(1);
+  }
+}
+
+function getPackSummary() {
+  const output = execCommandWithOutput("npm pack --dry-run --json", {
+    cwd: packageDir,
+  });
+  if (!output) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(output);
+    return Array.isArray(parsed) ? parsed[0] : parsed;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function formatBytes(value) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "unknown";
+  }
+
+  if (value < 1024) {
+    return `${value} B`;
+  }
+
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} kB`;
+  }
+
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const isDryRun = args.includes("--dry-run");
   const skipChecks = args.includes("--skip-checks");
+  const yes = args.includes("--yes");
+  const allowDirty = args.includes("--allow-dirty");
+  const skipPackPreview = args.includes("--skip-pack-preview");
   const tag =
     args.find((arg) => arg.startsWith("--tag="))?.split("=")[1] || "latest";
 
@@ -104,18 +193,23 @@ async function main() {
   if (!skipChecks) {
     log("Running pre-publish checks...", "cyan");
 
-    if (!checkGitStatus()) {
+    const gitStatus = getGitStatus();
+    if (gitStatus.length > 0) {
       log("⚠️  Warning: You have uncommitted changes", "yellow");
-      const answer = await askQuestion("Continue anyway? (y/n): ");
-      if (answer !== "y" && answer !== "yes") {
-        log("Publish cancelled", "red");
-        process.exit(1);
-      }
+      console.log(formatGitStatus(gitStatus));
+      await confirmOrExit({
+        shouldSkip: allowDirty || yes,
+        question: "Continue anyway? (y/n): ",
+        onSkipMessage: "  ✓ Dirty tree override enabled",
+        onDeclineMessage: "Publish cancelled",
+      });
     } else {
       console.log("  ✓ Git working directory is clean");
     }
 
-    if (!checkNpmAuth()) {
+    if (isDryRun) {
+      console.log("  ✓ Skipping npm auth check in dry-run mode");
+    } else if (!checkNpmAuth()) {
       log("✗ Not logged in to npm. Run: npm login", "red");
       process.exit(1);
     } else {
@@ -126,49 +220,89 @@ async function main() {
     console.log("");
   }
 
-  log("🧪 Running tests...", "cyan");
-  if (!execCommand("bun run test", { cwd: packageDir })) {
-    log("✗ Tests failed", "red");
-    process.exit(1);
-  }
-  console.log("");
+  runCheck(
+    "🧹 Running lint...",
+    `bun run lint -- --filter=${packageFilter}`,
+    { cwd: projectRoot }
+  );
+  runCheck(
+    "🎨 Running format check...",
+    `bun run format:check -- --filter=${packageFilter}`,
+    { cwd: projectRoot }
+  );
+  runCheck(
+    "📝 Running typecheck...",
+    `bun run typecheck -- --filter=${packageFilter}`,
+    { cwd: projectRoot }
+  );
+  runCheck(
+    "🔎 Running type-surface checks...",
+    `bun run test:types -- --filter=${packageFilter}`,
+    { cwd: projectRoot }
+  );
+  runCheck(
+    "🧪 Running unit tests...",
+    `bun run test -- --filter=${packageFilter}`,
+    { cwd: projectRoot }
+  );
+  runCheck(
+    "🧪 Running C++ tests...",
+    `bun run test:cpp -- --filter=${packageFilter}`,
+    { cwd: projectRoot }
+  );
+  runCheck(
+    "🏗️ Preparing package artifacts...",
+    [
+      "bun run clean",
+      "bun run codegen",
+      "bun run build",
+      "bun run test:types",
+      "bun run benchmark",
+      "bun run test:cpp",
+      "bun run check:pack",
+    ].join(" && "),
+    { cwd: packageDir }
+  );
 
-  log("🔨 Building package...", "cyan");
-  if (!execCommand("bun run build", { cwd: packageDir })) {
-    log("✗ Build failed", "red");
-    process.exit(1);
-  }
-  console.log("");
+  if (!skipPackPreview) {
+    log("📋 npm pack dry-run:", "cyan");
+    if (!execCommand("npm pack --dry-run", { cwd: packageDir })) {
+      log("✗ npm pack dry-run failed", "red");
+      process.exit(1);
+    }
 
-  log("📝 Running typecheck...", "cyan");
-  if (!execCommand("bun run typecheck", { cwd: packageDir })) {
-    log("✗ Typecheck failed", "red");
-    process.exit(1);
+    const packSummary = getPackSummary();
+    if (packSummary) {
+      const packageSize = packSummary.packageSize ?? packSummary.size;
+      console.log(
+        `  • tarball: ${packSummary.filename} (${formatBytes(packageSize)})`
+      );
+      console.log(
+        `  • unpacked: ${formatBytes(packSummary.unpackedSize)}, files: ${packSummary.files?.length ?? "?"}`
+      );
+    }
+    console.log("");
   }
-  console.log("");
-
-  log("📋 Package contents:", "cyan");
-  execCommand("npm pack --dry-run", { cwd: packageDir });
-  console.log("");
 
   if (!isDryRun) {
-    const answer = await askQuestion(
-      `Publish version ${version} to npm with tag "${tag}"? (y/n): `
-    );
-    if (answer !== "y" && answer !== "yes") {
-      log("Publish cancelled", "yellow");
-      process.exit(0);
-    }
+    await confirmOrExit({
+      shouldSkip: yes,
+      question: `Publish version ${version} to npm with tag "${tag}"? (y/n): `,
+      onSkipMessage: "  ✓ Publish confirmation skipped via --yes",
+      onDeclineMessage: "Publish cancelled",
+    });
     console.log("");
   }
 
   if (isDryRun) {
     log("🏃 Dry run complete! Package is ready to publish.", "green");
-    log(`Run without --dry-run to publish version ${version}`, "cyan");
+    log(
+      `Run without --dry-run${yes ? "" : " --yes"} to publish version ${version}`,
+      "cyan"
+    );
   } else {
     log("🚀 Publishing to npm...", "cyan");
-    const inCI = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
-    const publishCommand = `npm publish --tag ${tag} --access public${inCI ? " --provenance" : ""}`;
+    const publishCommand = `npm publish --tag ${tag} --access public${isCI ? " --provenance" : ""}`;
     if (!execCommand(publishCommand, { cwd: packageDir })) {
       log("✗ Publish failed", "red");
       process.exit(1);

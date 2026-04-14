@@ -4,6 +4,7 @@ import {
   createSecureAuthStorage,
   createStorageItem,
   getBatch,
+  getStorageErrorCode,
   migrateToLatest,
   registerMigration,
   removeBatch,
@@ -137,6 +138,13 @@ const batch3 = createStorageItem({
   defaultValue: "-",
 });
 
+const bufferedDiskItem = createStorageItem({
+  key: "disk-buffered-item",
+  scope: StorageScope.Disk,
+  defaultValue: "",
+  coalesceDiskWrites: true,
+});
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const HOOK_LABELS = ["initial", "alpha", "beta", "gamma", "delta"];
@@ -222,6 +230,10 @@ export default function HomeScreen() {
   // 17. Prefix & Keys
   const [prefixKeys, setPrefixKeys] = useState<string[]>([]);
   const [allMemoryKeys, setAllMemoryKeys] = useState<string[]>([]);
+  const [diskBufferingEnabled, setDiskBufferingEnabled] = useState(false);
+  const [diskBufferedPreview, setDiskBufferedPreview] = useState("(empty)");
+  const [classifiedErrorCode, setClassifiedErrorCode] = useState("(none)");
+  const capabilities = storage.getCapabilities();
 
   return (
     <Page title="Nitro Storage" subtitle="Complete feature showcase">
@@ -1000,6 +1012,123 @@ export default function HomeScreen() {
             setPrefixKeys(storage.getKeysByPrefix("pfx_", StorageScope.Memory));
           }}
         />
+      </Card>
+
+      <Card
+        title="Runtime Capabilities"
+        subtitle="Backend metadata and structured error codes"
+        indicatorColor={Colors.secure}
+      >
+        <StatusRow
+          testID="capabilities-platform"
+          label="Platform"
+          value={capabilities.platform}
+        />
+        <StatusRow
+          testID="capabilities-disk-backend"
+          label="Disk backend"
+          value={capabilities.backend.disk}
+        />
+        <StatusRow
+          testID="capabilities-secure-backend"
+          label="Secure backend"
+          value={capabilities.backend.secure}
+        />
+        <StatusRow
+          testID="capabilities-buffering"
+          label="Write buffering"
+          value={`disk=${String(capabilities.writeBuffering.disk)} secure=${String(capabilities.writeBuffering.secure)}`}
+        />
+        <StatusRow
+          testID="capabilities-error-code"
+          label="Sample error code"
+          value={classifiedErrorCode}
+        />
+        <Button
+          testID="classify-storage-error"
+          title="Classify Tagged Error"
+          onPress={() => {
+            setClassifiedErrorCode(
+              getStorageErrorCode(
+                new Error(
+                  "[nitro-error:authentication_required] NitroStorage: auth required",
+                ),
+              ) ?? "(none)",
+            );
+          }}
+          size="sm"
+        />
+      </Card>
+
+      <Card
+        title="Disk Write Buffering"
+        subtitle="Buffered disk writes with explicit flush"
+        indicatorColor={Colors.disk}
+      >
+        <StatusRow
+          testID="disk-buffer-enabled"
+          label="Global buffering"
+          value={diskBufferingEnabled ? "enabled" : "disabled"}
+        />
+        <StatusRow
+          testID="disk-buffer-preview"
+          label="Buffered preview"
+          value={diskBufferedPreview}
+        />
+        <View style={styles.row}>
+          <Button
+            testID="disk-buffer-toggle"
+            title={diskBufferingEnabled ? "Disable" : "Enable"}
+            onPress={() => {
+              const next = !diskBufferingEnabled;
+              storage.setDiskWritesAsync(next);
+              setDiskBufferingEnabled(next);
+            }}
+            style={styles.flex1}
+          />
+          <Button
+            testID="disk-buffer-raw"
+            title="Queue Raw"
+            variant="secondary"
+            onPress={() => {
+              storage.setString(
+                "disk-buffer-raw",
+                "buffered-raw",
+                StorageScope.Disk,
+              );
+              setDiskBufferedPreview(
+                storage.getString("disk-buffer-raw", StorageScope.Disk) ??
+                  "(empty)",
+              );
+            }}
+            style={styles.flex1}
+          />
+        </View>
+        <View style={styles.row}>
+          <Button
+            testID="disk-buffer-item"
+            title="Queue Item"
+            variant="secondary"
+            onPress={() => {
+              bufferedDiskItem.set("buffered-item");
+              setDiskBufferedPreview(bufferedDiskItem.get() || "(empty)");
+            }}
+            style={styles.flex1}
+          />
+          <Button
+            testID="disk-buffer-flush"
+            title="Flush"
+            onPress={() => {
+              storage.flushDiskWrites();
+              setDiskBufferedPreview(
+                storage.getString("disk-buffer-raw", StorageScope.Disk) ??
+                  bufferedDiskItem.get() ??
+                  "(empty)",
+              );
+            }}
+            style={styles.flex1}
+          />
+        </View>
       </Card>
 
       {/* Smoke Test Runner */}

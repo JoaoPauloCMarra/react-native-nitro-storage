@@ -1,11 +1,15 @@
 package com.nitrostorage
 
 import android.content.Context
+import android.security.keystore.KeyPermanentlyInvalidatedException
+import android.security.keystore.UserNotAuthenticatedException
 import android.content.SharedPreferences
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import java.security.InvalidKeyException
 import java.security.KeyStore
+import java.security.KeyStoreException
 import javax.crypto.AEADBadTagException
 
 private fun Throwable.hasCause(type: Class<*>): Boolean {
@@ -15,6 +19,30 @@ private fun Throwable.hasCause(type: Class<*>): Boolean {
         current = current.cause
     }
     return false
+}
+
+private fun Throwable.storageErrorCode(): String? {
+    return when {
+        hasCause(AEADBadTagException::class.java) -> "storage_corruption"
+        hasCause(UserNotAuthenticatedException::class.java) ||
+            hasCause(KeyStoreException::class.java) -> "authentication_required"
+        hasCause(KeyPermanentlyInvalidatedException::class.java) ||
+            hasCause(InvalidKeyException::class.java) -> "key_invalidated"
+        else -> null
+    }
+}
+
+private fun Throwable.wrapStorageException(
+    defaultMessage: String,
+    defaultCode: String? = null,
+): RuntimeException {
+    val code = storageErrorCode() ?: defaultCode
+    val message = if (code != null) {
+        "[nitro-error:$code] $defaultMessage"
+    } else {
+        defaultMessage
+    }
+    return RuntimeException(message, this)
 }
 
 class AndroidStorageAdapter private constructor(private val context: Context) {
@@ -44,8 +72,11 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             initializeEncryptedPreferences("NitroStorageBiometric", bioKey)
         } catch (e: Exception) {
             Log.e("NitroStorage", "Biometric storage unavailable: ${e.message}")
-            throw RuntimeException("NitroStorage: Biometric storage is not available on this device. " +
-                "Ensure biometric hardware is present and credentials are enrolled.", e)
+            throw e.wrapStorageException(
+                "NitroStorage: Biometric storage is not available on this device. " +
+                    "Ensure biometric hardware is present and credentials are enrolled.",
+                defaultCode = "biometric_unavailable",
+            )
         }
     }
 
@@ -83,14 +114,17 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
                             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
                         )
                     } catch (retryEx: Exception) {
-                        throw RuntimeException("NitroStorage: Unrecoverable storage corruption in $name", retryEx)
+                        throw retryEx.wrapStorageException(
+                            "NitroStorage: Unrecoverable storage corruption in $name",
+                            defaultCode = "storage_corruption",
+                        )
                     }
                 }
                 else -> {
                     // Don't wipe on non-corruption failures (e.g., locked keystore)
-                    throw RuntimeException(
+                    throw e.wrapStorageException(
                         "NitroStorage: Failed to initialize $name (${e::class.simpleName}). " +
-                        "This may be a temporary keystore issue. If it persists, clear app data.", e
+                            "This may be a temporary keystore issue. If it persists, clear app data.",
                     )
                 }
             }
@@ -136,7 +170,9 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
                 editor.commit()
             }
         } catch (e: Exception) {
-            throw RuntimeException("NitroStorage: Failed to write to secure storage: ${e.message}", e)
+            throw e.wrapStorageException(
+                "NitroStorage: Failed to write to secure storage: ${e.message}",
+            )
         }
     }
 
@@ -303,14 +339,26 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         @JvmStatic
         fun getSecure(key: String): String? {
             val inst = getInstanceOrThrow()
-            return inst.getSecureSafe(inst.encryptedPreferences, key)
+            return try {
+                inst.getSecureSafe(inst.encryptedPreferences, key)
+            } catch (e: Exception) {
+                throw e.wrapStorageException(
+                    "NitroStorage: Failed to read secure storage: ${e.message}",
+                )
+            }
         }
 
         @JvmStatic
         fun getSecureBatch(keys: Array<String>): Array<String?> {
             val inst = getInstanceOrThrow()
-            return Array(keys.size) { index ->
-                inst.getSecureSafe(inst.encryptedPreferences, keys[index])
+            return try {
+                Array(keys.size) { index ->
+                    inst.getSecureSafe(inst.encryptedPreferences, keys[index])
+                }
+            } catch (e: Exception) {
+                throw e.wrapStorageException(
+                    "NitroStorage: Failed to read secure storage batch: ${e.message}",
+                )
             }
         }
 
@@ -406,7 +454,10 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
                 inst.applySecureEditor(editor)
                 inst.invalidateSecureKeysCache()
             } catch (e: Exception) {
-                throw RuntimeException("NitroStorage: Biometric storage unavailable on this device", e)
+                throw e.wrapStorageException(
+                    "NitroStorage: Biometric storage unavailable on this device",
+                    defaultCode = "biometric_unavailable",
+                )
             }
         }
 

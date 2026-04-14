@@ -1,8 +1,16 @@
-import type { WebSecureStorageBackend } from "./index.web";
+import type {
+  WebSecureStorageBackend,
+  WebStorageChangeEvent,
+} from "./web-storage-backend";
 
 const DEFAULT_DB_NAME = "nitro-storage-secure";
 const DEFAULT_STORE_NAME = "keyvalue";
 const DB_VERSION = 1;
+
+export type IndexedDBBackendOptions = {
+  channelName?: string;
+  onError?: (error: Error) => void;
+};
 
 /**
  * Opens (or creates) an IndexedDB database and returns the underlying IDBDatabase.
@@ -59,9 +67,62 @@ function openDB(dbName: string, storeName: string): Promise<IDBDatabase> {
 export async function createIndexedDBBackend(
   dbName = DEFAULT_DB_NAME,
   storeName = DEFAULT_STORE_NAME,
+  options: IndexedDBBackendOptions = {},
 ): Promise<WebSecureStorageBackend> {
   const db = await openDB(dbName, storeName);
   const cache = new Map<string, string>();
+  const pendingWrites = new Set<Promise<void>>();
+  const subscribers = new Set<(event: WebStorageChangeEvent) => void>();
+  const sourceId = `nitro-storage-${Math.random().toString(36).slice(2)}`;
+  const channelName =
+    options.channelName ?? `nitro-storage:${dbName}:${storeName}`;
+  const channel =
+    typeof BroadcastChannel !== "undefined"
+      ? new BroadcastChannel(channelName)
+      : null;
+
+  function emitExternal(event: WebStorageChangeEvent): void {
+    subscribers.forEach((subscriber) => {
+      subscriber(event);
+    });
+  }
+
+  function handleAsyncError(error: unknown): void {
+    const normalized =
+      error instanceof Error
+        ? error
+        : new Error(String(error ?? "Unknown IndexedDB error"));
+    options.onError?.(normalized);
+  }
+
+  channel?.addEventListener("message", (event: MessageEvent) => {
+    const data = event.data as
+      | (WebStorageChangeEvent & { sourceId?: string })
+      | undefined;
+    if (!data || data.sourceId === sourceId) {
+      return;
+    }
+
+    if (data.key === null) {
+      cache.clear();
+    } else if (data.newValue === null) {
+      cache.delete(data.key);
+    } else {
+      cache.set(data.key, data.newValue);
+    }
+
+    emitExternal({
+      key: data.key,
+      newValue: data.newValue,
+    });
+  });
+
+  function publish(event: WebStorageChangeEvent): void {
+    channel?.postMessage({
+      ...event,
+      sourceId,
+    });
+  }
 
   // Hydrate the in-memory cache from IndexedDB.
   await new Promise<void>((resolve, reject) => {
@@ -85,14 +146,39 @@ export async function createIndexedDBBackend(
       reject(tx.error ?? new Error("Failed to load IndexedDB entries."));
   });
 
-  /** Fire-and-forget IndexedDB write. Errors are silently ignored to avoid
-   *  breaking the synchronous caller — the in-memory cache is always authoritative. */
+  function trackWrite(tx: IDBTransaction): void {
+    const pending = new Promise<void>((resolve) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => {
+        handleAsyncError(
+          tx.error ?? new Error("Failed to persist IndexedDB transaction."),
+        );
+        resolve();
+      };
+      tx.onabort = () => {
+        handleAsyncError(
+          tx.error ?? new Error("IndexedDB transaction was aborted."),
+        );
+        resolve();
+      };
+    });
+    pendingWrites.add(pending);
+    void pending.finally(() => {
+      pendingWrites.delete(pending);
+    });
+  }
+
+  /** Fire-and-forget IndexedDB write. The in-memory cache remains authoritative,
+   *  but async persistence failures are surfaced through `onError` and `flush()`. */
   function persistSet(key: string, value: string): void {
     try {
       const tx = db.transaction(storeName, "readwrite");
       tx.objectStore(storeName).put(value, key);
+      trackWrite(tx);
     } catch {
-      // Best-effort; cache is the source of truth.
+      handleAsyncError(
+        new Error(`Failed to queue IndexedDB write for "${key}".`),
+      );
     }
   }
 
@@ -100,8 +186,11 @@ export async function createIndexedDBBackend(
     try {
       const tx = db.transaction(storeName, "readwrite");
       tx.objectStore(storeName).delete(key);
+      trackWrite(tx);
     } catch {
-      // Best-effort.
+      handleAsyncError(
+        new Error(`Failed to queue IndexedDB delete for "${key}".`),
+      );
     }
   }
 
@@ -109,12 +198,14 @@ export async function createIndexedDBBackend(
     try {
       const tx = db.transaction(storeName, "readwrite");
       tx.objectStore(storeName).clear();
+      trackWrite(tx);
     } catch {
-      // Best-effort.
+      handleAsyncError(new Error("Failed to queue IndexedDB clear."));
     }
   }
 
   const backend: WebSecureStorageBackend = {
+    name: `indexeddb:${dbName}/${storeName}`,
     getItem(key: string): string | null {
       return cache.get(key) ?? null;
     },
@@ -122,20 +213,70 @@ export async function createIndexedDBBackend(
     setItem(key: string, value: string): void {
       cache.set(key, value);
       persistSet(key, value);
+      publish({ key, newValue: value });
     },
 
     removeItem(key: string): void {
       cache.delete(key);
       persistDelete(key);
+      publish({ key, newValue: null });
     },
 
     clear(): void {
       cache.clear();
       persistClear();
+      publish({ key: null, newValue: null });
     },
 
     getAllKeys(): string[] {
       return Array.from(cache.keys());
+    },
+    getMany(keys: string[]): (string | null)[] {
+      return keys.map((key) => cache.get(key) ?? null);
+    },
+    setMany(entries): void {
+      entries.forEach(([key, value]) => {
+        cache.set(key, value);
+      });
+      try {
+        const tx = db.transaction(storeName, "readwrite");
+        const store = tx.objectStore(storeName);
+        entries.forEach(([key, value]) => {
+          store.put(value, key);
+          publish({ key, newValue: value });
+        });
+        trackWrite(tx);
+      } catch {
+        handleAsyncError(new Error("Failed to queue IndexedDB batch write."));
+      }
+    },
+    removeMany(keys: string[]): void {
+      keys.forEach((key) => {
+        cache.delete(key);
+      });
+      try {
+        const tx = db.transaction(storeName, "readwrite");
+        const store = tx.objectStore(storeName);
+        keys.forEach((key) => {
+          store.delete(key);
+          publish({ key, newValue: null });
+        });
+        trackWrite(tx);
+      } catch {
+        handleAsyncError(new Error("Failed to queue IndexedDB batch delete."));
+      }
+    },
+    size(): number {
+      return cache.size;
+    },
+    subscribe(listener): () => void {
+      subscribers.add(listener);
+      return () => {
+        subscribers.delete(listener);
+      };
+    },
+    async flush(): Promise<void> {
+      await Promise.all(Array.from(pendingWrites));
     },
   };
 

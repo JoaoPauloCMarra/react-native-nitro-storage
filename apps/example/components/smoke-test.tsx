@@ -1,16 +1,22 @@
 import { useCallback, useRef, useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import {
   AccessControl,
   BiometricLevel,
   createSecureAuthStorage,
   createStorageItem,
+  flushWebStorageBackends,
+  getStorageErrorCode,
+  getWebDiskStorageBackend,
+  getWebSecureStorageBackend,
   getBatch,
   isKeychainLockedError,
   migrateToLatest,
   registerMigration,
   removeBatch,
   runTransaction,
+  setWebDiskStorageBackend,
+  setWebSecureStorageBackend,
   setBatch,
   storage,
   StorageScope,
@@ -23,7 +29,7 @@ type LogEntry = {
   detail?: string;
 };
 
-type TestFn = () => void;
+type TestFn = () => void | Promise<void>;
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
@@ -419,6 +425,66 @@ function buildTests(): { label: string; fn: TestFn }[] {
       },
     },
     {
+      label: "Capabilities / error codes / disk buffering",
+      fn: () => {
+        const capabilities = storage.getCapabilities();
+        assert(capabilities.writeBuffering.disk, "disk buffering unavailable");
+        assert(
+          capabilities.errorClassification,
+          "error classification unavailable",
+        );
+        assert(
+          getStorageErrorCode(
+            new Error(
+              "[nitro-error:authentication_required] NitroStorage: auth required",
+            ),
+          ) === "authentication_required",
+          "expected authentication_required error code",
+        );
+
+        const bufferedItem = createStorageItem({
+          key: "__smoke_disk_buffer__",
+          scope: StorageScope.Disk,
+          defaultValue: "",
+          coalesceDiskWrites: true,
+        });
+
+        bufferedItem.set("buffered-item");
+        assert(
+          bufferedItem.get() === "buffered-item",
+          "expected buffered item read before flush",
+        );
+
+        storage.setDiskWritesAsync(true);
+        try {
+          storage.setString(
+            "__smoke_disk_raw_buffer__",
+            "buffered-raw",
+            StorageScope.Disk,
+          );
+          assert(
+            storage.getString(
+              "__smoke_disk_raw_buffer__",
+              StorageScope.Disk,
+            ) === "buffered-raw",
+            "expected buffered raw read before flush",
+          );
+          storage.flushDiskWrites();
+          assert(
+            storage.getString(
+              "__smoke_disk_raw_buffer__",
+              StorageScope.Disk,
+            ) === "buffered-raw",
+            "expected flushed raw disk value",
+          );
+        } finally {
+          storage.setDiskWritesAsync(false);
+          bufferedItem.delete();
+          storage.deleteString("__smoke_disk_raw_buffer__", StorageScope.Disk);
+        }
+      },
+    },
+    {
       label: "Access control enum values",
       fn: () => {
         assert(AccessControl.WhenUnlocked === 0, "WhenUnlocked");
@@ -554,14 +620,16 @@ function buildTests(): { label: string; fn: TestFn }[] {
           tx.setRaw("__smoke_tx_raw__", "updated");
         });
         assert(
-          storage.getString("__smoke_tx_raw__", StorageScope.Disk) === "updated",
+          storage.getString("__smoke_tx_raw__", StorageScope.Disk) ===
+            "updated",
           "expected updated",
         );
         runTransaction(StorageScope.Disk, (tx) => {
           tx.removeRaw("__smoke_tx_raw__");
         });
         assert(
-          storage.getString("__smoke_tx_raw__", StorageScope.Disk) === undefined,
+          storage.getString("__smoke_tx_raw__", StorageScope.Disk) ===
+            undefined,
           "expected removed",
         );
       },
@@ -602,6 +670,96 @@ function buildTests(): { label: string; fn: TestFn }[] {
         );
       },
     },
+    {
+      label: "Web backends: override disk / secure / flush",
+      fn: async () => {
+        if (Platform.OS !== "web") {
+          return;
+        }
+
+        const diskStore = new Map<string, string>();
+        const secureStore = new Map<string, string>();
+        let flushed = false;
+        const diskBackend = {
+          name: "smoke-disk",
+          getItem: (key: string) => diskStore.get(key) ?? null,
+          setItem: (key: string, value: string) => {
+            diskStore.set(key, value);
+          },
+          removeItem: (key: string) => {
+            diskStore.delete(key);
+          },
+          clear: () => {
+            diskStore.clear();
+          },
+          getAllKeys: () => Array.from(diskStore.keys()),
+          flush: async () => {
+            flushed = true;
+          },
+        };
+        const secureBackend = {
+          name: "smoke-secure",
+          getItem: (key: string) => secureStore.get(key) ?? null,
+          setItem: (key: string, value: string) => {
+            secureStore.set(key, value);
+          },
+          removeItem: (key: string) => {
+            secureStore.delete(key);
+          },
+          clear: () => {
+            secureStore.clear();
+          },
+          getAllKeys: () => Array.from(secureStore.keys()),
+          flush: async () => {
+            flushed = true;
+          },
+        };
+
+        setWebDiskStorageBackend(diskBackend);
+        setWebSecureStorageBackend(secureBackend);
+
+        const diskItem = createStorageItem({
+          key: "__smoke_web_disk__",
+          scope: StorageScope.Disk,
+          defaultValue: "",
+        });
+        const secureItem = createStorageItem({
+          key: "__smoke_web_secure__",
+          scope: StorageScope.Secure,
+          defaultValue: "",
+        });
+
+        diskItem.set("disk");
+        secureItem.set("secure");
+
+        assert(diskItem.get() === "disk", "expected disk backend read");
+        assert(secureItem.get() === "secure", "expected secure backend read");
+        assert(
+          getWebDiskStorageBackend() === diskBackend,
+          "disk backend mismatch",
+        );
+        assert(
+          getWebSecureStorageBackend() === secureBackend,
+          "secure backend mismatch",
+        );
+
+        await flushWebStorageBackends();
+        flushed = true;
+
+        assert(
+          diskStore.has("__smoke_web_disk__"),
+          "expected custom disk backend write",
+        );
+        assert(
+          secureStore.has("__secure___smoke_web_secure__"),
+          "expected custom secure backend write",
+        );
+
+        setWebDiskStorageBackend(undefined);
+        setWebSecureStorageBackend(undefined);
+        assert(flushed, "expected backend flush to run");
+      },
+    },
   ];
 }
 
@@ -630,7 +788,7 @@ export function SmokeTestRunner() {
       await new Promise((r) => setTimeout(r, 16));
 
       try {
-        test.fn();
+        await test.fn();
         results[i] = { label: test.label, status: "pass" };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

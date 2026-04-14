@@ -213,6 +213,51 @@ private:
     int biometricLevel_ = -1;
 };
 
+class ThrowingAdapter final : public ::NitroStorage::NativeStorageAdapter {
+public:
+    void setDisk(const std::string&, const std::string&) override {}
+    std::optional<std::string> getDisk(const std::string&) override { return std::nullopt; }
+    void deleteDisk(const std::string&) override {}
+    bool hasDisk(const std::string&) override { return false; }
+    std::vector<std::string> getAllKeysDisk() override { return {}; }
+    std::vector<std::string> getKeysByPrefixDisk(const std::string&) override { return {}; }
+    size_t sizeDisk() override { return 0; }
+    void setDiskBatch(const std::vector<std::string>&, const std::vector<std::string>&) override {}
+    std::vector<std::optional<std::string>> getDiskBatch(const std::vector<std::string>& keys) override {
+        return std::vector<std::optional<std::string>>(keys.size(), std::nullopt);
+    }
+    void deleteDiskBatch(const std::vector<std::string>&) override {}
+    void clearDisk() override {}
+
+    void setSecure(const std::string&, const std::string&) override {
+        throw std::runtime_error(
+            "[nitro-error:authentication_required] NitroStorage: auth required"
+        );
+    }
+    std::optional<std::string> getSecure(const std::string&) override { return std::nullopt; }
+    void deleteSecure(const std::string&) override {}
+    bool hasSecure(const std::string&) override { return false; }
+    std::vector<std::string> getAllKeysSecure() override { return {}; }
+    std::vector<std::string> getKeysByPrefixSecure(const std::string&) override { return {}; }
+    size_t sizeSecure() override { return 0; }
+    void setSecureBatch(const std::vector<std::string>&, const std::vector<std::string>&) override {}
+    std::vector<std::optional<std::string>> getSecureBatch(const std::vector<std::string>& keys) override {
+        return std::vector<std::optional<std::string>>(keys.size(), std::nullopt);
+    }
+    void deleteSecureBatch(const std::vector<std::string>&) override {}
+    void clearSecure() override {}
+    void setSecureAccessControl(int) override {}
+    void setSecureWritesAsync(bool) override {}
+    void setKeychainAccessGroup(const std::string&) override {}
+
+    void setSecureBiometric(const std::string&, const std::string&) override {}
+    void setSecureBiometricWithLevel(const std::string&, const std::string&, int) override {}
+    std::optional<std::string> getSecureBiometric(const std::string&) override { return std::nullopt; }
+    void deleteSecureBiometric(const std::string&) override {}
+    bool hasSecureBiometric(const std::string&) override { return false; }
+    void clearSecureBiometric() override {}
+};
+
 void testSetGetAcrossScopes() {
     auto adapter = std::make_shared<MockAdapter>();
     HybridStorage storage(adapter);
@@ -323,6 +368,21 @@ void testClearNotifiesScope() {
     unsubscribe();
 }
 
+void testNativeTaggedErrorsPassThrough() {
+    auto adapter = std::make_shared<ThrowingAdapter>();
+    HybridStorage storage(adapter);
+
+    try {
+        storage.set("secure-key", "secure-value", 2.0);
+        assert(false && "Expected secure set to throw");
+    } catch (const std::runtime_error& error) {
+        assert(
+            std::string(error.what()) ==
+            "[nitro-error:authentication_required] NitroStorage: auth required"
+        );
+    }
+}
+
 int main() {
     std::cout << "Running HybridStorage C++ Tests..." << std::endl;
 
@@ -334,6 +394,7 @@ int main() {
     testGetKeysByPrefix();
     testBiometricLevelPassThrough();
     testClearNotifiesScope();
+    testNativeTaggedErrorsPassThrough();
 
     std::cout << "✅ HybridStorage C++ tests passed!" << std::endl;
     return 0;

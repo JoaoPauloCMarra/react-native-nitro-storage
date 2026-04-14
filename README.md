@@ -40,7 +40,11 @@ Every feature in this package is documented with at least one runnable example i
 - Prefix utilities (`getKeysByPrefix`, `getByPrefix`) — see Prefix Queries and Namespace Inspection
 - Versioned item API (`getWithVersion`, `setIfVersion`) — see Optimistic Versioned Writes
 - Metrics API (`setMetricsObserver`, `getMetricsSnapshot`, `resetMetrics`) — see Storage Metrics Instrumentation
+- Runtime capability introspection (`storage.getCapabilities()`) — see Global utility examples
+- Structured storage error codes (`getStorageErrorCode`, `isKeychainLockedError`) — see Error Classification
+- Web disk backend override (`setWebDiskStorageBackend`, `getWebDiskStorageBackend`) — see Custom Web Disk and Secure Backends
 - Web secure backend override (`setWebSecureStorageBackend`, `getWebSecureStorageBackend`) — see Custom Web Secure Backend
+- Web backend durability (`flushWebStorageBackends`) — see Custom Web Disk and Secure Backends
 - IndexedDB backend factory (`createIndexedDBBackend`) — see IndexedDB Backend for Web
 - Bulk import (`storage.import`) — see Bulk Data Import
 - Batch APIs (`getBatch`, `setBatch`, `removeBatch`) — see Batch Operations and Bulk Bootstrap with Batch APIs
@@ -196,6 +200,7 @@ function createStorageItem<T = undefined>(
 | `expiration`           | `{ ttlMs: number }`              | —              | Time-to-live in milliseconds                                   |
 | `onExpired`            | `(key: string) => void`          | —              | Callback fired when a TTL value expires on read                |
 | `readCache`            | `boolean`                        | `false`        | Cache deserialized values in JS (avoids repeated native reads) |
+| `coalesceDiskWrites`   | `boolean`                        | `false`        | Batch same-tick Disk writes per key until `flushDiskWrites()`  |
 | `coalesceSecureWrites` | `boolean`                        | `false`        | Batch same-tick Secure writes per key                          |
 | `namespace`            | `string`                         | —              | Prefix key as `namespace:key` for isolation                    |
 | `biometric`            | `boolean`                        | `false`        | Require biometric auth (Secure scope only)                     |
@@ -278,7 +283,10 @@ import { storage, StorageScope } from "react-native-nitro-storage";
 | `storage.getByPrefix(prefix, scope)`     | Get raw key-value pairs for keys matching a prefix                           |
 | `storage.getAll(scope)`                  | Get all key-value pairs as `Record<string, string>`                          |
 | `storage.size(scope)`                    | Number of stored keys                                                        |
+| `storage.getCapabilities()`              | Read runtime backend metadata and buffering support                          |
 | `storage.setAccessControl(level)`        | Set default secure access control for subsequent secure writes (native only) |
+| `storage.setDiskWritesAsync(enabled)`    | Buffer raw Disk writes in JS until flushed (all platforms)                   |
+| `storage.flushDiskWrites()`              | Force flush queued Disk writes from raw APIs / coalesced items               |
 | `storage.setSecureWritesAsync(enabled)`  | Toggle async secure writes on Android (`false` by default)                   |
 | `storage.flushSecureWrites()`            | Force flush of queued secure writes when coalescing is enabled               |
 | `storage.setKeychainAccessGroup(group)`  | Set keychain access group for app sharing (native only)                      |
@@ -289,6 +297,14 @@ import { storage, StorageScope } from "react-native-nitro-storage";
 | `storage.setMetricsObserver(observer?)`  | Subscribe to per-operation timing events                                     |
 | `storage.getMetricsSnapshot()`           | Get aggregate counters/latency stats keyed by operation                      |
 | `storage.resetMetrics()`                 | Reset in-memory metrics counters                                             |
+
+| Web helper                             | Description                                                          |
+| -------------------------------------- | -------------------------------------------------------------------- |
+| `setWebDiskStorageBackend(backend?)`   | Override the web Disk backend (web only)                             |
+| `getWebDiskStorageBackend()`           | Read the active web Disk backend (web only)                          |
+| `setWebSecureStorageBackend(backend?)` | Override the web Secure backend (web only)                           |
+| `getWebSecureStorageBackend()`         | Read the active web Secure backend (web only)                        |
+| `flushWebStorageBackends()`            | Await optional backend durability hooks for Disk + Secure (web only) |
 
 > `storage.getAll(StorageScope.Secure)` returns regular secure entries. Biometric-protected values are not included in this snapshot API.
 
@@ -307,6 +323,7 @@ storage.getKeysByPrefix("user-42:", StorageScope.Disk);
 storage.getByPrefix("user-42:", StorageScope.Disk);
 storage.getAll(StorageScope.Disk);
 storage.size(StorageScope.Disk);
+storage.getCapabilities();
 
 storage.clearNamespace("user-42", StorageScope.Disk);
 storage.clearBiometric();
@@ -316,6 +333,32 @@ storage.setKeychainAccessGroup("group.com.example.shared");
 
 storage.clear(StorageScope.Memory);
 storage.clearAll();
+```
+
+#### Disk write buffering
+
+Disk writes can now be buffered in JS, similar to secure write coalescing, which is useful when you are doing bursty persistence and want an explicit durability boundary.
+
+```ts
+import {
+  createStorageItem,
+  storage,
+  StorageScope,
+} from "react-native-nitro-storage";
+
+const bufferedDraft = createStorageItem({
+  key: "draft",
+  scope: StorageScope.Disk,
+  defaultValue: "",
+  coalesceDiskWrites: true,
+});
+
+bufferedDraft.set("hello");
+storage.setDiskWritesAsync(true);
+storage.setString("draft:raw", "value", StorageScope.Disk);
+
+storage.flushDiskWrites(); // commit queued Disk writes
+storage.setDiskWritesAsync(false);
 ```
 
 #### Android secure write mode
@@ -335,25 +378,63 @@ storage.setSecureWritesAsync(true);
 storage.flushSecureWrites(); // deterministic durability boundary
 ```
 
-#### Custom web secure backend
+#### Custom Web Disk and Secure Backends
 
-By default, web Secure scope uses `localStorage` with `__secure_` key prefixing. You can replace it with a custom backend (for example encrypted IndexedDB adapter).
+By default, web Disk and Secure scopes use `localStorage`. Disk excludes Nitro's secure prefixes, and Secure stores under `__secure_` / `__bio_` prefixes.
+
+You can replace either backend with a custom implementation. The minimal backend contract is:
+
+```ts
+type WebStorageBackend = {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+  clear(): void;
+  getAllKeys(): string[];
+  getMany?: (keys: string[]) => (string | null)[];
+  setMany?: (entries: ReadonlyArray<readonly [string, string]>) => void;
+  removeMany?: (keys: string[]) => void;
+  size?: () => number;
+  subscribe?: (
+    listener: (event: { key: string | null; newValue: string | null }) => void,
+  ) => () => void;
+  flush?: () => Promise<void>;
+  name?: string;
+};
+```
+
+Optional hooks are used for faster batch operations, custom cross-tab sync, and explicit durability boundaries.
 
 ```ts
 import {
+  flushWebStorageBackends,
+  getWebDiskStorageBackend,
   getWebSecureStorageBackend,
+  setWebDiskStorageBackend,
   setWebSecureStorageBackend,
 } from "react-native-nitro-storage";
+
+setWebDiskStorageBackend({
+  getItem: (key) => diskStore.get(key) ?? null,
+  setItem: (key, value) => diskStore.set(key, value),
+  removeItem: (key) => diskStore.delete(key),
+  clear: () => diskStore.clear(),
+  getAllKeys: () => Array.from(diskStore.keys()),
+});
 
 setWebSecureStorageBackend({
   getItem: (key) => encryptedStore.get(key) ?? null,
   setItem: (key, value) => encryptedStore.set(key, value),
   removeItem: (key) => encryptedStore.delete(key),
   clear: () => encryptedStore.clear(),
-  getAllKeys: () => encryptedStore.keys(),
+  getAllKeys: () => Array.from(encryptedStore.keys()),
 });
 
+await flushWebStorageBackends();
+
+const diskBackend = getWebDiskStorageBackend();
 const backend = getWebSecureStorageBackend();
+console.log("custom disk backend active:", diskBackend !== undefined);
 console.log("custom backend active:", backend !== undefined);
 ```
 
@@ -376,12 +457,24 @@ setWebSecureStorageBackend(backend);
 
 - **Async init**: `createIndexedDBBackend()` opens (or creates) the IndexedDB database and hydrates an in-memory cache from all stored entries before resolving.
 - **Synchronous reads**: all `getItem` calls are served from the in-memory cache — no async overhead after init.
-- **Fire-and-forget writes**: `setItem`, `removeItem`, and `clear` update the cache synchronously, then persist to IndexedDB in the background. The cache is always the authoritative source.
+- **Queued writes + durability**: writes update the cache synchronously, persist in the background, and can be awaited via `await backend.flush()` or `await flushWebStorageBackends()`.
+- **Cross-tab sync**: backend instances on the same `dbName`/`storeName` coordinate through `BroadcastChannel` so cache invalidation reaches other tabs.
 - **Custom database/store**: optionally pass `dbName` and `storeName` to isolate databases per environment or tenant.
 
 ```ts
 const backend = await createIndexedDBBackend("my-app-db", "secure-kv");
 setWebSecureStorageBackend(backend);
+await backend.flush?.();
+```
+
+You can also pass an optional third argument to receive async persistence failures:
+
+```ts
+const backend = await createIndexedDBBackend("my-app-db", "secure-kv", {
+  onError: (error) => {
+    console.error("indexeddb persistence failed", error);
+  },
+});
 ```
 
 ---
@@ -530,16 +623,23 @@ These are synchronous and go directly to the native backend without any serializ
 
 ---
 
-### `isKeychainLockedError(err)`
+### Error Classification
 
-Utility to detect iOS Keychain locked errors and Android key invalidation errors in secure storage operations. Returns `true` if the error was caused by a locked keychain (device locked, first unlock not yet performed, etc.) or an Android `KeyPermanentlyInvalidatedException` / `InvalidKeyException`. Always returns `false` on web.
+`getStorageErrorCode(err)` returns a stable classification for common native/web storage failures. Native bridges now emit stable `[nitro-error:<code>]` tags so the classification path does not depend on platform exception wording alone.
+`isKeychainLockedError(err)` remains the convenience helper for retry-after-unlock flows and now delegates to the structured code path.
 
 ```ts
-import { isKeychainLockedError } from "react-native-nitro-storage";
+import {
+  getStorageErrorCode,
+  isKeychainLockedError,
+} from "react-native-nitro-storage";
 
 try {
   secureItem.get();
 } catch (err) {
+  const code = getStorageErrorCode(err);
+  // "keychain_locked" | "authentication_required" | ...
+
   if (isKeychainLockedError(err)) {
     // device is locked — retry after unlock
   }

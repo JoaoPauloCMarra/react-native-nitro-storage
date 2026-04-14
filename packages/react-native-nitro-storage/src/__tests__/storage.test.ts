@@ -34,6 +34,7 @@ jest.mock("react-native-nitro-modules", () => ({
 import {
   createStorageItem,
   createSecureAuthStorage,
+  getStorageErrorCode,
   getWebSecureStorageBackend,
   setWebSecureStorageBackend,
   useStorage,
@@ -52,6 +53,10 @@ import {
   isKeychainLockedError,
 } from "../index";
 import { serializeWithPrimitiveFastPath } from "../internal";
+
+beforeEach(() => {
+  storage.setDiskWritesAsync(false);
+});
 
 describe("createStorageItem", () => {
   beforeEach(() => {
@@ -206,6 +211,47 @@ describe("createStorageItem", () => {
     expect(mockHybridObject.setSecureWritesAsync).toHaveBeenCalledWith(true);
   });
 
+  it("coalesces disk writes until flush when configured per item", () => {
+    const item = createStorageItem({
+      key: "flush-disk",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+      coalesceDiskWrites: true,
+    });
+
+    item.set("queued-disk");
+
+    expect(mockHybridObject.set).not.toHaveBeenCalled();
+    expect(mockHybridObject.setBatch).not.toHaveBeenCalled();
+    expect(item.get()).toBe("queued-disk");
+
+    storage.flushDiskWrites();
+
+    expect(mockHybridObject.setBatch).toHaveBeenCalledWith(
+      ["flush-disk"],
+      [serializeWithPrimitiveFastPath("queued-disk")],
+      StorageScope.Disk,
+    );
+  });
+
+  it("queues raw disk writes when disk async mode is enabled", () => {
+    storage.setDiskWritesAsync(true);
+
+    storage.setString("disk-async", "queued", StorageScope.Disk);
+
+    expect(mockHybridObject.set).not.toHaveBeenCalled();
+    expect(mockHybridObject.setBatch).not.toHaveBeenCalled();
+    expect(storage.getString("disk-async", StorageScope.Disk)).toBe("queued");
+
+    storage.flushDiskWrites();
+
+    expect(mockHybridObject.setBatch).toHaveBeenCalledWith(
+      ["disk-async"],
+      ["queued"],
+      StorageScope.Disk,
+    );
+  });
+
   it("flushes pending secure writes on demand", () => {
     const item = createStorageItem({
       key: "flush-secure",
@@ -224,6 +270,16 @@ describe("createStorageItem", () => {
       [serializeWithPrimitiveFastPath("queued")],
       StorageScope.Secure,
     );
+  });
+
+  it("exposes native capability metadata", () => {
+    const capabilities = storage.getCapabilities();
+
+    expect(capabilities.platform).toBe("native");
+    expect(capabilities.writeBuffering.disk).toBe(true);
+    expect(capabilities.writeBuffering.secure).toBe(true);
+    expect(capabilities.backend.disk).toBe("platform-preferences");
+    expect(capabilities.backend.secure).toBe("platform-secure-storage");
   });
 
   it("clears namespace through native prefix removal", () => {
@@ -1945,6 +2001,39 @@ describe("storage raw APIs", () => {
 });
 
 describe("isKeychainLockedError", () => {
+  it("classifies storage errors into stable codes", () => {
+    expect(
+      getStorageErrorCode(
+        new Error("[nitro-error:keychain_locked] NitroStorage: locked"),
+      ),
+    ).toBe("keychain_locked");
+    expect(
+      getStorageErrorCode(
+        new Error(
+          "[nitro-error:authentication_required] NitroStorage: auth required",
+        ),
+      ),
+    ).toBe("authentication_required");
+    expect(getStorageErrorCode(new Error("errSecInteractionNotAllowed"))).toBe(
+      "keychain_locked",
+    );
+    expect(
+      getStorageErrorCode(new Error("UserNotAuthenticatedException")),
+    ).toBe("authentication_required");
+    expect(
+      getStorageErrorCode(new Error("KeyPermanentlyInvalidatedException")),
+    ).toBe("key_invalidated");
+    expect(getStorageErrorCode(new Error("AEADBadTagException"))).toBe(
+      "storage_corruption",
+    );
+    expect(
+      getStorageErrorCode(
+        new Error("Biometric storage is not available on this device"),
+      ),
+    ).toBe("biometric_unavailable");
+    expect(getStorageErrorCode(new Error("something else"))).toBe(undefined);
+  });
+
   it('returns true for "errSecInteractionNotAllowed"', () => {
     expect(
       isKeychainLockedError(new Error("errSecInteractionNotAllowed")),

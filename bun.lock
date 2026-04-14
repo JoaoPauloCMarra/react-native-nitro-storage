@@ -57,7 +57,7 @@
     },
     "packages/react-native-nitro-storage": {
       "name": "react-native-nitro-storage",
-      "version": "0.4.4",
+      "version": "0.4.5",
       "devDependencies": {
         "@expo/config-plugins": "^55.0.3",
         "@react-native/babel-preset": "^0.83.2",
