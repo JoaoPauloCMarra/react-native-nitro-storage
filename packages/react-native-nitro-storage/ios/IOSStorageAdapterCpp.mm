@@ -9,6 +9,12 @@ static NSString* const kKeychainService = @"com.nitrostorage.keychain";
 static NSString* const kBiometricKeychainService = @"com.nitrostorage.biometric";
 static NSString* const kDiskSuiteName = @"com.nitrostorage.disk";
 
+static std::runtime_error taggedStorageError(const char* code, const std::string& message) {
+    return std::runtime_error(
+        std::string("[nitro-error:") + code + "] " + message
+    );
+}
+
 static NSUserDefaults* NitroDiskDefaults() {
     static NSUserDefaults* defaults = [[NSUserDefaults alloc] initWithSuiteName:kDiskSuiteName];
     return defaults ?: [NSUserDefaults standardUserDefaults];
@@ -191,7 +197,8 @@ static std::vector<std::string> keychainAccountsForService(NSString* service, NS
     std::vector<std::string> keys;
     OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
     if (status == errSecInteractionNotAllowed) {
-        throw std::runtime_error(
+        throw taggedStorageError(
+            "keychain_locked",
             "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
             "The item is not accessible until the device is unlocked."
         );
@@ -247,7 +254,8 @@ void IOSStorageAdapterCpp::setSecure(const std::string& key, const std::string& 
         const OSStatus addStatus = SecItemAdd((__bridge CFDictionaryRef)query, NULL);
         if (addStatus != errSecSuccess) {
             if (addStatus == errSecInteractionNotAllowed) {
-                throw std::runtime_error(
+                throw taggedStorageError(
+                    "keychain_locked",
                     "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
                     "The item is not accessible until the device is unlocked."
                 );
@@ -261,7 +269,8 @@ void IOSStorageAdapterCpp::setSecure(const std::string& key, const std::string& 
     }
 
     if (status == errSecInteractionNotAllowed) {
-        throw std::runtime_error(
+        throw taggedStorageError(
+            "keychain_locked",
             "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
             "The item is not accessible until the device is unlocked."
         );
@@ -292,7 +301,8 @@ std::optional<std::string> IOSStorageAdapterCpp::getSecure(const std::string& ke
         if (str) return std::string([str UTF8String]);
     }
     if (status == errSecInteractionNotAllowed) {
-        throw std::runtime_error(
+        throw taggedStorageError(
+            "keychain_locked",
             "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
             "The item is not accessible until the device is unlocked."
         );
@@ -312,7 +322,8 @@ void IOSStorageAdapterCpp::deleteSecure(const std::string& key) {
     NSMutableDictionary* secureQuery = baseKeychainQuery(nsKey, kKeychainService, group);
     OSStatus secureStatus = SecItemDelete((__bridge CFDictionaryRef)secureQuery);
     if (secureStatus == errSecInteractionNotAllowed) {
-        throw std::runtime_error(
+        throw taggedStorageError(
+            "keychain_locked",
             "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
             "The item is not accessible until the device is unlocked."
         );
@@ -321,7 +332,8 @@ void IOSStorageAdapterCpp::deleteSecure(const std::string& key) {
     NSMutableDictionary* biometricQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
     OSStatus biometricStatus = SecItemDelete((__bridge CFDictionaryRef)biometricQuery);
     if (biometricStatus == errSecInteractionNotAllowed) {
-        throw std::runtime_error(
+        throw taggedStorageError(
+            "keychain_locked",
             "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
             "The item is not accessible until the device is unlocked."
         );
@@ -427,7 +439,10 @@ void IOSStorageAdapterCpp::clearSecure() {
     OSStatus secStatus = SecItemDelete((__bridge CFDictionaryRef)secureQuery);
     if (secStatus != errSecSuccess && secStatus != errSecItemNotFound) {
         if (secStatus == errSecInteractionNotAllowed) {
-            throw std::runtime_error("NitroStorage: Cannot clear secure storage: keychain is locked (errSecInteractionNotAllowed)");
+            throw taggedStorageError(
+                "keychain_locked",
+                "NitroStorage: Cannot clear secure storage: keychain is locked (errSecInteractionNotAllowed)"
+            );
         }
         throw std::runtime_error(
             std::string("NitroStorage: clearSecure failed with status ") + std::to_string(secStatus));
@@ -443,7 +458,10 @@ void IOSStorageAdapterCpp::clearSecure() {
     OSStatus bioStatus = SecItemDelete((__bridge CFDictionaryRef)biometricQuery);
     if (bioStatus != errSecSuccess && bioStatus != errSecItemNotFound) {
         if (bioStatus == errSecInteractionNotAllowed) {
-            throw std::runtime_error("NitroStorage: Cannot clear biometric storage: keychain is locked (errSecInteractionNotAllowed)");
+            throw taggedStorageError(
+                "keychain_locked",
+                "NitroStorage: Cannot clear biometric storage: keychain is locked (errSecInteractionNotAllowed)"
+            );
         }
         throw std::runtime_error(
             std::string("NitroStorage: clearSecureBiometric failed with status ") + std::to_string(bioStatus));
@@ -533,7 +551,10 @@ void IOSStorageAdapterCpp::setSecureBiometricWithLevel(const std::string& key, c
     if (error || !access) {
         if (access) CFRelease(access);
         if (error) CFRelease(error);
-        throw std::runtime_error("NitroStorage: Failed to create biometric access control");
+        throw taggedStorageError(
+            "biometric_unavailable",
+            "NitroStorage: Failed to create biometric access control"
+        );
     }
 
     NSMutableDictionary* attrs = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
@@ -546,14 +567,16 @@ void IOSStorageAdapterCpp::setSecureBiometricWithLevel(const std::string& key, c
             try {
                 setSecure(key, *backup);
             } catch (const std::exception& restoreEx) {
-                throw std::runtime_error(
+                throw taggedStorageError(
+                    "biometric_unavailable",
                     std::string("NitroStorage: Biometric set failed with status ") +
                     std::to_string(addStatus) +
                     " and previous value restoration also failed: " + restoreEx.what());
             }
         }
         if (addStatus == errSecInteractionNotAllowed) {
-            throw std::runtime_error(
+            throw taggedStorageError(
+                "keychain_locked",
                 "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
                 "The item is not accessible until the device is unlocked."
             );
@@ -586,13 +609,17 @@ std::optional<std::string> IOSStorageAdapterCpp::getSecureBiometric(const std::s
         if (str) return std::string([str UTF8String]);
     }
     if (status == errSecInteractionNotAllowed) {
-        throw std::runtime_error(
+        throw taggedStorageError(
+            "keychain_locked",
             "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
             "The item is not accessible until the device is unlocked."
         );
     }
     if (status == errSecUserCanceled || status == errSecAuthFailed) {
-        throw std::runtime_error("NitroStorage: Biometric authentication failed");
+        throw taggedStorageError(
+            "authentication_required",
+            "NitroStorage: Biometric authentication failed"
+        );
     }
     return std::nullopt;
 }
@@ -640,7 +667,10 @@ void IOSStorageAdapterCpp::clearSecureBiometric() {
     OSStatus status = SecItemDelete((__bridge CFDictionaryRef)query);
     if (status != errSecSuccess && status != errSecItemNotFound) {
         if (status == errSecInteractionNotAllowed) {
-            throw std::runtime_error("NitroStorage: Cannot clear biometric storage: keychain is locked (errSecInteractionNotAllowed)");
+            throw taggedStorageError(
+                "keychain_locked",
+                "NitroStorage: Cannot clear biometric storage: keychain is locked (errSecInteractionNotAllowed)"
+            );
         }
         throw std::runtime_error(
             std::string("NitroStorage: clearSecureBiometric failed with status ") + std::to_string(status));

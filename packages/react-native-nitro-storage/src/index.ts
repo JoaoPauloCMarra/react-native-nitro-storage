@@ -14,10 +14,30 @@ import {
   prefixKey,
   isNamespaced,
 } from "./internal";
+import type {
+  WebDiskStorageBackend,
+  WebSecureStorageBackend,
+} from "./web-storage-backend";
+import {
+  getStorageErrorCode,
+  isLockedStorageErrorCode,
+  type StorageCapabilities,
+  type StorageErrorCode,
+} from "./storage-runtime";
 
 export { StorageScope, AccessControl, BiometricLevel } from "./Storage.types";
 export type { Storage } from "./Storage.nitro";
 export { migrateFromMMKV } from "./migration";
+export {
+  getStorageErrorCode,
+  type StorageCapabilities,
+  type StorageErrorCode,
+} from "./storage-runtime";
+export type {
+  WebStorageBackend,
+  WebStorageChangeEvent,
+  WebStorageScope,
+} from "./web-storage-backend";
 
 export type Validator<T> = (value: unknown) => value is T;
 export type ExpirationConfig = {
@@ -41,14 +61,6 @@ export type StorageMetricSummary = {
   avgDurationMs: number;
   maxDurationMs: number;
 };
-export type WebSecureStorageBackend = {
-  getItem: (key: string) => string | null;
-  setItem: (key: string, value: string) => void;
-  removeItem: (key: string) => void;
-  clear: () => void;
-  getAllKeys: () => string[];
-};
-
 export type MigrationContext = {
   scope: StorageScope;
   getRaw: (key: string) => string | undefined;
@@ -95,6 +107,10 @@ function typedKeys<K extends string, V>(record: Record<K, V>): K[] {
   return Object.keys(record) as K[];
 }
 type NonMemoryScope = StorageScope.Disk | StorageScope.Secure;
+type PendingDiskWrite = {
+  key: string;
+  value: string | undefined;
+};
 type PendingSecureWrite = {
   key: string;
   value: string | undefined;
@@ -108,6 +124,10 @@ const runMicrotask =
     : (task: () => void) => {
         Promise.resolve().then(task);
       };
+const now =
+  typeof performance !== "undefined" && typeof performance.now === "function"
+    ? () => performance.now()
+    : () => Date.now();
 
 let _storageModule: Storage | null = null;
 
@@ -131,6 +151,9 @@ const scopedRawCache = new Map<NonMemoryScope, Map<string, string | undefined>>(
     [StorageScope.Secure, new Map()],
   ],
 );
+const pendingDiskWrites = new Map<string, PendingDiskWrite>();
+let diskFlushScheduled = false;
+let diskWritesAsync = false;
 const pendingSecureWrites = new Map<string, PendingSecureWrite>();
 let secureFlushScheduled = false;
 let secureDefaultAccessControl: AccessControl = AccessControl.WhenUnlocked;
@@ -176,11 +199,11 @@ function measureOperation<T>(
   if (!metricsObserver) {
     return fn();
   }
-  const start = Date.now();
+  const start = now();
   try {
     return fn();
   } finally {
-    recordMetric(operation, scope, Date.now() - start, keysCount);
+    recordMetric(operation, scope, now() - start, keysCount);
   }
 }
 
@@ -262,12 +285,57 @@ function readPendingSecureWrite(key: string): string | undefined {
   return pendingSecureWrites.get(key)?.value;
 }
 
+function readPendingDiskWrite(key: string): string | undefined {
+  return pendingDiskWrites.get(key)?.value;
+}
+
+function hasPendingDiskWrite(key: string): boolean {
+  return pendingDiskWrites.has(key);
+}
+
 function hasPendingSecureWrite(key: string): boolean {
   return pendingSecureWrites.has(key);
 }
 
+function clearPendingDiskWrite(key: string): void {
+  pendingDiskWrites.delete(key);
+}
+
 function clearPendingSecureWrite(key: string): void {
   pendingSecureWrites.delete(key);
+}
+
+function flushDiskWrites(): void {
+  diskFlushScheduled = false;
+
+  if (pendingDiskWrites.size === 0) {
+    return;
+  }
+
+  const writes = Array.from(pendingDiskWrites.values());
+  pendingDiskWrites.clear();
+
+  const keysToSet: string[] = [];
+  const valuesToSet: string[] = [];
+  const keysToRemove: string[] = [];
+
+  writes.forEach(({ key, value }) => {
+    if (value === undefined) {
+      keysToRemove.push(key);
+      return;
+    }
+
+    keysToSet.push(key);
+    valuesToSet.push(value);
+  });
+
+  const storageModule = getStorageModule();
+  if (keysToSet.length > 0) {
+    storageModule.setBatch(keysToSet, valuesToSet, StorageScope.Disk);
+  }
+  if (keysToRemove.length > 0) {
+    storageModule.removeBatch(keysToRemove, StorageScope.Disk);
+  }
 }
 
 function flushSecureWrites(): void {
@@ -311,6 +379,15 @@ function flushSecureWrites(): void {
   }
 }
 
+function scheduleDiskWrite(key: string, value: string | undefined): void {
+  pendingDiskWrites.set(key, { key, value });
+  if (diskFlushScheduled) {
+    return;
+  }
+  diskFlushScheduled = true;
+  runMicrotask(flushDiskWrites);
+}
+
 function scheduleSecureWrite(
   key: string,
   value: string | undefined,
@@ -334,6 +411,14 @@ function ensureNativeScopeSubscription(scope: NonMemoryScope): void {
   }
 
   const unsubscribe = getStorageModule().addOnChange(scope, (key, value) => {
+    if (scope === StorageScope.Disk) {
+      if (key === "") {
+        pendingDiskWrites.clear();
+      } else {
+        clearPendingDiskWrite(key);
+      }
+    }
+
     if (scope === StorageScope.Secure) {
       if (key === "") {
         pendingSecureWrites.clear();
@@ -376,6 +461,10 @@ function getRawValue(key: string, scope: StorageScope): string | undefined {
     return typeof value === "string" ? value : undefined;
   }
 
+  if (scope === StorageScope.Disk && hasPendingDiskWrite(key)) {
+    return readPendingDiskWrite(key);
+  }
+
   if (scope === StorageScope.Secure && hasPendingSecureWrite(key)) {
     return readPendingSecureWrite(key);
   }
@@ -389,6 +478,17 @@ function setRawValue(key: string, value: string, scope: StorageScope): void {
     memoryStore.set(key, value);
     notifyKeyListeners(memoryListeners, key);
     return;
+  }
+
+  if (scope === StorageScope.Disk) {
+    cacheRawValue(scope, key, value);
+    if (diskWritesAsync) {
+      scheduleDiskWrite(key, value);
+      return;
+    }
+
+    flushDiskWrites();
+    clearPendingDiskWrite(key);
   }
 
   if (scope === StorageScope.Secure) {
@@ -407,6 +507,17 @@ function removeRawValue(key: string, scope: StorageScope): void {
     memoryStore.delete(key);
     notifyKeyListeners(memoryListeners, key);
     return;
+  }
+
+  if (scope === StorageScope.Disk) {
+    cacheRawValue(scope, key, undefined);
+    if (diskWritesAsync) {
+      scheduleDiskWrite(key, undefined);
+      return;
+    }
+
+    flushDiskWrites();
+    clearPendingDiskWrite(key);
   }
 
   if (scope === StorageScope.Secure) {
@@ -439,6 +550,11 @@ export const storage = {
         memoryStore.clear();
         notifyAllListeners(memoryListeners);
         return;
+      }
+
+      if (scope === StorageScope.Disk) {
+        flushDiskWrites();
+        pendingDiskWrites.clear();
       }
 
       if (scope === StorageScope.Secure) {
@@ -476,6 +592,9 @@ export const storage = {
       }
 
       const keyPrefix = prefixKey(namespace, "");
+      if (scope === StorageScope.Disk) {
+        flushDiskWrites();
+      }
       if (scope === StorageScope.Secure) {
         flushSecureWrites();
       }
@@ -500,6 +619,12 @@ export const storage = {
       if (scope === StorageScope.Memory) {
         return memoryStore.has(key);
       }
+      if (scope === StorageScope.Disk) {
+        flushDiskWrites();
+      }
+      if (scope === StorageScope.Secure) {
+        flushSecureWrites();
+      }
       return getStorageModule().has(key, scope);
     });
   },
@@ -508,6 +633,12 @@ export const storage = {
       assertValidScope(scope);
       if (scope === StorageScope.Memory) {
         return Array.from(memoryStore.keys());
+      }
+      if (scope === StorageScope.Disk) {
+        flushDiskWrites();
+      }
+      if (scope === StorageScope.Secure) {
+        flushSecureWrites();
       }
       return getStorageModule().getAllKeys(scope);
     });
@@ -519,6 +650,12 @@ export const storage = {
         return Array.from(memoryStore.keys()).filter((key) =>
           key.startsWith(prefix),
         );
+      }
+      if (scope === StorageScope.Disk) {
+        flushDiskWrites();
+      }
+      if (scope === StorageScope.Secure) {
+        flushSecureWrites();
       }
       return getStorageModule().getKeysByPrefix(prefix, scope);
     });
@@ -544,6 +681,12 @@ export const storage = {
         return result;
       }
 
+      if (scope === StorageScope.Disk) {
+        flushDiskWrites();
+      }
+      if (scope === StorageScope.Secure) {
+        flushSecureWrites();
+      }
       const values = getStorageModule().getBatch(keys, scope);
       keys.forEach((key, idx) => {
         const value = decodeNativeBatchValue(values[idx]);
@@ -564,6 +707,12 @@ export const storage = {
         });
         return result;
       }
+      if (scope === StorageScope.Disk) {
+        flushDiskWrites();
+      }
+      if (scope === StorageScope.Secure) {
+        flushSecureWrites();
+      }
       const keys = getStorageModule().getAllKeys(scope);
       if (keys.length === 0) return result;
       const values = getStorageModule().getBatch(keys, scope);
@@ -579,6 +728,12 @@ export const storage = {
       assertValidScope(scope);
       if (scope === StorageScope.Memory) {
         return memoryStore.size;
+      }
+      if (scope === StorageScope.Disk) {
+        flushDiskWrites();
+      }
+      if (scope === StorageScope.Secure) {
+        flushSecureWrites();
       }
       return getStorageModule().size(scope);
     });
@@ -597,6 +752,19 @@ export const storage = {
         getStorageModule().setSecureWritesAsync(enabled);
       },
     );
+  },
+  setDiskWritesAsync: (enabled: boolean) => {
+    measureOperation("storage:setDiskWritesAsync", StorageScope.Disk, () => {
+      diskWritesAsync = enabled;
+      if (!enabled) {
+        flushDiskWrites();
+      }
+    });
+  },
+  flushDiskWrites: () => {
+    measureOperation("storage:flushDiskWrites", StorageScope.Disk, () => {
+      flushDiskWrites();
+    });
   },
   flushSecureWrites: () => {
     measureOperation("storage:flushSecureWrites", StorageScope.Secure, () => {
@@ -631,6 +799,18 @@ export const storage = {
   resetMetrics: () => {
     metricsCounters.clear();
   },
+  getCapabilities: (): StorageCapabilities => ({
+    platform: "native",
+    backend: {
+      disk: "platform-preferences",
+      secure: "platform-secure-storage",
+    },
+    writeBuffering: {
+      disk: true,
+      secure: true,
+    },
+    errorClassification: true,
+  }),
   getString: (key: string, scope: StorageScope): string | undefined => {
     return measureOperation("storage:getString", scope, () => {
       return getRawValue(key, scope);
@@ -689,6 +869,20 @@ export function getWebSecureStorageBackend():
   return undefined;
 }
 
+export function setWebDiskStorageBackend(
+  _backend?: WebDiskStorageBackend,
+): void {
+  // Native platforms do not use web disk backends.
+}
+
+export function getWebDiskStorageBackend(): WebDiskStorageBackend | undefined {
+  return undefined;
+}
+
+export async function flushWebStorageBackends(): Promise<void> {
+  // Native platforms do not use web storage backends.
+}
+
 export interface StorageItemConfig<T> {
   key: string;
   scope: StorageScope;
@@ -700,6 +894,7 @@ export interface StorageItemConfig<T> {
   expiration?: ExpirationConfig;
   onExpired?: (key: string) => void;
   readCache?: boolean;
+  coalesceDiskWrites?: boolean;
   coalesceSecureWrites?: boolean;
   namespace?: string;
   biometric?: boolean;
@@ -784,6 +979,8 @@ export function createStorageItem<T = undefined>(
   const memoryExpiration =
     expiration && isMemory ? new Map<string, number>() : null;
   const readCache = !isMemory && config.readCache === true;
+  const coalesceDiskWrites =
+    config.scope === StorageScope.Disk && config.coalesceDiskWrites === true;
   const coalesceSecureWrites =
     config.scope === StorageScope.Secure &&
     config.coalesceSecureWrites === true &&
@@ -852,6 +1049,13 @@ export function createStorageItem<T = undefined>(
       return memoryStore.get(storageKey);
     }
 
+    if (nonMemoryScope === StorageScope.Disk) {
+      const pending = pendingDiskWrites.get(storageKey);
+      if (pending !== undefined) {
+        return pending.value;
+      }
+    }
+
     if (nonMemoryScope === StorageScope.Secure && !isBiometric) {
       const pending = pendingSecureWrites.get(storageKey);
       if (pending !== undefined) {
@@ -888,6 +1092,15 @@ export function createStorageItem<T = undefined>(
 
     cacheRawValue(nonMemoryScope!, storageKey, rawValue);
 
+    if (nonMemoryScope === StorageScope.Disk) {
+      if (coalesceDiskWrites || diskWritesAsync) {
+        scheduleDiskWrite(storageKey, rawValue);
+        return;
+      }
+
+      clearPendingDiskWrite(storageKey);
+    }
+
     if (coalesceSecureWrites) {
       scheduleSecureWrite(
         storageKey,
@@ -914,6 +1127,15 @@ export function createStorageItem<T = undefined>(
     }
 
     cacheRawValue(nonMemoryScope!, storageKey, undefined);
+
+    if (nonMemoryScope === StorageScope.Disk) {
+      if (coalesceDiskWrites || diskWritesAsync) {
+        scheduleDiskWrite(storageKey, undefined);
+        return;
+      }
+
+      clearPendingDiskWrite(storageKey);
+    }
 
     if (coalesceSecureWrites) {
       scheduleSecureWrite(
@@ -1125,6 +1347,18 @@ export function createStorageItem<T = undefined>(
     measureOperation("item:has", config.scope, () => {
       if (isMemory) return memoryStore.has(storageKey);
       if (isBiometric) return getStorageModule().hasSecureBiometric(storageKey);
+      if (nonMemoryScope === StorageScope.Disk) {
+        const pending = pendingDiskWrites.get(storageKey);
+        if (pending !== undefined) {
+          return pending.value !== undefined;
+        }
+      }
+      if (nonMemoryScope === StorageScope.Secure) {
+        const pending = pendingSecureWrites.get(storageKey);
+        if (pending !== undefined) {
+          return pending.value !== undefined;
+        }
+      }
       return getStorageModule().has(storageKey, config.scope);
     });
 
@@ -1224,6 +1458,14 @@ export function getBatch(
       const keyIndexes: number[] = [];
 
       items.forEach((item, index) => {
+        if (scope === StorageScope.Disk) {
+          const pending = pendingDiskWrites.get(item.key);
+          if (pending !== undefined) {
+            rawValues[index] = pending.value;
+            return;
+          }
+        }
+
         if (scope === StorageScope.Secure) {
           const pending = pendingSecureWrites.get(item.key);
           if (pending !== undefined) {
@@ -1353,6 +1595,8 @@ export function setBatch<T>(
         return;
       }
 
+      flushDiskWrites();
+
       const useRawBatchPath = items.every(({ item }) =>
         canUseRawBatchPath(asInternal(item)),
       );
@@ -1387,6 +1631,9 @@ export function removeBatch(
       }
 
       const keys = items.map((item) => item.key);
+      if (scope === StorageScope.Disk) {
+        flushDiskWrites();
+      }
       if (scope === StorageScope.Secure) {
         flushSecureWrites();
       }
@@ -1450,6 +1697,9 @@ export function runTransaction<T>(
 ): T {
   return measureOperation("transaction:run", scope, () => {
     assertValidScope(scope);
+    if (scope === StorageScope.Disk) {
+      flushDiskWrites();
+    }
     if (scope === StorageScope.Secure) {
       flushSecureWrites();
     }
@@ -1525,6 +1775,9 @@ export function runTransaction<T>(
           }
         });
 
+        if (scope === StorageScope.Disk) {
+          flushDiskWrites();
+        }
         if (scope === StorageScope.Secure) {
           flushSecureWrites();
         }
@@ -1555,16 +1808,7 @@ export type SecureAuthStorageConfig<K extends string = string> = Record<
 >;
 
 export function isKeychainLockedError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const msg = err.message;
-  return (
-    msg.includes("errSecInteractionNotAllowed") ||
-    msg.includes("UserNotAuthenticatedException") ||
-    msg.includes("KeyStoreException") ||
-    msg.includes("KeyPermanentlyInvalidatedException") ||
-    msg.includes("InvalidKeyException") ||
-    msg.includes("android.security.keystore")
-  );
+  return isLockedStorageErrorCode(getStorageErrorCode(err));
 }
 
 export function createSecureAuthStorage<K extends string>(

@@ -4,7 +4,17 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
-## 0.4.4 - 2026-04-08
+## 0.4.5 - 2026-04-14
+
+### Added
+
+- Add configurable web Disk backend hooks: `setWebDiskStorageBackend()`, `getWebDiskStorageBackend()`, and `flushWebStorageBackends()`.
+- Extend the web backend contract with optional batch, sizing, subscription, and flush hooks for higher-performance custom backends.
+- Add IndexedDB backend support for `getMany`, `setMany`, `removeMany`, `size`, `flush`, and `BroadcastChannel`-based cross-tab sync.
+- Expand regression coverage for web backend overrides, backend subscription-driven cache invalidation, backend flush hooks, IndexedDB broadcast sync, and IndexedDB error surfacing.
+- Add Disk write buffering APIs: `coalesceDiskWrites`, `storage.setDiskWritesAsync()`, `storage.flushDiskWrites()`, and `storage.getCapabilities()`.
+- Add structured storage error classification via `getStorageErrorCode()` while keeping `isKeychainLockedError()` as the convenience helper, and tag native bridge errors with stable `[nitro-error:<code>]` markers.
+- Extend the example app and smoke runner to cover runtime capabilities, structured error codes, and Disk write buffering flows.
 
 ### Changed
 
@@ -14,6 +24,8 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 - Refresh root tooling to current patch releases for linting, testing, and workspace orchestration.
 - Align the example app to `react-native-nitro-modules 0.35.4`.
 - Add an example-only Expo config plugin that patches the generated iOS `fmt` pod during `pod install`, keeping clean prebuilds working on Xcode 26.4.
+- Switch web operation timing to `performance.now()` when available for tighter metrics on fast paths.
+- Keep the example smoke runner aligned with the expanded web backend API surface, including backend override and flush coverage on web.
 
 ## 0.4.2/0.4.3 - 2026-03-05
 

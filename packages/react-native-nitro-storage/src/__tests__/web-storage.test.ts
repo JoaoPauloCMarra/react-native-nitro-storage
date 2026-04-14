@@ -2,13 +2,17 @@ import { act, renderHook } from "@testing-library/react-hooks";
 import {
   createStorageItem,
   createSecureAuthStorage,
+  flushWebStorageBackends,
   getBatch,
+  getStorageErrorCode,
+  getWebDiskStorageBackend,
   getWebSecureStorageBackend,
   migrateFromMMKV,
   migrateToLatest,
   registerMigration,
   removeBatch,
   runTransaction,
+  setWebDiskStorageBackend,
   setWebSecureStorageBackend,
   setBatch,
   storage,
@@ -21,10 +25,18 @@ import {
   useStorage,
 } from "../index.web";
 import type { StorageItem } from "../index.web";
+import type {
+  WebStorageBackend,
+  WebStorageChangeEvent,
+} from "../web-storage-backend";
 import {
   MIGRATION_VERSION_KEY,
   serializeWithPrimitiveFastPath,
 } from "../internal";
+
+beforeEach(() => {
+  storage.setDiskWritesAsync(false);
+});
 
 function createStorageMock(): Storage {
   const store = new Map<string, string>();
@@ -51,9 +63,23 @@ function createStorageMock(): Storage {
   };
 }
 
-function createWebSecureBackendMock() {
+function createWebBackendMock(name = "mock-backend") {
   const secureStore = new Map<string, string>();
+  const subscribers = new Set<(event: WebStorageChangeEvent) => void>();
+  const emit = (event: WebStorageChangeEvent) => {
+    if (event.key === null) {
+      secureStore.clear();
+    } else if (event.newValue === null) {
+      secureStore.delete(event.key);
+    } else {
+      secureStore.set(event.key, event.newValue);
+    }
+    subscribers.forEach((subscriber) => {
+      subscriber(event);
+    });
+  };
   return {
+    name,
     getItem: jest.fn((key: string) => secureStore.get(key) ?? null),
     setItem: jest.fn((key: string, value: string) => {
       secureStore.set(key, value);
@@ -65,6 +91,51 @@ function createWebSecureBackendMock() {
       secureStore.clear();
     }),
     getAllKeys: jest.fn(() => Array.from(secureStore.keys())),
+    getMany: jest.fn((keys: string[]) =>
+      keys.map((key) => secureStore.get(key) ?? null),
+    ),
+    setMany: jest.fn((entries: ReadonlyArray<readonly [string, string]>) => {
+      entries.forEach(([key, value]) => {
+        secureStore.set(key, value);
+      });
+    }),
+    removeMany: jest.fn((keys: string[]) => {
+      keys.forEach((key) => {
+        secureStore.delete(key);
+      });
+    }),
+    size: jest.fn(() => secureStore.size),
+    subscribe: jest.fn((listener: (event: WebStorageChangeEvent) => void) => {
+      subscribers.add(listener);
+      return () => {
+        subscribers.delete(listener);
+      };
+    }),
+    flush: jest.fn(async () => {}),
+    emit,
+  };
+}
+
+function createThrowingBackendMock(
+  message = "quota exceeded",
+): WebStorageBackend {
+  return {
+    name: "throwing-backend",
+    getItem() {
+      throw new Error(message);
+    },
+    setItem() {
+      throw new Error(message);
+    },
+    removeItem() {
+      throw new Error(message);
+    },
+    clear() {
+      throw new Error(message);
+    },
+    getAllKeys() {
+      throw new Error(message);
+    },
   };
 }
 
@@ -186,8 +257,81 @@ describe("Web Storage", () => {
     );
   });
 
+  it("coalesces disk writes until flush when configured per item", () => {
+    const diskItem = createStorageItem({
+      key: "web-coalesce-disk",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+      coalesceDiskWrites: true,
+    });
+
+    diskItem.set("queued-web-disk");
+
+    expect(globalThis.localStorage.getItem("web-coalesce-disk")).toBeNull();
+    expect(diskItem.get()).toBe("queued-web-disk");
+
+    storage.flushDiskWrites();
+
+    expect(globalThis.localStorage.getItem("web-coalesce-disk")).toBe(
+      serializeWithPrimitiveFastPath("queued-web-disk"),
+    );
+  });
+
+  it("queues raw disk writes when disk async mode is enabled", () => {
+    storage.setDiskWritesAsync(true);
+
+    storage.setString("web-async-disk", "queued", StorageScope.Disk);
+
+    expect(globalThis.localStorage.getItem("web-async-disk")).toBeNull();
+    expect(storage.getString("web-async-disk", StorageScope.Disk)).toBe(
+      "queued",
+    );
+
+    storage.flushDiskWrites();
+
+    expect(globalThis.localStorage.getItem("web-async-disk")).toBe("queued");
+  });
+
+  it("exposes web capability metadata", () => {
+    const capabilities = storage.getCapabilities();
+
+    expect(capabilities.platform).toBe("web");
+    expect(capabilities.writeBuffering.disk).toBe(true);
+    expect(capabilities.writeBuffering.secure).toBe(true);
+    expect(capabilities.backend.disk).toContain("disk");
+    expect(capabilities.backend.secure).toContain("secure");
+  });
+
+  it("classifies storage errors into stable codes", () => {
+    expect(
+      getStorageErrorCode(
+        new Error("[nitro-error:keychain_locked] NitroStorage: locked"),
+      ),
+    ).toBe("keychain_locked");
+    expect(
+      getStorageErrorCode(
+        new Error(
+          "[nitro-error:authentication_required] NitroStorage: auth required",
+        ),
+      ),
+    ).toBe("authentication_required");
+    expect(getStorageErrorCode(new Error("errSecInteractionNotAllowed"))).toBe(
+      "keychain_locked",
+    );
+    expect(
+      getStorageErrorCode(new Error("UserNotAuthenticatedException")),
+    ).toBe("authentication_required");
+    expect(getStorageErrorCode(new Error("AEADBadTagException"))).toBe(
+      "storage_corruption",
+    );
+    expect(
+      getStorageErrorCode(new Error("Biometric storage unavailable")),
+    ).toBe("biometric_unavailable");
+    expect(getStorageErrorCode(new Error("something else"))).toBe(undefined);
+  });
+
   it("supports a custom web secure backend", () => {
-    const backend = createWebSecureBackendMock();
+    const backend = createWebBackendMock();
     setWebSecureStorageBackend(backend);
 
     const secureItem = createStorageItem({
@@ -208,7 +352,7 @@ describe("Web Storage", () => {
   });
 
   it("supports biometricLevel with secure writes on web backend", () => {
-    const backend = createWebSecureBackendMock();
+    const backend = createWebBackendMock();
     setWebSecureStorageBackend(backend);
 
     const biometricItem = createStorageItem({
@@ -2001,7 +2145,7 @@ describe("TTL expiry subscriber notification (web)", () => {
   });
 });
 
-describe("web secure backend switching", () => {
+describe("web backend switching", () => {
   beforeEach(() => {
     Object.defineProperty(globalThis, "localStorage", {
       value: createStorageMock(),
@@ -2020,6 +2164,7 @@ describe("web secure backend switching", () => {
         writable: true,
       });
     }
+    setWebDiskStorageBackend(undefined);
     setWebSecureStorageBackend(undefined);
     storage.clearAll();
   });
@@ -2029,7 +2174,7 @@ describe("web secure backend switching", () => {
   });
 
   it("getWebSecureStorageBackend returns default backend when reset to undefined", () => {
-    const custom = createWebSecureBackendMock();
+    const custom = createWebBackendMock();
     setWebSecureStorageBackend(custom);
     expect(getWebSecureStorageBackend()).toBe(custom);
 
@@ -2040,8 +2185,19 @@ describe("web secure backend switching", () => {
     expect(backend).not.toBe(custom);
   });
 
+  it("getWebDiskStorageBackend returns default backend when reset to undefined", () => {
+    const custom = createWebBackendMock("disk-backend");
+    setWebDiskStorageBackend(custom);
+    expect(getWebDiskStorageBackend()).toBe(custom);
+
+    setWebDiskStorageBackend(undefined);
+    const backend = getWebDiskStorageBackend();
+    expect(backend).toBeDefined();
+    expect(backend).not.toBe(custom);
+  });
+
   it("setting a new backend allows secure writes to go to it", () => {
-    const backend = createWebSecureBackendMock();
+    const backend = createWebBackendMock();
     setWebSecureStorageBackend(backend);
 
     const secureItem = createStorageItem({
@@ -2058,7 +2214,7 @@ describe("web secure backend switching", () => {
   });
 
   it("switching backend mid-session still reads from new backend", () => {
-    const backendA = createWebSecureBackendMock();
+    const backendA = createWebBackendMock();
     setWebSecureStorageBackend(backendA);
 
     const secureItem = createStorageItem({
@@ -2068,7 +2224,7 @@ describe("web secure backend switching", () => {
     });
     secureItem.set("from-a");
 
-    const backendB = createWebSecureBackendMock();
+    const backendB = createWebBackendMock();
     // Seed backend B with the same key/value
     backendB.setItem(
       "__secure_switch-read",
@@ -2078,6 +2234,118 @@ describe("web secure backend switching", () => {
 
     expect(secureItem.get()).toBe("from-b");
     expect(backendB.getItem).toHaveBeenCalledWith("__secure_switch-read");
+  });
+
+  it("allows overriding the disk backend", () => {
+    const backend = createWebBackendMock("disk-backend");
+    setWebDiskStorageBackend(backend);
+
+    const diskItem = createStorageItem({
+      key: "disk-backend-write",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    });
+    diskItem.set("value");
+
+    expect(backend.setItem).toHaveBeenCalledWith(
+      "disk-backend-write",
+      serializeWithPrimitiveFastPath("value"),
+    );
+    expect(globalThis.localStorage.getItem("disk-backend-write")).toBeNull();
+  });
+
+  it("uses batch backend hooks when available", () => {
+    const backend = createWebBackendMock("disk-batch-backend");
+    setWebDiskStorageBackend(backend);
+
+    const a = createStorageItem({
+      key: "disk-batch-a",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    });
+    const b = createStorageItem({
+      key: "disk-batch-b",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    });
+
+    setBatch(
+      [
+        { item: a, value: "A" },
+        { item: b, value: "B" },
+      ],
+      StorageScope.Disk,
+    );
+    getBatch([a, b], StorageScope.Disk);
+    removeBatch([a, b], StorageScope.Disk);
+
+    expect(backend.setMany).toHaveBeenCalled();
+    expect(backend.getMany).toHaveBeenCalled();
+    expect(backend.removeMany).toHaveBeenCalled();
+  });
+
+  it("flushWebStorageBackends awaits backend flush hooks", async () => {
+    const diskBackend = createWebBackendMock("disk-flush");
+    const secureBackend = createWebBackendMock("secure-flush");
+    setWebDiskStorageBackend(diskBackend);
+    setWebSecureStorageBackend(secureBackend);
+
+    await flushWebStorageBackends();
+
+    expect(diskBackend.flush).toHaveBeenCalled();
+    expect(secureBackend.flush).toHaveBeenCalled();
+  });
+
+  it("wraps backend failures with scope-aware errors", () => {
+    setWebDiskStorageBackend(createThrowingBackendMock("QuotaExceededError"));
+
+    expect(() =>
+      storage.setString("disk-failure", "value", StorageScope.Disk),
+    ).toThrow(/NitroStorage\(web\): set failed for throwing-backend/);
+  });
+
+  it("applies backend subscribe events to disk item caches", () => {
+    const backend = createWebBackendMock("disk-subscribe");
+    setWebDiskStorageBackend(backend);
+
+    const item = createStorageItem({
+      key: "disk-sync",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+      readCache: true,
+    });
+    const listener = jest.fn();
+
+    item.subscribe(listener);
+    backend.emit({
+      key: "disk-sync",
+      newValue: serializeWithPrimitiveFastPath("external"),
+    });
+
+    expect(item.get()).toBe("external");
+    expect(listener).toHaveBeenCalled();
+  });
+
+  it("applies backend subscribe clear events to secure caches", () => {
+    const backend = createWebBackendMock("secure-subscribe");
+    setWebSecureStorageBackend(backend);
+
+    const item = createStorageItem({
+      key: "secure-sync",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      readCache: true,
+    });
+
+    item.set("cached");
+    expect(item.get()).toBe("cached");
+
+    backend.emit({
+      key: null,
+      newValue: null,
+    });
+
+    expect(item.get()).toBe("default");
   });
 });
 
