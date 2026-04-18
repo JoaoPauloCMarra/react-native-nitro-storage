@@ -8,6 +8,7 @@
   "scripts": {
     "setup": "node scripts/setup.js",
     "publish-package": "node scripts/publish.js",
+    "publish-package:dry": "node scripts/publish.js --dry-run",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "format": "turbo run format",

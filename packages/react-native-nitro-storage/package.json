@@ -60,8 +60,8 @@
     "test:cpp": "node scripts/test-cpp.js",
     "check:pack": "node scripts/check-pack-contents.js",
     "prepublishOnly": "bun run clean && bun run codegen && bun run build && bun run test:types && bun run benchmark",
-    "prepack": "node -e \"const fs=require('fs'); fs.copyFileSync('../../README.md','./README.md'); try{fs.copyFileSync('../../LICENSE','./LICENSE')}catch(e){} try{fs.copyFileSync('../../SECURITY.md','./SECURITY.md')}catch(e){} if(fs.existsSync('../../docs')) fs.cpSync('../../docs','./docs',{recursive:true})\"",
-    "postpack": "node -e \"const fs=require('fs'); ['./README.md','./LICENSE','./SECURITY.md'].forEach(f=>fs.existsSync(f)&&fs.unlinkSync(f)); if(fs.existsSync('./docs')) fs.rmSync('./docs',{recursive:true,force:true})\""
+    "prepack": "node scripts/sync-package-docs.js prepare",
+    "postpack": "node scripts/sync-package-docs.js cleanup"
   },
   "keywords": [
     "react-native",

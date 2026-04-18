@@ -16,12 +16,15 @@ const colors = {
 const projectRoot = path.resolve(__dirname, "..");
 const packageDir = path.join(
   projectRoot,
-  "packages/react-native-nitro-storage"
+  "packages/react-native-nitro-storage",
 );
 const packageJsonPath = path.join(packageDir, "package.json");
 const packageFilter = "react-native-nitro-storage";
-const isCI =
-  process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
+const packageDocsSyncScript = path.join(
+  packageDir,
+  "scripts/sync-package-docs.js",
+);
+const isCI = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
 
 function log(message, color = "green") {
   console.log(colors[color](message));
@@ -51,6 +54,25 @@ function execCommandWithOutput(command, options = {}) {
     }).trim();
   } catch (error) {
     return null;
+  }
+}
+
+function shellQuote(value) {
+  return JSON.stringify(String(value));
+}
+
+function validateNpmTag(tag) {
+  if (!/^[a-z0-9][a-z0-9._-]*$/i.test(tag)) {
+    log(`Invalid npm dist tag: ${tag}`, "red");
+    process.exit(1);
+  }
+
+  if (/^v?\d+\.\d+\.\d+/.test(tag)) {
+    log(
+      `Invalid npm dist tag "${tag}": use a release channel like latest or next.`,
+      "red",
+    );
+    process.exit(1);
   }
 }
 
@@ -100,6 +122,16 @@ function getGitStatus() {
 function checkNpmAuth() {
   const whoami = execCommandWithOutput("npm whoami 2>/dev/null");
   return whoami !== null && whoami !== "";
+}
+
+function cleanupPackageDocs() {
+  if (!fs.existsSync(packageDocsSyncScript)) {
+    return;
+  }
+
+  execCommand(`node ${shellQuote(packageDocsSyncScript)} cleanup`, {
+    cwd: packageDir,
+  });
 }
 
 function formatGitStatus(statusLines) {
@@ -177,12 +209,15 @@ async function main() {
   const skipPackPreview = args.includes("--skip-pack-preview");
   const tag =
     args.find((arg) => arg.startsWith("--tag="))?.split("=")[1] || "latest";
+  validateNpmTag(tag);
 
   console.log("");
   log("📦 Publishing react-native-nitro-storage", "bold");
   console.log("");
 
   const version = getPackageVersion();
+  cleanupPackageDocs();
+
   log(`Version: ${version}`, "cyan");
   log(`Tag: ${tag}`, "cyan");
   if (isDryRun) {
@@ -220,35 +255,33 @@ async function main() {
     console.log("");
   }
 
-  runCheck(
-    "🧹 Running lint...",
-    `bun run lint -- --filter=${packageFilter}`,
-    { cwd: projectRoot }
-  );
+  runCheck("🧹 Running lint...", `bun run lint -- --filter=${packageFilter}`, {
+    cwd: projectRoot,
+  });
   runCheck(
     "🎨 Running format check...",
     `bun run format:check -- --filter=${packageFilter}`,
-    { cwd: projectRoot }
+    { cwd: projectRoot },
   );
   runCheck(
     "📝 Running typecheck...",
     `bun run typecheck -- --filter=${packageFilter}`,
-    { cwd: projectRoot }
+    { cwd: projectRoot },
   );
   runCheck(
     "🔎 Running type-surface checks...",
     `bun run test:types -- --filter=${packageFilter}`,
-    { cwd: projectRoot }
+    { cwd: projectRoot },
   );
   runCheck(
     "🧪 Running unit tests...",
     `bun run test -- --filter=${packageFilter}`,
-    { cwd: projectRoot }
+    { cwd: projectRoot },
   );
   runCheck(
     "🧪 Running C++ tests...",
     `bun run test:cpp -- --filter=${packageFilter}`,
-    { cwd: projectRoot }
+    { cwd: projectRoot },
   );
   runCheck(
     "🏗️ Preparing package artifacts...",
@@ -261,7 +294,7 @@ async function main() {
       "bun run test:cpp",
       "bun run check:pack",
     ].join(" && "),
-    { cwd: packageDir }
+    { cwd: packageDir },
   );
 
   if (!skipPackPreview) {
@@ -275,10 +308,10 @@ async function main() {
     if (packSummary) {
       const packageSize = packSummary.packageSize ?? packSummary.size;
       console.log(
-        `  • tarball: ${packSummary.filename} (${formatBytes(packageSize)})`
+        `  • tarball: ${packSummary.filename} (${formatBytes(packageSize)})`,
       );
       console.log(
-        `  • unpacked: ${formatBytes(packSummary.unpackedSize)}, files: ${packSummary.files?.length ?? "?"}`
+        `  • unpacked: ${formatBytes(packSummary.unpackedSize)}, files: ${packSummary.files?.length ?? "?"}`,
       );
     }
     console.log("");
@@ -295,22 +328,33 @@ async function main() {
   }
 
   if (isDryRun) {
-    log("🏃 Dry run complete! Package is ready to publish.", "green");
+    log("🏃 Running npm publish dry-run...", "cyan");
+    const dryPublishCommand = `npm publish --dry-run --tag ${shellQuote(tag)} --access public`;
+    if (!execCommand(dryPublishCommand, { cwd: packageDir })) {
+      log("✗ npm publish dry-run failed", "red");
+      cleanupPackageDocs();
+      process.exit(1);
+    }
+    cleanupPackageDocs();
+    console.log("");
+    log("✅ Dry run complete. Package is ready to publish.", "green");
     log(
       `Run without --dry-run${yes ? "" : " --yes"} to publish version ${version}`,
-      "cyan"
+      "cyan",
     );
   } else {
     log("🚀 Publishing to npm...", "cyan");
-    const publishCommand = `npm publish --tag ${tag} --access public${isCI ? " --provenance" : ""}`;
+    const publishCommand = `npm publish --tag ${shellQuote(tag)} --access public${isCI ? " --provenance" : ""}`;
     if (!execCommand(publishCommand, { cwd: packageDir })) {
       log("✗ Publish failed", "red");
+      cleanupPackageDocs();
       process.exit(1);
     }
+    cleanupPackageDocs();
     console.log("");
     log(
       `✅ Successfully published react-native-nitro-storage@${version}`,
-      "green"
+      "green",
     );
     log(`   https://www.npmjs.com/package/react-native-nitro-storage`, "cyan");
   }

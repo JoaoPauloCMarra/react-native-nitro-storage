@@ -20,6 +20,7 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 - Split detailed usage material into focused docs for API reference, React hooks, secure storage, web backends, batch/transaction/migration workflows, recipes, MMKV migration, and benchmarks.
 - Expand npm package description and keywords around React Native secure storage, biometric storage, Keychain, Android Keystore, Nitro Modules, MMKV migration, Expo SecureStore, Zustand/Jotai, and IndexedDB.
 - Update release tooling patches for `@swc/core`, `@types/node`, and `turbo`.
+- Harden publish dry-runs, package docs syncing, and npm pack content validation.
 
 ## 0.4.5 - 2026-04-14
 
