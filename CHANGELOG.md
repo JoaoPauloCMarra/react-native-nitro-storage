@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
+## 0.5.0 - 2026-04-18
+
+### Added
+
+- Add secure-storage capability metadata with `storage.getSecurityCapabilities()`.
+- Add metadata-only secure key inspection with `storage.getSecureMetadata(key)` and `storage.getAllSecureMetadata()`.
+- Add public `SecurityCapabilities` and `SecureStorageMetadata` types.
+- Add security policy and focused docs for secure storage, React hooks, and MMKV migration.
+
+### Changed
+
+- Refresh README positioning, badges, platform support, security model, storage-library comparison guidance, and benchmark guidance for npm/GitHub discoverability.
+- Tighten README decisioning with an at-a-glance API map, Expo plugin options, bare Android setup, migration paths, and a release checklist.
+- Split detailed usage material into focused docs for API reference, React hooks, secure storage, web backends, batch/transaction/migration workflows, recipes, MMKV migration, and benchmarks.
+- Expand npm package description and keywords around React Native secure storage, biometric storage, Keychain, Android Keystore, Nitro Modules, MMKV migration, Expo SecureStore, Zustand/Jotai, and IndexedDB.
+- Update release tooling patches for `@swc/core`, `@types/node`, and `turbo`.
+
 ## 0.4.5 - 2026-04-14
 
 ### Added

@@ -21,6 +21,8 @@ import {
 import {
   getStorageErrorCode,
   isLockedStorageErrorCode,
+  type SecureStorageMetadata,
+  type SecurityCapabilities,
   type StorageCapabilities,
   type StorageErrorCode,
 } from "./storage-runtime";
@@ -29,6 +31,8 @@ export { StorageScope, AccessControl, BiometricLevel } from "./Storage.types";
 export { migrateFromMMKV } from "./migration";
 export {
   getStorageErrorCode,
+  type SecureStorageMetadata,
+  type SecurityCapabilities,
   type StorageCapabilities,
   type StorageErrorCode,
 } from "./storage-runtime";
@@ -259,6 +263,12 @@ function getBackendName(
 ): string {
   const scopeName = scope === StorageScope.Disk ? "disk" : "secure";
   return backend?.name ?? `web:${scopeName}`;
+}
+
+function getWebSecureEncryptionStatus(
+  backend: WebSecureStorageBackend | undefined,
+): "unavailable" | "unknown" {
+  return backend?.name === "localStorage:secure" ? "unavailable" : "unknown";
 }
 
 function createWebStorageError(
@@ -1307,6 +1317,72 @@ export const storage = {
     },
     errorClassification: true,
   }),
+  getSecurityCapabilities: (): SecurityCapabilities => {
+    const secureBackend = getBackendName(
+      StorageScope.Secure,
+      webSecureStorageBackend,
+    );
+    return {
+      platform: "web",
+      secureStorage: {
+        backend: secureBackend,
+        encrypted: getWebSecureEncryptionStatus(webSecureStorageBackend),
+        accessControl: "unavailable",
+        keychainAccessGroup: "unavailable",
+        hardwareBacked: "unavailable",
+      },
+      biometric: {
+        storage: "unavailable",
+        prompt: "unavailable",
+        biometryOnly: "unavailable",
+        biometryOrPasscode: "unavailable",
+      },
+      metadata: {
+        perKey: true,
+        listsWithoutValues: true,
+        persistsTimestamps: false,
+      },
+    };
+  },
+  getSecureMetadata: (key: string): SecureStorageMetadata => {
+    return measureOperation(
+      "storage:getSecureMetadata",
+      StorageScope.Secure,
+      () => {
+        flushSecureWrites();
+        const biometricProtected = WebStorage.hasSecureBiometric(key);
+        const exists =
+          biometricProtected || WebStorage.has(key, StorageScope.Secure);
+        let kind: SecureStorageMetadata["kind"] = "missing";
+        if (exists) {
+          kind = biometricProtected ? "biometric" : "secure";
+        }
+
+        return {
+          key,
+          exists,
+          kind,
+          backend: getBackendName(StorageScope.Secure, webSecureStorageBackend),
+          encrypted: getWebSecureEncryptionStatus(webSecureStorageBackend),
+          hardwareBacked: "unavailable",
+          biometricProtected,
+          valueExposed: false,
+        };
+      },
+    );
+  },
+  getAllSecureMetadata: (): SecureStorageMetadata[] => {
+    return measureOperation(
+      "storage:getAllSecureMetadata",
+      StorageScope.Secure,
+      () => {
+        flushSecureWrites();
+        return WebStorage.getAllKeys(StorageScope.Secure).map((key) =>
+          storage.getSecureMetadata(key),
+        );
+      },
+    );
+  },
   getString: (key: string, scope: StorageScope): string | undefined => {
     return measureOperation("storage:getString", scope, () => {
       return getRawValue(key, scope);

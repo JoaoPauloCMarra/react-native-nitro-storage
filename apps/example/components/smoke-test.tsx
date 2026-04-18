@@ -428,11 +428,27 @@ function buildTests(): { label: string; fn: TestFn }[] {
       label: "Capabilities / error codes / disk buffering",
       fn: () => {
         const capabilities = storage.getCapabilities();
+        const securityCapabilities = storage.getSecurityCapabilities();
         assert(capabilities.writeBuffering.disk, "disk buffering unavailable");
         assert(
           capabilities.errorClassification,
           "error classification unavailable",
         );
+        assert(
+          securityCapabilities.metadata.listsWithoutValues,
+          "secure metadata inventory unavailable",
+        );
+        storage.setString(
+          "__smoke_secure_meta__",
+          "secret",
+          StorageScope.Secure,
+        );
+        const secureMetadata = storage.getSecureMetadata(
+          "__smoke_secure_meta__",
+        );
+        assert(secureMetadata.exists, "expected secure metadata exists");
+        assert(!secureMetadata.valueExposed, "metadata exposed a secret value");
+        storage.deleteString("__smoke_secure_meta__", StorageScope.Secure);
         assert(
           getStorageErrorCode(
             new Error(

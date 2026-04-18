@@ -302,6 +302,58 @@ describe("Web Storage", () => {
     expect(capabilities.backend.secure).toContain("secure");
   });
 
+  it("exposes web security capability metadata", () => {
+    const capabilities = storage.getSecurityCapabilities();
+
+    expect(capabilities.platform).toBe("web");
+    expect(capabilities.secureStorage.encrypted).toBe("unavailable");
+    expect(capabilities.secureStorage.accessControl).toBe("unavailable");
+    expect(capabilities.biometric.prompt).toBe("unavailable");
+    expect(capabilities.metadata.listsWithoutValues).toBe(true);
+  });
+
+  it("reads web secure metadata without fetching values", () => {
+    storage.setString("session", "secret", StorageScope.Secure);
+
+    expect(storage.getSecureMetadata("session")).toEqual({
+      key: "session",
+      exists: true,
+      kind: "secure",
+      backend: "localStorage:secure",
+      encrypted: "unavailable",
+      hardwareBacked: "unavailable",
+      biometricProtected: false,
+      valueExposed: false,
+    });
+  });
+
+  it("lists web secure metadata for regular and biometric keys", () => {
+    storage.setString("session", "secret", StorageScope.Secure);
+    const biometricItem = createStorageItem({
+      key: "pin",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+    biometricItem.set("1234");
+
+    expect(storage.getAllSecureMetadata()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "session",
+          kind: "secure",
+          valueExposed: false,
+        }),
+        expect.objectContaining({
+          key: "pin",
+          kind: "biometric",
+          biometricProtected: true,
+          valueExposed: false,
+        }),
+      ]),
+    );
+  });
+
   it("classifies storage errors into stable codes", () => {
     expect(
       getStorageErrorCode(
