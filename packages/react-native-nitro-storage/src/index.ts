@@ -21,6 +21,8 @@ import type {
 import {
   getStorageErrorCode,
   isLockedStorageErrorCode,
+  type SecureStorageMetadata,
+  type SecurityCapabilities,
   type StorageCapabilities,
   type StorageErrorCode,
 } from "./storage-runtime";
@@ -30,6 +32,8 @@ export type { Storage } from "./Storage.nitro";
 export { migrateFromMMKV } from "./migration";
 export {
   getStorageErrorCode,
+  type SecureStorageMetadata,
+  type SecurityCapabilities,
   type StorageCapabilities,
   type StorageErrorCode,
 } from "./storage-runtime";
@@ -162,6 +166,7 @@ const metricsCounters = new Map<
   string,
   { count: number; totalDurationMs: number; maxDurationMs: number }
 >();
+const nativeSecureBackend = "platform-secure-storage";
 
 function recordMetric(
   operation: string,
@@ -803,7 +808,7 @@ export const storage = {
     platform: "native",
     backend: {
       disk: "platform-preferences",
-      secure: "platform-secure-storage",
+      secure: nativeSecureBackend,
     },
     writeBuffering: {
       disk: true,
@@ -811,6 +816,67 @@ export const storage = {
     },
     errorClassification: true,
   }),
+  getSecurityCapabilities: (): SecurityCapabilities => ({
+    platform: "native",
+    secureStorage: {
+      backend: nativeSecureBackend,
+      encrypted: "available",
+      accessControl: "unknown",
+      keychainAccessGroup: "unknown",
+      hardwareBacked: "unknown",
+    },
+    biometric: {
+      storage: "unknown",
+      prompt: "unknown",
+      biometryOnly: "unknown",
+      biometryOrPasscode: "unknown",
+    },
+    metadata: {
+      perKey: true,
+      listsWithoutValues: true,
+      persistsTimestamps: false,
+    },
+  }),
+  getSecureMetadata: (key: string): SecureStorageMetadata => {
+    return measureOperation(
+      "storage:getSecureMetadata",
+      StorageScope.Secure,
+      () => {
+        flushSecureWrites();
+        const storageModule = getStorageModule();
+        const biometricProtected = storageModule.hasSecureBiometric(key);
+        const exists =
+          biometricProtected || storageModule.has(key, StorageScope.Secure);
+        let kind: SecureStorageMetadata["kind"] = "missing";
+        if (exists) {
+          kind = biometricProtected ? "biometric" : "secure";
+        }
+
+        return {
+          key,
+          exists,
+          kind,
+          backend: nativeSecureBackend,
+          encrypted: "available",
+          hardwareBacked: "unknown",
+          biometricProtected,
+          valueExposed: false,
+        };
+      },
+    );
+  },
+  getAllSecureMetadata: (): SecureStorageMetadata[] => {
+    return measureOperation(
+      "storage:getAllSecureMetadata",
+      StorageScope.Secure,
+      () => {
+        flushSecureWrites();
+        return getStorageModule()
+          .getAllKeys(StorageScope.Secure)
+          .map((key) => storage.getSecureMetadata(key));
+      },
+    );
+  },
   getString: (key: string, scope: StorageScope): string | undefined => {
     return measureOperation("storage:getString", scope, () => {
       return getRawValue(key, scope);

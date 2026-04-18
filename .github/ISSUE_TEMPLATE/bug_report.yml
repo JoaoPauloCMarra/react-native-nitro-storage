@@ -1,0 +1,42 @@
+name: Bug report
+description: Report a reproducible Nitro Storage bug.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Minimal code or repository that reproduces the issue.
+      render: tsx
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Storage scope
+      options:
+        - Memory
+        - Disk
+        - Secure
+        - Web backend
+        - Biometric
+        - Packaging/build
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: react-native-nitro-storage, react-native, react-native-nitro-modules, Expo if used.
+      placeholder: "react-native-nitro-storage 0.5.0, RN 0.83.2, Nitro 0.35.4"
+    validations:
+      required: true

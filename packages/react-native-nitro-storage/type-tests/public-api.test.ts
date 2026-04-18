@@ -2,6 +2,8 @@ import {
   AccessControl,
   BiometricLevel,
   StorageScope,
+  type SecureStorageMetadata,
+  type SecurityCapabilities,
   type StorageMetricsEvent,
   type StorageMetricsObserver,
   createSecureAuthStorage,
@@ -92,6 +94,15 @@ storage.setSecureWritesAsync(true);
 storage.flushSecureWrites();
 storage.setKeychainAccessGroup("group.test");
 storage.clearNamespace("auth", StorageScope.Secure);
+const securityCapabilities: SecurityCapabilities =
+  storage.getSecurityCapabilities();
+const secureMetadata: SecureStorageMetadata =
+  storage.getSecureMetadata("auth:accessToken");
+const secureMetadataList: SecureStorageMetadata[] =
+  storage.getAllSecureMetadata();
+void securityCapabilities;
+void secureMetadata;
+void secureMetadataList;
 
 setWebSecureStorageBackend(undefined);
 getWebSecureStorageBackend();

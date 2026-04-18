@@ -118,3 +118,6 @@ temp/
 !README.md
 !CONTRIBUTING.md
 !CHANGELOG.md
+!SECURITY.md
+!docs/
+!docs/**/*.md

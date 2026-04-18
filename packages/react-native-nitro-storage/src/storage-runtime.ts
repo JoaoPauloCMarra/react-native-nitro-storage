@@ -19,6 +19,41 @@ export type StorageCapabilities = {
   errorClassification: boolean;
 };
 
+export type SecurityCapabilityStatus = "available" | "unavailable" | "unknown";
+
+export type SecurityCapabilities = {
+  platform: "native" | "web";
+  secureStorage: {
+    backend: string;
+    encrypted: SecurityCapabilityStatus;
+    accessControl: SecurityCapabilityStatus;
+    keychainAccessGroup: SecurityCapabilityStatus;
+    hardwareBacked: SecurityCapabilityStatus;
+  };
+  biometric: {
+    storage: SecurityCapabilityStatus;
+    prompt: SecurityCapabilityStatus;
+    biometryOnly: SecurityCapabilityStatus;
+    biometryOrPasscode: SecurityCapabilityStatus;
+  };
+  metadata: {
+    perKey: boolean;
+    listsWithoutValues: boolean;
+    persistsTimestamps: boolean;
+  };
+};
+
+export type SecureStorageMetadata = {
+  key: string;
+  exists: boolean;
+  kind: "secure" | "biometric" | "missing";
+  backend: string;
+  encrypted: SecurityCapabilityStatus;
+  hardwareBacked: SecurityCapabilityStatus;
+  biometricProtected: boolean;
+  valueExposed: false;
+};
+
 const STORAGE_ERROR_TAG_PATTERN = /\[nitro-error:([a-z_]+)\]/;
 
 export function getStorageErrorCode(

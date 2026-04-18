@@ -282,6 +282,57 @@ describe("createStorageItem", () => {
     expect(capabilities.backend.secure).toBe("platform-secure-storage");
   });
 
+  it("exposes native security capability metadata", () => {
+    const capabilities = storage.getSecurityCapabilities();
+
+    expect(capabilities.platform).toBe("native");
+    expect(capabilities.secureStorage.encrypted).toBe("available");
+    expect(capabilities.secureStorage.accessControl).toBe("unknown");
+    expect(capabilities.biometric.prompt).toBe("unknown");
+    expect(capabilities.metadata.listsWithoutValues).toBe(true);
+  });
+
+  it("reads secure metadata without fetching secure values", () => {
+    mockHybridObject.hasSecureBiometric.mockReturnValue(false);
+    mockHybridObject.has.mockReturnValue(true);
+
+    expect(storage.getSecureMetadata("session")).toEqual({
+      key: "session",
+      exists: true,
+      kind: "secure",
+      backend: "platform-secure-storage",
+      encrypted: "available",
+      hardwareBacked: "unknown",
+      biometricProtected: false,
+      valueExposed: false,
+    });
+    expect(mockHybridObject.get).not.toHaveBeenCalled();
+    expect(mockHybridObject.getSecureBiometric).not.toHaveBeenCalled();
+  });
+
+  it("lists secure metadata without returning values", () => {
+    mockHybridObject.getAllKeys.mockReturnValue(["session", "pin"]);
+    mockHybridObject.has.mockReturnValue(true);
+    mockHybridObject.hasSecureBiometric.mockImplementation(
+      (key: string) => key === "pin",
+    );
+
+    expect(storage.getAllSecureMetadata()).toEqual([
+      expect.objectContaining({
+        key: "session",
+        kind: "secure",
+        valueExposed: false,
+      }),
+      expect.objectContaining({
+        key: "pin",
+        kind: "biometric",
+        biometricProtected: true,
+        valueExposed: false,
+      }),
+    ]);
+    expect(mockHybridObject.getBatch).not.toHaveBeenCalled();
+  });
+
   it("clears namespace through native prefix removal", () => {
     storage.clearNamespace("session", StorageScope.Disk);
 

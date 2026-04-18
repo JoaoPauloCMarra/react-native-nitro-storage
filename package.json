@@ -8,6 +8,7 @@
   "scripts": {
     "setup": "node scripts/setup.js",
     "publish-package": "node scripts/publish.js",
+    "publish-package:dry": "node scripts/publish.js --dry-run",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "format": "turbo run format",
@@ -27,10 +28,10 @@
     "example:prebuild:clean": "bun run --cwd apps/example prebuild:clean"
   },
   "devDependencies": {
-    "@swc/core": "^1.15.24",
+    "@swc/core": "^1.15.26",
     "@swc/jest": "^0.2.39",
     "@types/jest": "^30.0.0",
-    "@types/node": "^25.5.2",
+    "@types/node": "^25.6.0",
     "eslint-config-expo-magic": "^2.4.0",
     "jest": "^30.3.0",
     "nitrogen": "0.35.4",
@@ -39,10 +40,10 @@
     "react-native": "0.83.2",
     "react-native-builder-bob": "^0.40.18",
     "react-native-nitro-modules": "0.35.4",
-    "react-test-renderer": "^19.2.0",
+    "react-test-renderer": "19.2.0",
     "rimraf": "^6.1.3",
     "ts-jest": "^29.4.9",
-    "turbo": "^2.9.5",
+    "turbo": "^2.9.6",
     "typescript": "^5.9.3"
   },
   "overrides": {

@@ -164,6 +164,12 @@ export default function HomeScreen() {
   const [token, setToken] = useStorage(secureTokenItem);
   const [tempToken, setTempToken] = useState("");
   const tempTokenRef = useRef("");
+  const [secureMetadata, setSecureMetadata] = useState(() =>
+    storage.getSecureMetadata("secure-token"),
+  );
+  const [secureMetadataCount, setSecureMetadataCount] = useState(
+    () => storage.getAllSecureMetadata().length,
+  );
 
   // 4. Namespaces
   const [nsPref, setNsPref] = useStorage(namespacedItem);
@@ -234,6 +240,12 @@ export default function HomeScreen() {
   const [diskBufferedPreview, setDiskBufferedPreview] = useState("(empty)");
   const [classifiedErrorCode, setClassifiedErrorCode] = useState("(none)");
   const capabilities = storage.getCapabilities();
+  const securityCapabilities = storage.getSecurityCapabilities();
+
+  const refreshSecureMetadata = () => {
+    setSecureMetadata(storage.getSecureMetadata("secure-token"));
+    setSecureMetadataCount(storage.getAllSecureMetadata().length);
+  };
 
   return (
     <Page title="Nitro Storage" subtitle="Complete feature showcase">
@@ -356,6 +368,7 @@ export default function HomeScreen() {
               setToken(tempTokenRef.current.trim());
               tempTokenRef.current = "";
               setTempToken("");
+              refreshSecureMetadata();
             }}
             variant="success"
             style={styles.flex1}
@@ -366,6 +379,7 @@ export default function HomeScreen() {
             variant="danger"
             onPress={() => {
               secureTokenItem.delete();
+              refreshSecureMetadata();
             }}
           />
         </View>
@@ -377,6 +391,16 @@ export default function HomeScreen() {
             color={Colors.secure}
           />
         ) : null}
+        <StatusRow
+          testID="secure-metadata-kind"
+          label="Stored as"
+          value={secureMetadata.kind}
+        />
+        <StatusRow
+          testID="secure-metadata-count"
+          label="Secure key inventory"
+          value={String(secureMetadataCount)}
+        />
       </Card>
 
       {/* 4. Namespaces */}
@@ -1033,6 +1057,16 @@ export default function HomeScreen() {
           testID="capabilities-secure-backend"
           label="Secure backend"
           value={capabilities.backend.secure}
+        />
+        <StatusRow
+          testID="capabilities-secure-encrypted"
+          label="Secure encrypted"
+          value={securityCapabilities.secureStorage.encrypted}
+        />
+        <StatusRow
+          testID="capabilities-biometric-prompt"
+          label="Biometric prompt"
+          value={securityCapabilities.biometric.prompt}
         />
         <StatusRow
           testID="capabilities-buffering"

@@ -6,6 +6,15 @@ function fail(message) {
 }
 
 const requiredFiles = [
+  "README.md",
+  "LICENSE",
+  "SECURITY.md",
+  "app.plugin.js",
+  "docs/api-reference.md",
+  "docs/secure-storage.md",
+  "docs/mmkv-migration.md",
+  "nitro.json",
+  "nitrogen/generated/shared/c++/HybridStorageSpec.hpp",
   "src/index.ts",
   "src/index.web.ts",
   "lib/commonjs/index.js",
@@ -16,6 +25,9 @@ const requiredFiles = [
 const forbiddenPatterns = [
   /^src\/__tests__\//,
   /^scripts\//,
+  /^cpp\/build\//,
+  /^android\/build\//,
+  /^android\/\.cxx\//,
   /(?:^|\/)[^/]*Test\.cpp$/,
 ];
 
@@ -39,9 +51,15 @@ if (!packMetadata || !Array.isArray(packMetadata.files)) {
   fail("npm pack metadata does not contain a files list.");
 }
 
+if (packMetadata.name !== "react-native-nitro-storage") {
+  fail(`Unexpected package name in npm pack output: ${packMetadata.name}`);
+}
+
 const packagedFiles = new Set(packMetadata.files.map((file) => file.path));
 
-const missingRequiredFiles = requiredFiles.filter((file) => !packagedFiles.has(file));
+const missingRequiredFiles = requiredFiles.filter(
+  (file) => !packagedFiles.has(file),
+);
 if (missingRequiredFiles.length > 0) {
   fail(`Missing required packed files: ${missingRequiredFiles.join(", ")}`);
 }
@@ -50,7 +68,11 @@ const forbiddenFiles = Array.from(packagedFiles).filter((file) =>
   forbiddenPatterns.some((pattern) => pattern.test(file)),
 );
 if (forbiddenFiles.length > 0) {
-  fail(`Forbidden files were included in npm pack output: ${forbiddenFiles.join(", ")}`);
+  fail(
+    `Forbidden files were included in npm pack output: ${forbiddenFiles.join(", ")}`,
+  );
 }
 
-console.log("✅ npm pack content guard passed.");
+console.log(
+  `✅ npm pack content guard passed (${packMetadata.files.length} files checked).`,
+);
