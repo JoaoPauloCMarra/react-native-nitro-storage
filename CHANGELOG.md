@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
+## 0.5.1 - 2026-04-24
+
+### Added
+
+- Add `storage.export(scope)` for raw string snapshots that can be restored with `storage.import(data, scope)`.
+- Add event subscriptions with `storage.subscribe`, `storage.subscribeKey`, `storage.subscribePrefix`, and `storage.subscribeNamespace`.
+- Add `StorageItem#subscribeSelector()` for selector-based subscriptions with equality checks.
+- Add `storage.setEventObserver()` for devtools and storage event logging integrations.
+- Add enforced JS/TS and C++ coverage gates for the package release path.
+- Extend the example smoke runner to cover the full public API surface and show unsupported platform checks as skipped.
+
+### Changed
+
+- Improve Memory namespace clear notification fan-out so subscribers under the cleared namespace are notified consistently.
+- Improve web key-index fast paths when the active backend exposes indexed key operations.
+- Emit batch change envelopes for raw import/export-adjacent workflows and batch writes/removes.
+- Document raw import/export workflows and warn that Secure exports expose secret values.
+- Align the Expo example and workspace dependency pins with Expo Doctor recommendations.
+- Refactor the publish script to validate release docs, report check timings, support coverage gates, and avoid redundant pack dry-runs.
+
 ## 0.5.0 - 2026-04-18
 
 ### Added

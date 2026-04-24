@@ -1,6 +1,6 @@
 {
   "name": "react-native-nitro-storage",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Synchronous React Native storage powered by Nitro Modules and JSI: typed Memory, Disk, Keychain/Android Keystore secure storage, biometric auth, MMKV migration, Expo, Zustand/Jotai persistence, and web IndexedDB support.",
   "main": "lib/commonjs/index.js",
   "module": "lib/module/index.js",
@@ -58,6 +58,7 @@
     "test:coverage": "jest --coverage",
     "benchmark": "node scripts/benchmark-check.js",
     "test:cpp": "node scripts/test-cpp.js",
+    "test:cpp:coverage": "node scripts/test-cpp.js --coverage",
     "check:pack": "node scripts/check-pack-contents.js",
     "prepublishOnly": "bun run clean && bun run codegen && bun run build && bun run test:types && bun run benchmark",
     "prepack": "node scripts/sync-package-docs.js prepare",
@@ -108,8 +109,8 @@
     "registry": "https://registry.npmjs.org/"
   },
   "devDependencies": {
-    "@expo/config-plugins": "^55.0.3",
-    "@react-native/babel-preset": "^0.83.2",
+    "@expo/config-plugins": "^55.0.8",
+    "@react-native/babel-preset": "^0.83.6",
     "@testing-library/react-hooks": "^8.0.1",
     "@testing-library/react-native": "^13.3.3",
     "@types/react": "~19.2.0",
@@ -118,7 +119,7 @@
   "peerDependencies": {
     "react": ">=18.2.0",
     "react-native": ">=0.75.0",
-    "react-native-nitro-modules": ">=0.35.4"
+    "react-native-nitro-modules": ">=0.35.5"
   },
   "react-native-builder-bob": {
     "source": "src",

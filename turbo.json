@@ -29,6 +29,9 @@
     },
     "test:cpp": {
       "cache": false
+    },
+    "test:cpp:coverage": {
+      "cache": false
     }
   }
 }

@@ -25,6 +25,14 @@ const packageDocsSyncScript = path.join(
   "scripts/sync-package-docs.js",
 );
 const isCI = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true";
+const lifecycleFlags = [
+  "prepublishOnly",
+  "prepare",
+  "prepack",
+  "postpack",
+  "publish",
+  "postpublish",
+];
 
 function log(message, color = "green") {
   console.log(colors[color](message));
@@ -57,6 +65,11 @@ function execCommandWithOutput(command, options = {}) {
   }
 }
 
+function formatDuration(startedAt) {
+  const seconds = (Date.now() - startedAt) / 1000;
+  return `${seconds.toFixed(seconds >= 10 ? 0 : 1)}s`;
+}
+
 function shellQuote(value) {
   return JSON.stringify(String(value));
 }
@@ -82,11 +95,13 @@ function isInteractive() {
 
 function runCheck(label, command, options = {}) {
   log(label, "cyan");
+  const startedAt = Date.now();
   const ok = execCommand(command, options);
   if (!ok) {
     log(`✗ ${label.replace(/[^\w]+$/g, "")} failed`, "red");
     process.exit(1);
   }
+  console.log(`  ✓ completed in ${formatDuration(startedAt)}`);
   console.log("");
 }
 
@@ -132,6 +147,58 @@ function cleanupPackageDocs() {
   execCommand(`node ${shellQuote(packageDocsSyncScript)} cleanup`, {
     cwd: packageDir,
   });
+}
+
+function preparePackageDocs() {
+  if (!fs.existsSync(packageDocsSyncScript)) {
+    return true;
+  }
+
+  return execCommand(`node ${shellQuote(packageDocsSyncScript)} prepare`, {
+    cwd: packageDir,
+  });
+}
+
+function readJson(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+}
+
+function getFirstChangelogVersion() {
+  const changelogPath = path.join(projectRoot, "CHANGELOG.md");
+  const changelog = fs.readFileSync(changelogPath, "utf-8");
+  return changelog.match(/^##\s+([^\s]+)/m)?.[1] ?? null;
+}
+
+function assertReleaseDocs(version) {
+  const packageJson = readJson(packageJsonPath);
+  const readme = fs.readFileSync(path.join(projectRoot, "README.md"), "utf-8");
+  const changelogVersion = getFirstChangelogVersion();
+  const nitroPeer = packageJson.peerDependencies?.["react-native-nitro-modules"];
+
+  const failures = [];
+  if (changelogVersion !== version) {
+    failures.push(
+      `CHANGELOG.md top entry is ${changelogVersion ?? "missing"}, expected ${version}`,
+    );
+  }
+
+  if (!readme.includes(`react-native-nitro-modules ${nitroPeer}`)) {
+    failures.push(
+      `README.md peer dependency list does not mention react-native-nitro-modules ${nitroPeer}`,
+    );
+  }
+
+  if (
+    !readme.includes("storage.export") ||
+    !readme.includes("subscribeNamespace")
+  ) {
+    failures.push("README.md is missing 0.5.1 export/event API examples");
+  }
+
+  if (failures.length > 0) {
+    failures.forEach((failure) => log(`✗ ${failure}`, "red"));
+    process.exit(1);
+  }
 }
 
 function formatGitStatus(statusLines) {
@@ -184,6 +251,16 @@ function getPackSummary() {
   }
 }
 
+function printPackSummary(packSummary) {
+  const packageSize = packSummary.packageSize ?? packSummary.size;
+  console.log(
+    `  • tarball: ${packSummary.filename} (${formatBytes(packageSize)})`,
+  );
+  console.log(
+    `  • unpacked: ${formatBytes(packSummary.unpackedSize)}, files: ${packSummary.files?.length ?? "?"}`,
+  );
+}
+
 function formatBytes(value) {
   if (typeof value !== "number" || Number.isNaN(value)) {
     return "unknown";
@@ -202,11 +279,30 @@ function formatBytes(value) {
 
 async function main() {
   const args = process.argv.slice(2);
+  const argSet = new Set(args);
+  if (argSet.has("--help")) {
+    console.log(`Usage: bun run publish-package[:dry] -- [options]
+
+Options:
+  --dry-run                 Run npm publish in dry-run mode.
+  --yes                     Skip interactive confirmations.
+  --allow-dirty             Allow uncommitted changes.
+  --skip-checks             Skip git/auth preflight only.
+  --skip-pack-preview       Skip the npm pack summary preview.
+  --with-coverage           Run JS/TS and C++ coverage gates before packaging.
+  --verify-npm-lifecycle    Dry-run npm publish with lifecycle scripts enabled.
+  --tag=<tag>               npm dist tag, default latest.
+`);
+    return;
+  }
+
   const isDryRun = args.includes("--dry-run");
   const skipChecks = args.includes("--skip-checks");
   const yes = args.includes("--yes");
   const allowDirty = args.includes("--allow-dirty");
   const skipPackPreview = args.includes("--skip-pack-preview");
+  const withCoverage = args.includes("--with-coverage");
+  const verifyNpmLifecycle = args.includes("--verify-npm-lifecycle");
   const tag =
     args.find((arg) => arg.startsWith("--tag="))?.split("=")[1] || "latest";
   validateNpmTag(tag);
@@ -217,6 +313,7 @@ async function main() {
 
   const version = getPackageVersion();
   cleanupPackageDocs();
+  assertReleaseDocs(version);
 
   log(`Version: ${version}`, "cyan");
   log(`Tag: ${tag}`, "cyan");
@@ -283,6 +380,18 @@ async function main() {
     `bun run test:cpp -- --filter=${packageFilter}`,
     { cwd: projectRoot },
   );
+  if (withCoverage) {
+    runCheck(
+      "📊 Running JS/TS coverage gate...",
+      `bun run test:coverage -- --filter=${packageFilter}`,
+      { cwd: projectRoot },
+    );
+    runCheck(
+      "📊 Running C++ coverage gate...",
+      `bun run test:cpp:coverage -- --filter=${packageFilter}`,
+      { cwd: projectRoot },
+    );
+  }
   runCheck(
     "🏗️ Preparing package artifacts...",
     [
@@ -299,21 +408,12 @@ async function main() {
 
   if (!skipPackPreview) {
     log("📋 npm pack dry-run:", "cyan");
-    if (!execCommand("npm pack --dry-run", { cwd: packageDir })) {
+    const packSummary = getPackSummary();
+    if (!packSummary) {
       log("✗ npm pack dry-run failed", "red");
       process.exit(1);
     }
-
-    const packSummary = getPackSummary();
-    if (packSummary) {
-      const packageSize = packSummary.packageSize ?? packSummary.size;
-      console.log(
-        `  • tarball: ${packSummary.filename} (${formatBytes(packageSize)})`,
-      );
-      console.log(
-        `  • unpacked: ${formatBytes(packSummary.unpackedSize)}, files: ${packSummary.files?.length ?? "?"}`,
-      );
-    }
+    printPackSummary(packSummary);
     console.log("");
   }
 
@@ -329,15 +429,32 @@ async function main() {
 
   if (isDryRun) {
     log("🏃 Running npm publish dry-run...", "cyan");
-    const dryPublishCommand = `npm publish --dry-run --tag ${shellQuote(tag)} --access public`;
-    if (!execCommand(dryPublishCommand, { cwd: packageDir })) {
+    const lifecycleFlag = verifyNpmLifecycle ? "" : " --ignore-scripts";
+    if (!verifyNpmLifecycle) {
+      if (!preparePackageDocs()) {
+        log("✗ Failed to prepare package docs", "red");
+        cleanupPackageDocs();
+        process.exit(1);
+      }
+    }
+    const dryPublishCommand = `npm publish --dry-run${lifecycleFlag} --tag ${shellQuote(tag)} --access public`;
+    const ok = execCommand(dryPublishCommand, { cwd: packageDir });
+    cleanupPackageDocs();
+    if (!ok) {
       log("✗ npm publish dry-run failed", "red");
-      cleanupPackageDocs();
       process.exit(1);
     }
-    cleanupPackageDocs();
     console.log("");
     log("✅ Dry run complete. Package is ready to publish.", "green");
+    if (!verifyNpmLifecycle) {
+      console.log(
+        [
+          "  ✓ npm lifecycle scripts were skipped during dry-run after local",
+          "artifact checks prepared package docs and covered:",
+          lifecycleFlags.join(", "),
+        ].join(" "),
+      );
+    }
     log(
       `Run without --dry-run${yes ? "" : " --yes"} to publish version ${version}`,
       "cyan",

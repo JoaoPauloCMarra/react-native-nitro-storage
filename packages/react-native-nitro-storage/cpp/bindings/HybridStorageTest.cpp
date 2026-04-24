@@ -258,6 +258,57 @@ public:
     void clearSecureBiometric() override {}
 };
 
+class UnknownThrowingAdapter final : public ::NitroStorage::NativeStorageAdapter {
+public:
+    void setDisk(const std::string&, const std::string&) override { throw 1; }
+    std::optional<std::string> getDisk(const std::string&) override { throw 1; }
+    void deleteDisk(const std::string&) override { throw 1; }
+    bool hasDisk(const std::string&) override { throw 1; }
+    std::vector<std::string> getAllKeysDisk() override { throw 1; }
+    std::vector<std::string> getKeysByPrefixDisk(const std::string&) override { throw 1; }
+    size_t sizeDisk() override { throw 1; }
+    void setDiskBatch(const std::vector<std::string>&, const std::vector<std::string>&) override { throw 1; }
+    std::vector<std::optional<std::string>> getDiskBatch(const std::vector<std::string>&) override { throw 1; }
+    void deleteDiskBatch(const std::vector<std::string>&) override { throw 1; }
+    void clearDisk() override { throw 1; }
+
+    void setSecure(const std::string&, const std::string&) override { throw 1; }
+    std::optional<std::string> getSecure(const std::string&) override { throw 1; }
+    void deleteSecure(const std::string&) override { throw 1; }
+    bool hasSecure(const std::string&) override { throw 1; }
+    std::vector<std::string> getAllKeysSecure() override { throw 1; }
+    std::vector<std::string> getKeysByPrefixSecure(const std::string&) override { throw 1; }
+    size_t sizeSecure() override { throw 1; }
+    void setSecureBatch(const std::vector<std::string>&, const std::vector<std::string>&) override { throw 1; }
+    std::vector<std::optional<std::string>> getSecureBatch(const std::vector<std::string>&) override { throw 1; }
+    void deleteSecureBatch(const std::vector<std::string>&) override { throw 1; }
+    void clearSecure() override { throw 1; }
+    void setSecureAccessControl(int) override {}
+    void setSecureWritesAsync(bool) override {}
+    void setKeychainAccessGroup(const std::string&) override {}
+
+    void setSecureBiometric(const std::string&, const std::string&) override { throw 1; }
+    void setSecureBiometricWithLevel(const std::string&, const std::string&, int) override { throw 1; }
+    std::optional<std::string> getSecureBiometric(const std::string&) override { throw 1; }
+    void deleteSecureBiometric(const std::string&) override { throw 1; }
+    bool hasSecureBiometric(const std::string&) override { throw 1; }
+    void clearSecureBiometric() override { throw 1; }
+};
+
+bool contains(const std::vector<std::string>& values, const std::string& value) {
+    return std::find(values.begin(), values.end(), value) != values.end();
+}
+
+void expectThrows(const std::function<void()>& fn) {
+    bool threw = false;
+    try {
+        fn();
+    } catch (...) {
+        threw = true;
+    }
+    assert(threw);
+}
+
 void testSetGetAcrossScopes() {
     auto adapter = std::make_shared<MockAdapter>();
     HybridStorage storage(adapter);
@@ -271,6 +322,45 @@ void testSetGetAcrossScopes() {
     assert(storage.get("secure-key", 2.0).value() == "secure-value");
 }
 
+void testRemoveGetAllSizeAndClearAcrossScopes() {
+    auto adapter = std::make_shared<MockAdapter>();
+    HybridStorage storage(adapter);
+
+    storage.set("memory-a", "1", 0.0);
+    storage.set("memory-b", "2", 0.0);
+    storage.set("disk-a", "1", 1.0);
+    storage.set("disk-b", "2", 1.0);
+    storage.set("secure-a", "1", 2.0);
+
+    assert(storage.has("memory-a", 0.0));
+    assert(storage.size(0.0) == 2.0);
+    assert(storage.size(1.0) == 2.0);
+    assert(storage.size(2.0) == 1.0);
+
+    const auto memoryKeys = storage.getAllKeys(0.0);
+    const auto diskKeys = storage.getAllKeys(1.0);
+    const auto secureKeys = storage.getAllKeys(2.0);
+    assert(contains(memoryKeys, "memory-a"));
+    assert(contains(diskKeys, "disk-a"));
+    assert(contains(secureKeys, "secure-a"));
+
+    assert(storage.getKeysByPrefix("", 0.0).size() == memoryKeys.size());
+    assert(storage.getKeysByPrefix("memory-", 0.0).size() == 2);
+    assert(storage.get("missing", 0.0) == std::nullopt);
+
+    storage.remove("memory-a", 0.0);
+    storage.remove("disk-a", 1.0);
+    storage.remove("secure-a", 2.0);
+    assert(!storage.has("memory-a", 0.0));
+    assert(!storage.has("disk-a", 1.0));
+    assert(!storage.has("secure-a", 2.0));
+
+    storage.clear(0.0);
+    storage.clear(1.0);
+    assert(storage.size(0.0) == 0.0);
+    assert(storage.size(1.0) == 0.0);
+}
+
 void testBatchMissingSentinel() {
     auto adapter = std::make_shared<MockAdapter>();
     HybridStorage storage(adapter);
@@ -281,6 +371,29 @@ void testBatchMissingSentinel() {
     assert(values.size() == 2);
     assert(values[0] == "value");
     assert(values[1] == "__nitro_storage_batch_missing__::v1");
+}
+
+void testMemoryAndSecureBatchPaths() {
+    auto adapter = std::make_shared<MockAdapter>();
+    HybridStorage storage(adapter);
+
+    storage.setBatch({"m1", "m2"}, {"one", "two"}, 0.0);
+    auto memoryValues = storage.getBatch({"m1", "missing"}, 0.0);
+    assert(memoryValues[0] == "one");
+    assert(memoryValues[1] == "__nitro_storage_batch_missing__::v1");
+    storage.removeBatch({"m1", "m2"}, 0.0);
+    assert(storage.getBatch({"m1"}, 0.0)[0] == "__nitro_storage_batch_missing__::v1");
+
+    storage.setBatch({"s1", "s2"}, {"secure-one", "secure-two"}, 2.0);
+    auto secureValues = storage.getBatch({"s1", "missing"}, 2.0);
+    assert(secureValues[0] == "secure-one");
+    assert(secureValues[1] == "__nitro_storage_batch_missing__::v1");
+    storage.removeBatch({"s1", "s2"}, 2.0);
+    assert(!storage.has("s1", 2.0));
+
+    expectThrows([&]() {
+        storage.setBatch({"one"}, {"a", "b"}, 0.0);
+    });
 }
 
 void testBatchListeners() {
@@ -302,6 +415,26 @@ void testBatchListeners() {
     assert(events[3].first == "b" && !events[3].second.has_value());
 
     unsubscribe();
+    unsubscribe();
+}
+
+void testListenerExceptionsAreIgnored() {
+    auto adapter = std::make_shared<MockAdapter>();
+    auto storage = std::make_shared<HybridStorage>(adapter);
+    bool secondListenerCalled = false;
+
+    auto unsubscribeThrowing = storage->addOnChange(0.0, [](const std::string&, const std::optional<std::string>&) {
+        throw std::runtime_error("listener failed");
+    });
+    auto unsubscribeSecond = storage->addOnChange(0.0, [&](const std::string&, const std::optional<std::string>&) {
+        secondListenerCalled = true;
+    });
+
+    storage->set("listener-key", "value", 0.0);
+
+    assert(secondListenerCalled);
+    unsubscribeThrowing();
+    unsubscribeSecond();
 }
 
 void testSecureConfigPassThrough() {
@@ -321,6 +454,9 @@ void testSecureConfigPassThrough() {
 void testRemoveByPrefix() {
     auto adapter = std::make_shared<MockAdapter>();
     HybridStorage storage(adapter);
+
+    storage.removeByPrefix("", 1.0);
+    storage.removeByPrefix("missing:", 1.0);
 
     storage.set("session:token", "t1", 1.0);
     storage.set("session:user", "u1", 1.0);
@@ -353,6 +489,32 @@ void testBiometricLevelPassThrough() {
     assert(adapter->biometricLevel() == 1);
 }
 
+void testBiometricMethods() {
+    auto adapter = std::make_shared<MockAdapter>();
+    auto storage = std::make_shared<HybridStorage>(adapter);
+    std::vector<std::pair<std::string, std::optional<std::string>>> events;
+
+    auto unsubscribe = storage->addOnChange(2.0, [&](const std::string& key, const std::optional<std::string>& value) {
+        events.push_back({key, value});
+    });
+
+    storage->setSecureBiometric("bio-default", "default-value");
+    assert(adapter->biometricLevel() == 2);
+    assert(storage->hasSecureBiometric("bio-default"));
+    assert(storage->getSecureBiometric("bio-default").value() == "default-value");
+
+    storage->deleteSecureBiometric("bio-default");
+    assert(!storage->hasSecureBiometric("bio-default"));
+
+    storage->setSecureBiometricWithLevel("bio-clear", "clear-value", 0.0);
+    assert(storage->has("bio-clear", 2.0));
+    storage->clearSecureBiometric();
+    assert(!storage->has("bio-clear", 2.0));
+    assert(!events.empty());
+
+    unsubscribe();
+}
+
 void testClearNotifiesScope() {
     auto adapter = std::make_shared<MockAdapter>();
     auto storage = std::make_shared<HybridStorage>(adapter);
@@ -366,6 +528,26 @@ void testClearNotifiesScope() {
     assert(keys.size() == 1);
     assert(keys[0].empty());
     unsubscribe();
+}
+
+void testInvalidInputsAndMissingAdapter() {
+    auto adapter = std::make_shared<MockAdapter>();
+    HybridStorage storage(adapter);
+
+    expectThrows([&]() { storage.set("bad", "value", -1.0); });
+    expectThrows([&]() { storage.set("bad", "value", 1.5); });
+    expectThrows([&]() { storage.set("bad", "value", std::nan("")); });
+    expectThrows([&]() { storage.setSecureAccessControl(std::nan("")); });
+    expectThrows([&]() { storage.setSecureAccessControl(5.0); });
+    expectThrows([&]() { storage.setSecureBiometricWithLevel("bad", "value", std::nan("")); });
+    expectThrows([&]() { storage.setSecureBiometricWithLevel("bad", "value", 3.0); });
+
+    HybridStorage missingAdapter(nullptr);
+    expectThrows([&]() { missingAdapter.set("disk", "value", 1.0); });
+    expectThrows([&]() { missingAdapter.setSecureWritesAsync(true); });
+
+    HybridStorage defaultStorage;
+    expectThrows([&]() { defaultStorage.get("disk", 1.0); });
 }
 
 void testNativeTaggedErrorsPassThrough() {
@@ -383,18 +565,70 @@ void testNativeTaggedErrorsPassThrough() {
     }
 }
 
+void testHydratedKeyIndexUpdates() {
+    auto adapter = std::make_shared<MockAdapter>();
+    HybridStorage storage(adapter);
+
+    storage.set("disk-a", "1", 1.0);
+    assert(storage.has("disk-a", 1.0));
+
+    storage.set("disk-b", "2", 1.0);
+    assert(storage.has("disk-b", 1.0));
+    assert(storage.getKeysByPrefix("disk-", 1.0).size() == 2);
+
+    storage.remove("disk-b", 1.0);
+    assert(!storage.has("disk-b", 1.0));
+
+    storage.clear(1.0);
+    assert(storage.getAllKeys(1.0).empty());
+}
+
+void testUnknownNativeFailuresAreWrapped() {
+    auto adapter = std::make_shared<UnknownThrowingAdapter>();
+    HybridStorage storage(adapter);
+
+    expectThrows([&]() { storage.set("disk", "value", 1.0); });
+    expectThrows([&]() { storage.get("disk", 1.0); });
+    expectThrows([&]() { storage.remove("disk", 1.0); });
+    expectThrows([&]() { storage.clear(1.0); });
+    expectThrows([&]() { storage.setBatch({"disk"}, {"value"}, 1.0); });
+    expectThrows([&]() { storage.getBatch({"disk"}, 1.0); });
+    expectThrows([&]() { storage.removeBatch({"disk"}, 1.0); });
+
+    expectThrows([&]() { storage.set("secure", "value", 2.0); });
+    expectThrows([&]() { storage.get("secure", 2.0); });
+    expectThrows([&]() { storage.remove("secure", 2.0); });
+    expectThrows([&]() { storage.clear(2.0); });
+    expectThrows([&]() { storage.setBatch({"secure"}, {"value"}, 2.0); });
+    expectThrows([&]() { storage.getBatch({"secure"}, 2.0); });
+    expectThrows([&]() { storage.removeBatch({"secure"}, 2.0); });
+
+    expectThrows([&]() { storage.has("secure", 2.0); });
+    expectThrows([&]() { storage.setSecureBiometric("bio", "value"); });
+    expectThrows([&]() { storage.getSecureBiometric("bio"); });
+    expectThrows([&]() { storage.deleteSecureBiometric("bio"); });
+    expectThrows([&]() { storage.clearSecureBiometric(); });
+}
+
 int main() {
     std::cout << "Running HybridStorage C++ Tests..." << std::endl;
 
     testSetGetAcrossScopes();
+    testRemoveGetAllSizeAndClearAcrossScopes();
     testBatchMissingSentinel();
+    testMemoryAndSecureBatchPaths();
     testBatchListeners();
+    testListenerExceptionsAreIgnored();
     testSecureConfigPassThrough();
     testRemoveByPrefix();
     testGetKeysByPrefix();
     testBiometricLevelPassThrough();
+    testBiometricMethods();
     testClearNotifiesScope();
+    testInvalidInputsAndMissingAdapter();
     testNativeTaggedErrorsPassThrough();
+    testHydratedKeyIndexUpdates();
+    testUnknownNativeFailuresAreWrapped();
 
     std::cout << "✅ HybridStorage C++ tests passed!" << std::endl;
     return 0;

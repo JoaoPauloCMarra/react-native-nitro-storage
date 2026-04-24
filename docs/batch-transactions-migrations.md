@@ -44,6 +44,22 @@ setBatch(
 
 Memory-scope batch writes are two-phase: all values are written first, then listeners are notified. Items with validation or TTL fall back to per-item writes so those rules still run.
 
+Scope and prefix subscriptions receive one batch event for raw batch writes and removes:
+
+```ts
+const unsubscribe = storage.subscribePrefix(
+  StorageScope.Disk,
+  "settings:",
+  (event) => {
+    if (event.type === "batch") {
+      event.changes.forEach((change) => {
+        console.log(change.key, change.operation);
+      });
+    }
+  },
+);
+```
+
 ## Batch Removes
 
 ```ts
@@ -52,23 +68,21 @@ import { removeBatch, StorageScope } from "react-native-nitro-storage";
 removeBatch([themeItem, localeItem], StorageScope.Disk);
 ```
 
-## Raw Import
+## Raw Import and Export
 
-`storage.import(data, scope)` writes raw strings. It does not serialize values.
+`storage.export(scope)` returns raw strings, and `storage.import(data, scope)` writes raw strings. These APIs do not serialize values.
 
 ```ts
 import { storage, StorageScope } from "react-native-nitro-storage";
 
-storage.import(
-  {
-    "flags:newOnboarding": "true",
-    "flags:paywall": "control",
-  },
-  StorageScope.Disk,
-);
+const snapshot = storage.export(StorageScope.Disk);
+
+storage.import(snapshot, StorageScope.Disk);
 ```
 
 For Memory scope, import is atomic: all keys are written before listeners fire. For Disk and Secure, import delegates to native or web batch paths.
+
+Secure exports contain raw secret values. Do not log them or include them in diagnostics, analytics, crash reports, or support bundles.
 
 ## Transactions
 
