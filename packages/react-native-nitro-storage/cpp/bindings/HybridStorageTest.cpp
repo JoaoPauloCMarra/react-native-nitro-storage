@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -533,13 +534,14 @@ void testClearNotifiesScope() {
 void testInvalidInputsAndMissingAdapter() {
     auto adapter = std::make_shared<MockAdapter>();
     HybridStorage storage(adapter);
+    const auto nan = std::numeric_limits<double>::quiet_NaN();
 
     expectThrows([&]() { storage.set("bad", "value", -1.0); });
     expectThrows([&]() { storage.set("bad", "value", 1.5); });
-    expectThrows([&]() { storage.set("bad", "value", std::nan("")); });
-    expectThrows([&]() { storage.setSecureAccessControl(std::nan("")); });
+    expectThrows([&]() { storage.set("bad", "value", nan); });
+    expectThrows([&]() { storage.setSecureAccessControl(nan); });
     expectThrows([&]() { storage.setSecureAccessControl(5.0); });
-    expectThrows([&]() { storage.setSecureBiometricWithLevel("bad", "value", std::nan("")); });
+    expectThrows([&]() { storage.setSecureBiometricWithLevel("bad", "value", nan); });
     expectThrows([&]() { storage.setSecureBiometricWithLevel("bad", "value", 3.0); });
 
     HybridStorage missingAdapter(nullptr);
