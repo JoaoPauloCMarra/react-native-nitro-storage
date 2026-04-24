@@ -114,6 +114,25 @@ const allKeys = storage.getAllSecureMetadata();
 
 `getSecureMetadata()` and `getAllSecureMetadata()` never return stored secret values. They report key existence, storage kind, backend name, access-control metadata, and whether a metadata path accidentally exposed a value.
 
+## Secure Export Warning
+
+`storage.export(StorageScope.Secure)` returns raw secret values so it can round-trip with `storage.import(data, StorageScope.Secure)`.
+
+```ts
+import { storage, StorageScope } from "react-native-nitro-storage";
+
+const secureSnapshot = storage.export(StorageScope.Secure);
+storage.import(secureSnapshot, StorageScope.Secure);
+```
+
+Only keep Secure exports in memory for the shortest possible workflow. Do not log them or include them in diagnostics, analytics, crash reports, or support bundles.
+
+## Secure Event Warning
+
+Secure scope event subscriptions and `storage.setEventObserver()` can receive raw secret values in `oldValue`, `newValue`, or batch `changes`.
+
+Use Secure events for in-memory coordination only. Do not log Secure event payloads or send them to analytics, crash reporting, support bundles, or devtools sessions that persist outside the device.
+
 ## Locked Keychain Errors
 
 ```ts

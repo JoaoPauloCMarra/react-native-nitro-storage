@@ -205,19 +205,15 @@ tokenItem.set("token");
 storage.flushSecureWrites();
 ```
 
-## Raw Import
+## Raw Import and Export
 
 ```ts
-storage.import(
-  {
-    "settings:theme": "dark",
-    "settings:locale": "en-US",
-  },
-  StorageScope.Disk,
-);
+const snapshot = storage.export(StorageScope.Disk);
+
+storage.import(snapshot, StorageScope.Disk);
 ```
 
-Raw import writes strings exactly as provided. It does not run item serializers.
+Raw export/import reads and writes strings exactly as stored. It does not run item serializers. Secure exports contain raw secret values, so do not log them or attach them to diagnostics.
 
 ## Snapshot and Cleanup
 
@@ -258,6 +254,31 @@ preferencesItem.get();
 const snapshot = storage.getMetricsSnapshot();
 storage.resetMetrics();
 ```
+
+## Event Logging
+
+```ts
+const unsubscribe = storage.subscribePrefix(
+  StorageScope.Disk,
+  "settings:",
+  (event) => {
+    if (event.type === "batch") {
+      console.log("settings changed", event.changes.length);
+      return;
+    }
+
+    console.log(event.key, event.operation);
+  },
+);
+
+storage.setEventObserver((event) => {
+  if (event.scope !== StorageScope.Secure) {
+    console.log(event.type, event.operation);
+  }
+});
+```
+
+Use `subscribePrefix()` or `subscribeNamespace()` for targeted integrations. Use `setEventObserver()` for devtools-style logging. Secure events can include raw secret values, so filter them out of logs.
 
 ## Capability Checks
 

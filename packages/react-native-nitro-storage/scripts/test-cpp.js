@@ -2,6 +2,7 @@ const { execSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 
+const coverageEnabled = process.argv.includes("--coverage");
 const cppDir = path.join(__dirname, "..", "cpp");
 const buildDir = path.join(cppDir, "build");
 
@@ -13,11 +14,16 @@ fs.mkdirSync(buildDir, { recursive: true });
 
 console.log("🛠️  Preparing C++ test environment...");
 
-// Locate Dependencies
-const nodeModules = path.join(__dirname, "..", "node_modules");
-const nitroDir = path.join(nodeModules, "react-native-nitro-modules", "cpp");
+// Locate Dependencies. Bun's hoisted linker installs workspace deps at the
+// monorepo root, while isolated installs may keep package-local node_modules.
+const packageRoot = path.join(__dirname, "..");
+const workspaceRoot = path.join(packageRoot, "..", "..");
+const nitroDir = [
+  path.join(packageRoot, "node_modules", "react-native-nitro-modules", "cpp"),
+  path.join(workspaceRoot, "node_modules", "react-native-nitro-modules", "cpp"),
+].find((candidate) => fs.existsSync(candidate));
 
-if (!fs.existsSync(nitroDir)) {
+if (!nitroDir) {
   console.error("❌ Dependencies not found. Run 'bun install' first.");
   process.exit(1);
 }
@@ -111,9 +117,87 @@ const commonFlags = [
   "clang++",
   "-std=c++17",
   "-g",
+  coverageEnabled ? "-fprofile-instr-generate" : "",
+  coverageEnabled ? "-fcoverage-mapping" : "",
   process.platform === "darwin" ? "-stdlib=libc++" : "",
 ];
 const linkFlags = process.platform === "darwin" ? "" : "-lpthread";
+
+function resolveLlvmTool(name) {
+  if (process.platform !== "darwin") {
+    return name;
+  }
+  return `xcrun ${name}`;
+}
+
+function runCoverage(storageOutputFile, hybridOutputFile) {
+  const storageProfile = path.join(buildDir, "storage.profraw");
+  const hybridProfile = path.join(buildDir, "hybrid.profraw");
+  const mergedProfile = path.join(buildDir, "coverage.profdata");
+  const exportFile = path.join(buildDir, "coverage-summary.json");
+  const profdata = resolveLlvmTool("llvm-profdata");
+  const cov = resolveLlvmTool("llvm-cov");
+  const sourceFiles = [
+    path.join(cppDir, "core", "NativeStorageAdapter.hpp"),
+    path.join(cppDir, "bindings", "HybridStorage.cpp"),
+    path.join(cppDir, "bindings", "HybridStorage.hpp"),
+  ];
+
+  execSync(storageOutputFile, {
+    stdio: "inherit",
+    env: { ...process.env, LLVM_PROFILE_FILE: storageProfile },
+  });
+  execSync(hybridOutputFile, {
+    stdio: "inherit",
+    env: { ...process.env, LLVM_PROFILE_FILE: hybridProfile },
+  });
+
+  execSync(
+    `${profdata} merge -sparse ${storageProfile} ${hybridProfile} -o ${mergedProfile}`,
+    { stdio: "inherit" },
+  );
+
+  const sourceArgs = sourceFiles.map((file) => `"${file}"`).join(" ");
+  execSync(
+    `${cov} report "${storageOutputFile}" -object "${hybridOutputFile}" -instr-profile="${mergedProfile}" ${sourceArgs}`,
+    { stdio: "inherit" },
+  );
+  execSync(
+    `${cov} export "${storageOutputFile}" -object "${hybridOutputFile}" -instr-profile="${mergedProfile}" -summary-only ${sourceArgs} > "${exportFile}"`,
+    { stdio: "inherit", shell: true },
+  );
+
+  const summary = JSON.parse(fs.readFileSync(exportFile, "utf8"));
+  const totals = summary.data[0].totals;
+  const thresholds = {
+    lines: 90,
+    functions: 90,
+    regions: 85,
+    branches: 85,
+  };
+  const actual = {
+    lines: totals.lines.percent,
+    functions: totals.functions.percent,
+    regions: totals.regions.percent,
+    branches: totals.branches.percent,
+  };
+  const failures = Object.entries(thresholds).filter(
+    ([metric, threshold]) => actual[metric] < threshold,
+  );
+
+  if (failures.length > 0) {
+    failures.forEach(([metric, threshold]) => {
+      console.error(
+        `❌ C++ ${metric} coverage ${actual[metric].toFixed(2)}% is below ${threshold}%`,
+      );
+    });
+    process.exit(1);
+  }
+
+  console.log(
+    `✅ C++ coverage passed: lines ${actual.lines.toFixed(2)}%, functions ${actual.functions.toFixed(2)}%, regions ${actual.regions.toFixed(2)}%, branches ${actual.branches.toFixed(2)}%`,
+  );
+}
 
 try {
   const compileStorageCmd = [
@@ -144,8 +228,12 @@ try {
   console.log("✅ Compilation successful.");
   console.log("🚀 Running tests...");
 
-  execSync(storageOutputFile, { stdio: "inherit" });
-  execSync(hybridOutputFile, { stdio: "inherit" });
+  if (coverageEnabled) {
+    runCoverage(storageOutputFile, hybridOutputFile);
+  } else {
+    execSync(storageOutputFile, { stdio: "inherit" });
+    execSync(hybridOutputFile, { stdio: "inherit" });
+  }
   console.log("✅ C++ tests passed!");
 } catch (error) {
   console.error("❌ C++ tests failed.");

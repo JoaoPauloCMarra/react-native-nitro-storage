@@ -4,13 +4,14 @@ name: "Nitro Storage - Smoke Test"
 - launchApp:
     clearState: true
 
-# Scroll to the Smoke Test runner at the bottom
-- scrollUntilVisible:
-    element:
-      id: "smoke-run-all"
-    direction: DOWN
-    timeout: 20000
-    speed: 80
+# Scroll to the Smoke Test runner at the bottom. Fixed swipes are more stable
+# on iOS because the button is exposed as accessibility text/resource-id but
+# scrollUntilVisible can miss it inside the nested Expo scroll view.
+- repeat:
+    times: 7
+    commands:
+      - swipe:
+          direction: UP
 
 # Tap "Run All" to execute every smoke test
 - tapOn:
@@ -20,7 +21,6 @@ name: "Nitro Storage - Smoke Test"
 - extendedWaitUntil:
     visible:
       text: "Run All"
-      id: "smoke-run-all"
     timeout: 30000
 
 # Assert no test failed

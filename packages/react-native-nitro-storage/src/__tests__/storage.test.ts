@@ -56,6 +56,7 @@ import { serializeWithPrimitiveFastPath } from "../internal";
 
 beforeEach(() => {
   storage.setDiskWritesAsync(false);
+  storage.setEventObserver(undefined);
 });
 
 describe("createStorageItem", () => {
@@ -923,16 +924,19 @@ describe("useStorage", () => {
       defaultValue: "default",
     });
     mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("v"));
+    mockHybridObject.getAllKeys.mockReturnValue([]);
 
     item.set("v");
     item.get();
     storage.getAllKeys(StorageScope.Disk);
+    storage.export(StorageScope.Disk);
 
     const snapshot = storage.getMetricsSnapshot();
     expect(metricsEvents.length).toBeGreaterThan(0);
     expect(snapshot["item:set"]).toBeDefined();
     expect(snapshot["item:get"]).toBeDefined();
     expect(snapshot["storage:getAllKeys"]).toBeDefined();
+    expect(snapshot["storage:export"]).toBeDefined();
 
     storage.setMetricsObserver(undefined);
     storage.resetMetrics();
@@ -1276,6 +1280,70 @@ describe("Batch Operations", () => {
       StorageScope.Disk,
     );
     expect(mockHybridObject.remove).not.toHaveBeenCalled();
+  });
+
+  it("includes previous raw values in Disk batch event envelopes", () => {
+    const events: unknown[] = [];
+    const unsubscribeNative = jest.fn();
+    mockHybridObject.addOnChange.mockReturnValue(unsubscribeNative);
+    mockHybridObject.getBatch
+      .mockReturnValueOnce([
+        serializeWithPrimitiveFastPath("old-1"),
+        serializeWithPrimitiveFastPath("old-2"),
+      ])
+      .mockReturnValueOnce([
+        serializeWithPrimitiveFastPath("next-1"),
+        serializeWithPrimitiveFastPath("next-2"),
+      ]);
+
+    const unsubscribe = storage.subscribe(StorageScope.Disk, (event) => {
+      events.push(event);
+    });
+
+    setBatch(
+      [
+        { item: item1, value: "next-1" },
+        { item: item2, value: "next-2" },
+      ],
+      StorageScope.Disk,
+    );
+    removeBatch([item1, item2], StorageScope.Disk);
+    unsubscribe();
+
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({
+      type: "batch",
+      operation: "setBatch",
+      changes: [
+        {
+          key: "batch-1",
+          oldValue: serializeWithPrimitiveFastPath("old-1"),
+          newValue: serializeWithPrimitiveFastPath("next-1"),
+        },
+        {
+          key: "batch-2",
+          oldValue: serializeWithPrimitiveFastPath("old-2"),
+          newValue: serializeWithPrimitiveFastPath("next-2"),
+        },
+      ],
+    });
+    expect(events[1]).toMatchObject({
+      type: "batch",
+      operation: "removeBatch",
+      changes: [
+        {
+          key: "batch-1",
+          oldValue: serializeWithPrimitiveFastPath("next-1"),
+          newValue: undefined,
+        },
+        {
+          key: "batch-2",
+          oldValue: serializeWithPrimitiveFastPath("next-2"),
+          newValue: undefined,
+        },
+      ],
+    });
+    expect(unsubscribeNative).toHaveBeenCalled();
   });
 
   it("throws on scope mismatch for getBatch", () => {
@@ -1806,6 +1874,25 @@ describe("storage.import", () => {
     storage.import({ greeting: "hello", count: "42" }, StorageScope.Memory);
     expect(storage.has("greeting", StorageScope.Memory)).toBe(true);
     expect(storage.has("count", StorageScope.Memory)).toBe(true);
+  });
+
+  it("exports raw key-value pairs from Memory scope", () => {
+    storage.import({ greeting: "hello", count: "42" }, StorageScope.Memory);
+
+    expect(storage.export(StorageScope.Memory)).toEqual({
+      greeting: "hello",
+      count: "42",
+    });
+  });
+
+  it("exports raw key-value pairs from Disk scope", () => {
+    mockHybridObject.getAllKeys.mockReturnValue(["disk-a", "disk-b"]);
+    mockHybridObject.getBatch.mockReturnValue(["v1", "v2"]);
+
+    expect(storage.export(StorageScope.Disk)).toEqual({
+      "disk-a": "v1",
+      "disk-b": "v2",
+    });
   });
 
   it("emits change listeners for each imported key in Memory scope", () => {
@@ -2436,6 +2523,209 @@ describe("memory scope optimizations", () => {
     expect(nsA.get()).toBe("");
     expect(nsB.get()).toBe("");
     expect(other.get()).toBe("val-other");
+  });
+
+  it("clearNamespace in memory scope notifies only affected keys", () => {
+    const ns = createStorageItem({
+      key: "notify",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+      namespace: "ns",
+    });
+    const other = createStorageItem({
+      key: "unrelated",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    });
+    const nsListener = jest.fn();
+    const otherListener = jest.fn();
+    const unsubscribeNs = ns.subscribe(nsListener);
+    const unsubscribeOther = other.subscribe(otherListener);
+
+    ns.set("val");
+    other.set("kept");
+    nsListener.mockClear();
+    otherListener.mockClear();
+
+    storage.clearNamespace("missing", StorageScope.Memory);
+    expect(nsListener).not.toHaveBeenCalled();
+    expect(otherListener).not.toHaveBeenCalled();
+
+    storage.clearNamespace("ns", StorageScope.Memory);
+    expect(nsListener).toHaveBeenCalledTimes(1);
+    expect(otherListener).not.toHaveBeenCalled();
+
+    unsubscribeNs();
+    unsubscribeOther();
+  });
+
+  it("emits raw scope, key, prefix, and namespace events", () => {
+    const scopeEvents: unknown[] = [];
+    const keyEvents: unknown[] = [];
+    const prefixEvents: unknown[] = [];
+    const namespaceEvents: unknown[] = [];
+
+    const unsubscribeScope = storage.subscribe(StorageScope.Memory, (event) =>
+      scopeEvents.push(event),
+    );
+    const unsubscribeKey = storage.subscribeKey(
+      StorageScope.Memory,
+      "auth:token",
+      (event) => keyEvents.push(event),
+    );
+    const unsubscribePrefix = storage.subscribePrefix(
+      StorageScope.Memory,
+      "auth:",
+      (event) => prefixEvents.push(event),
+    );
+    const unsubscribeNamespace = storage.subscribeNamespace(
+      "auth",
+      StorageScope.Memory,
+      (event) => namespaceEvents.push(event),
+    );
+
+    storage.setString("auth:token", "one", StorageScope.Memory);
+    storage.deleteString("auth:token", StorageScope.Memory);
+
+    expect(scopeEvents).toHaveLength(2);
+    expect(keyEvents).toHaveLength(2);
+    expect(prefixEvents).toHaveLength(2);
+    expect(namespaceEvents).toHaveLength(2);
+    expect(keyEvents[0]).toMatchObject({
+      type: "key",
+      key: "auth:token",
+      oldValue: undefined,
+      newValue: "one",
+      operation: "set",
+      source: "memory",
+    });
+    expect(keyEvents[1]).toMatchObject({
+      key: "auth:token",
+      oldValue: "one",
+      newValue: undefined,
+      operation: "remove",
+    });
+
+    unsubscribeScope();
+    unsubscribeKey();
+    unsubscribePrefix();
+    unsubscribeNamespace();
+  });
+
+  it("emits batch envelopes while preserving per-key item delivery", () => {
+    const scopeEvents: unknown[] = [];
+    const keyEvents: unknown[] = [];
+    const itemListener = jest.fn();
+    const first = createStorageItem({
+      key: "batch:first",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    });
+    const second = createStorageItem({
+      key: "batch:second",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    });
+    const unsubscribeScope = storage.subscribe(StorageScope.Memory, (event) =>
+      scopeEvents.push(event),
+    );
+    const unsubscribeKey = storage.subscribeKey(
+      StorageScope.Memory,
+      "batch:first",
+      (event) => keyEvents.push(event),
+    );
+    const unsubscribeItem = first.subscribe(itemListener);
+
+    setBatch(
+      [
+        { item: first, value: "one" },
+        { item: second, value: "two" },
+      ],
+      StorageScope.Memory,
+    );
+
+    expect(scopeEvents).toHaveLength(1);
+    expect(scopeEvents[0]).toMatchObject({
+      type: "batch",
+      operation: "setBatch",
+      source: "memory",
+      changes: [
+        { key: "batch:first", newValue: "one" },
+        { key: "batch:second", newValue: "two" },
+      ],
+    });
+    expect(keyEvents).toHaveLength(1);
+    expect(keyEvents[0]).toMatchObject({
+      type: "key",
+      key: "batch:first",
+      newValue: "one",
+      operation: "setBatch",
+    });
+    expect(itemListener).toHaveBeenCalledTimes(1);
+
+    unsubscribeScope();
+    unsubscribeKey();
+    unsubscribeItem();
+  });
+
+  it("supports item selector subscriptions with equality and immediate firing", () => {
+    const item = createStorageItem({
+      key: "selector-state",
+      scope: StorageScope.Memory,
+      defaultValue: { count: 1, label: "one" },
+    });
+    const listener = jest.fn();
+    const unsubscribe = item.subscribeSelector(
+      (value) => value.count,
+      listener,
+      { fireImmediately: true },
+    );
+
+    item.set({ count: 1, label: "renamed" });
+    item.set({ count: 2, label: "two" });
+
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(listener).toHaveBeenNthCalledWith(1, 1, 1);
+    expect(listener).toHaveBeenNthCalledWith(2, 2, 1);
+
+    unsubscribe();
+  });
+
+  it("supports a global event observer for devtools logging", () => {
+    const events: unknown[] = [];
+
+    storage.setEventObserver((event) => {
+      events.push(event);
+    });
+
+    storage.setString("devtools:one", "one", StorageScope.Memory);
+    setBatch(
+      [
+        {
+          item: createStorageItem({
+            key: "devtools:two",
+            scope: StorageScope.Memory,
+            defaultValue: "",
+          }),
+          value: "two",
+        },
+      ],
+      StorageScope.Memory,
+    );
+
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({
+      type: "key",
+      key: "devtools:one",
+      operation: "set",
+    });
+    expect(events[1]).toMatchObject({
+      type: "batch",
+      operation: "setBatch",
+      changes: [{ key: "devtools:two", newValue: "two" }],
+    });
+
+    storage.setEventObserver(undefined);
   });
 });
 

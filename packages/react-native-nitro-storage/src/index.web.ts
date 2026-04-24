@@ -26,6 +26,15 @@ import {
   type StorageCapabilities,
   type StorageErrorCode,
 } from "./storage-runtime";
+import {
+  StorageEventRegistry,
+  type StorageBatchChangeEvent,
+  type StorageChangeEvent,
+  type StorageChangeOperation,
+  type StorageChangeSource,
+  type StorageEventListener,
+  type StorageKeyChangeEvent,
+} from "./storage-events";
 
 export { StorageScope, AccessControl, BiometricLevel } from "./Storage.types";
 export { migrateFromMMKV } from "./migration";
@@ -36,6 +45,14 @@ export {
   type StorageCapabilities,
   type StorageErrorCode,
 } from "./storage-runtime";
+export type {
+  StorageBatchChangeEvent,
+  StorageChangeEvent,
+  StorageChangeOperation,
+  StorageChangeSource,
+  StorageEventListener,
+  StorageKeyChangeEvent,
+} from "./storage-events";
 export type {
   WebStorageBackend,
   WebStorageChangeEvent,
@@ -63,6 +80,14 @@ export type StorageMetricSummary = {
   totalDurationMs: number;
   avgDurationMs: number;
   maxDurationMs: number;
+};
+export type StorageSelectorListener<TSelected> = (
+  value: TSelected,
+  previousValue: TSelected,
+) => void;
+export type StorageSelectorSubscribeOptions<TSelected> = {
+  isEqual?: (previousValue: TSelected, nextValue: TSelected) => boolean;
+  fireImmediately?: boolean;
 };
 export type MigrationContext = {
   scope: StorageScope;
@@ -191,10 +216,12 @@ const BIOMETRIC_WEB_PREFIX = "__bio_";
 let hasWarnedAboutWebBiometricFallback = false;
 let hasWindowStorageEventSubscription = false;
 let metricsObserver: StorageMetricsObserver | undefined;
+let eventObserver: StorageEventListener | undefined;
 const metricsCounters = new Map<
   string,
   { count: number; totalDurationMs: number; maxDurationMs: number }
 >();
+const storageEvents = new StorageEventRegistry();
 
 function recordMetric(
   operation: string,
@@ -379,6 +406,7 @@ function applyExternalChangeEvent(
 
   if (scope === StorageScope.Secure && key.startsWith(SECURE_WEB_PREFIX)) {
     const plainKey = fromSecureStorageKey(key);
+    const oldValue = readCachedRawValue(StorageScope.Secure, plainKey);
     if (newValue === null) {
       ensureWebScopeKeyIndex(StorageScope.Secure).delete(plainKey);
       cacheRawValue(StorageScope.Secure, plainKey, undefined);
@@ -387,11 +415,20 @@ function applyExternalChangeEvent(
       cacheRawValue(StorageScope.Secure, plainKey, newValue);
     }
     notifyKeyListeners(getScopedListeners(StorageScope.Secure), plainKey);
+    emitKeyChange(
+      StorageScope.Secure,
+      plainKey,
+      oldValue,
+      newValue ?? undefined,
+      "external",
+      "external",
+    );
     return;
   }
 
   if (scope === StorageScope.Secure && key.startsWith(BIOMETRIC_WEB_PREFIX)) {
     const plainKey = fromBiometricStorageKey(key);
+    const oldValue = readCachedRawValue(StorageScope.Secure, plainKey);
     if (newValue === null) {
       if (
         withWebBackendOperation(
@@ -408,9 +445,18 @@ function applyExternalChangeEvent(
       cacheRawValue(StorageScope.Secure, plainKey, newValue);
     }
     notifyKeyListeners(getScopedListeners(StorageScope.Secure), plainKey);
+    emitKeyChange(
+      StorageScope.Secure,
+      plainKey,
+      oldValue,
+      newValue ?? undefined,
+      "external",
+      "external",
+    );
     return;
   }
 
+  const oldValue = readCachedRawValue(scope, key);
   if (newValue === null) {
     ensureWebScopeKeyIndex(scope).delete(key);
     cacheRawValue(scope, key, undefined);
@@ -419,6 +465,14 @@ function applyExternalChangeEvent(
     cacheRawValue(scope, key, newValue);
   }
   notifyKeyListeners(getScopedListeners(scope), key);
+  emitKeyChange(
+    scope,
+    key,
+    oldValue,
+    newValue ?? undefined,
+    "external",
+    "external",
+  );
 }
 
 function handleWebStorageEvent(event: StorageEvent): void {
@@ -547,6 +601,82 @@ function addKeyListener(
       registry.delete(key);
     }
   };
+}
+
+function getEventRawValue(
+  scope: StorageScope,
+  key: string,
+): string | undefined {
+  if (scope === StorageScope.Memory) {
+    const value = memoryStore.get(key);
+    return typeof value === "string" ? value : undefined;
+  }
+
+  return getRawValue(key, scope);
+}
+
+function createKeyChange(
+  scope: StorageScope,
+  key: string,
+  oldValue: string | undefined,
+  newValue: string | undefined,
+  operation: StorageChangeOperation,
+  source: StorageChangeSource,
+): StorageKeyChangeEvent {
+  return {
+    type: "key",
+    scope,
+    key,
+    oldValue,
+    newValue,
+    operation,
+    source,
+  };
+}
+
+function hasStorageChangeObservers(scope: StorageScope): boolean {
+  return storageEvents.hasListeners(scope) || eventObserver !== undefined;
+}
+
+function emitKeyChange(
+  scope: StorageScope,
+  key: string,
+  oldValue: string | undefined,
+  newValue: string | undefined,
+  operation: StorageChangeOperation,
+  source: StorageChangeSource,
+): void {
+  const event = createKeyChange(
+    scope,
+    key,
+    oldValue,
+    newValue,
+    operation,
+    source,
+  );
+  storageEvents.emitKey(event);
+  eventObserver?.(event);
+}
+
+function emitBatchChange(
+  scope: StorageScope,
+  operation: StorageChangeOperation,
+  source: StorageChangeSource,
+  changes: StorageKeyChangeEvent[],
+): void {
+  if (changes.length === 0) {
+    return;
+  }
+
+  const event: StorageBatchChangeEvent = {
+    type: "batch",
+    scope,
+    operation,
+    source,
+    changes,
+  };
+  storageEvents.emitBatch(event);
+  eventObserver?.(event);
 }
 
 function readPendingSecureWrite(key: string): string | undefined {
@@ -833,24 +963,10 @@ const WebStorage: Storage = {
     return () => {};
   },
   has: (key: string, scope: number) => {
-    if (scope === StorageScope.Secure) {
-      return (
-        withWebBackendOperation(scope, "has", (backend) =>
-          backend.getItem(toSecureStorageKey(key)),
-        ) !== null ||
-        withWebBackendOperation(scope, "has", (backend) =>
-          backend.getItem(toBiometricStorageKey(key)),
-        ) !== null
-      );
+    if (scope === StorageScope.Disk || scope === StorageScope.Secure) {
+      return ensureWebScopeKeyIndex(scope).has(key);
     }
-    if (scope !== StorageScope.Disk) {
-      return false;
-    }
-    return (
-      withWebBackendOperation(scope, "has", (backend) =>
-        backend.getItem(key),
-      ) !== null
-    );
+    return false;
   },
   getAllKeys: (scope: number) => {
     if (scope !== StorageScope.Disk && scope !== StorageScope.Secure) {
@@ -1000,9 +1116,12 @@ function getRawValue(key: string, scope: StorageScope): string | undefined {
 
 function setRawValue(key: string, value: string, scope: StorageScope): void {
   assertValidScope(scope);
+  const oldValue =
+    scope === StorageScope.Memory ? getEventRawValue(scope, key) : undefined;
   if (scope === StorageScope.Memory) {
     memoryStore.set(key, value);
     notifyKeyListeners(memoryListeners, key);
+    emitKeyChange(scope, key, oldValue, value, "set", "memory");
     return;
   }
 
@@ -1010,6 +1129,7 @@ function setRawValue(key: string, value: string, scope: StorageScope): void {
     cacheRawValue(scope, key, value);
     if (diskWritesAsync) {
       scheduleDiskWrite(key, value);
+      emitKeyChange(scope, key, oldValue, value, "set", "web");
       return;
     }
 
@@ -1024,13 +1144,16 @@ function setRawValue(key: string, value: string, scope: StorageScope): void {
 
   WebStorage.set(key, value, scope);
   cacheRawValue(scope, key, value);
+  emitKeyChange(scope, key, oldValue, value, "set", "web");
 }
 
 function removeRawValue(key: string, scope: StorageScope): void {
   assertValidScope(scope);
+  const oldValue = getEventRawValue(scope, key);
   if (scope === StorageScope.Memory) {
     memoryStore.delete(key);
     notifyKeyListeners(memoryListeners, key);
+    emitKeyChange(scope, key, oldValue, undefined, "remove", "memory");
     return;
   }
 
@@ -1038,6 +1161,7 @@ function removeRawValue(key: string, scope: StorageScope): void {
     cacheRawValue(scope, key, undefined);
     if (diskWritesAsync) {
       scheduleDiskWrite(key, undefined);
+      emitKeyChange(scope, key, oldValue, undefined, "remove", "web");
       return;
     }
 
@@ -1052,6 +1176,7 @@ function removeRawValue(key: string, scope: StorageScope): void {
 
   WebStorage.remove(key, scope);
   cacheRawValue(scope, key, undefined);
+  emitKeyChange(scope, key, oldValue, undefined, "remove", "web");
 }
 
 function readMigrationVersion(scope: StorageScope): number {
@@ -1069,11 +1194,74 @@ function writeMigrationVersion(scope: StorageScope, version: number): void {
 }
 
 export const storage = {
+  subscribe: (
+    scope: StorageScope,
+    listener: StorageEventListener,
+  ): (() => void) => {
+    assertValidScope(scope);
+    if (scope !== StorageScope.Memory) {
+      ensureExternalSyncSubscriptions();
+    }
+    return storageEvents.subscribe(scope, listener);
+  },
+  subscribeKey: (
+    scope: StorageScope,
+    key: string,
+    listener: StorageEventListener,
+  ): (() => void) => {
+    assertValidScope(scope);
+    if (scope !== StorageScope.Memory) {
+      ensureExternalSyncSubscriptions();
+    }
+    return storageEvents.subscribeKey(scope, key, listener);
+  },
+  subscribePrefix: (
+    scope: StorageScope,
+    prefix: string,
+    listener: StorageEventListener,
+  ): (() => void) => {
+    assertValidScope(scope);
+    if (scope !== StorageScope.Memory) {
+      ensureExternalSyncSubscriptions();
+    }
+    return storageEvents.subscribePrefix(scope, prefix, listener);
+  },
+  subscribeNamespace: (
+    namespace: string,
+    scope: StorageScope,
+    listener: StorageEventListener,
+  ): (() => void) => {
+    return storage.subscribePrefix(scope, prefixKey(namespace, ""), listener);
+  },
+  setEventObserver: (observer?: StorageEventListener) => {
+    eventObserver = observer;
+    if (observer) {
+      ensureExternalSyncSubscriptions();
+    }
+  },
   clear: (scope: StorageScope) => {
     measureOperation("storage:clear", scope, () => {
+      const previousValues = hasStorageChangeObservers(scope)
+        ? storage.getAll(scope)
+        : {};
       if (scope === StorageScope.Memory) {
         memoryStore.clear();
         notifyAllListeners(memoryListeners);
+        emitBatchChange(
+          scope,
+          "clear",
+          "memory",
+          Object.keys(previousValues).map((key) =>
+            createKeyChange(
+              scope,
+              key,
+              previousValues[key],
+              undefined,
+              "clear",
+              "memory",
+            ),
+          ),
+        );
         return;
       }
 
@@ -1089,6 +1277,21 @@ export const storage = {
 
       clearScopeRawCache(scope);
       WebStorage.clear(scope);
+      emitBatchChange(
+        scope,
+        "clear",
+        "web",
+        Object.keys(previousValues).map((key) =>
+          createKeyChange(
+            scope,
+            key,
+            previousValues[key],
+            undefined,
+            "clear",
+            "web",
+          ),
+        ),
+      );
     });
   },
   clearAll: () => {
@@ -1107,16 +1310,44 @@ export const storage = {
     measureOperation("storage:clearNamespace", scope, () => {
       assertValidScope(scope);
       if (scope === StorageScope.Memory) {
-        for (const key of memoryStore.keys()) {
-          if (isNamespaced(key, namespace)) {
-            memoryStore.delete(key);
-          }
+        const affectedKeys = Array.from(memoryStore.keys()).filter((key) =>
+          isNamespaced(key, namespace),
+        );
+        const previousValues = affectedKeys.map((key) => ({
+          key,
+          value: getEventRawValue(scope, key),
+        }));
+
+        if (affectedKeys.length === 0) {
+          return;
         }
-        notifyAllListeners(memoryListeners);
+
+        affectedKeys.forEach((key) => {
+          memoryStore.delete(key);
+        });
+        affectedKeys.forEach((key) => notifyKeyListeners(memoryListeners, key));
+        emitBatchChange(
+          scope,
+          "clearNamespace",
+          "memory",
+          previousValues.map(({ key, value }) =>
+            createKeyChange(
+              scope,
+              key,
+              value,
+              undefined,
+              "clearNamespace",
+              "memory",
+            ),
+          ),
+        );
         return;
       }
 
       const keyPrefix = prefixKey(namespace, "");
+      const previousValues = hasStorageChangeObservers(scope)
+        ? storage.getByPrefix(keyPrefix, scope)
+        : {};
       if (scope === StorageScope.Disk) {
         flushDiskWrites();
       }
@@ -1130,6 +1361,21 @@ export const storage = {
         }
       }
       WebStorage.removeByPrefix(keyPrefix, scope);
+      emitBatchChange(
+        scope,
+        "clearNamespace",
+        "web",
+        Object.keys(previousValues).map((key) =>
+          createKeyChange(
+            scope,
+            key,
+            previousValues[key],
+            undefined,
+            "clearNamespace",
+            "web",
+          ),
+        ),
+      );
     });
   },
   clearBiometric: () => {
@@ -1244,6 +1490,11 @@ export const storage = {
       });
       return result;
     });
+  },
+  export: (scope: StorageScope): Record<string, string> => {
+    return measureOperation("storage:export", scope, () =>
+      storage.getAll(scope),
+    );
   },
   size: (scope: StorageScope): number => {
     return measureOperation("storage:size", scope, () => {
@@ -1407,12 +1658,23 @@ export const storage = {
         assertValidScope(scope);
         if (keys.length === 0) return;
         const values = keys.map((k) => data[k]!);
+        const changes = keys.map((key, index) =>
+          createKeyChange(
+            scope,
+            key,
+            getEventRawValue(scope, key),
+            values[index],
+            "import",
+            scope === StorageScope.Memory ? "memory" : "web",
+          ),
+        );
 
         if (scope === StorageScope.Memory) {
           keys.forEach((key, index) => {
             memoryStore.set(key, values[index]);
           });
           keys.forEach((key) => notifyKeyListeners(memoryListeners, key));
+          emitBatchChange(scope, "import", "memory", changes);
           return;
         }
 
@@ -1426,6 +1688,7 @@ export const storage = {
 
         WebStorage.setBatch(keys, values, scope);
         keys.forEach((key, index) => cacheRawValue(scope, key, values[index]));
+        emitBatchChange(scope, "import", "web", changes);
       },
       keys.length,
     );
@@ -1512,6 +1775,11 @@ export interface StorageItem<T> {
   delete: () => void;
   has: () => boolean;
   subscribe: (callback: () => void) => () => void;
+  subscribeSelector: <TSelected>(
+    selector: (value: T) => TSelected,
+    listener: StorageSelectorListener<TSelected>,
+    options?: StorageSelectorSubscribeOptions<TSelected>,
+  ) => () => void;
   serialize: (value: T) => string;
   deserialize: (value: string) => T;
   scope: StorageScope;
@@ -1680,12 +1948,17 @@ export function createStorageItem<T = undefined>(
   };
 
   const writeStoredRaw = (rawValue: string): void => {
+    const oldValue =
+      config.scope === StorageScope.Memory
+        ? getEventRawValue(config.scope, storageKey)
+        : undefined;
     if (isBiometric) {
       WebStorage.setSecureBiometricWithLevel(
         storageKey,
         rawValue,
         resolvedBiometricLevel,
       );
+      emitKeyChange(config.scope, storageKey, oldValue, rawValue, "set", "web");
       return;
     }
 
@@ -1694,6 +1967,14 @@ export function createStorageItem<T = undefined>(
     if (nonMemoryScope === StorageScope.Disk) {
       if (coalesceDiskWrites || diskWritesAsync) {
         scheduleDiskWrite(storageKey, rawValue);
+        emitKeyChange(
+          config.scope,
+          storageKey,
+          oldValue,
+          rawValue,
+          "set",
+          "web",
+        );
         return;
       }
 
@@ -1706,6 +1987,7 @@ export function createStorageItem<T = undefined>(
         rawValue,
         secureAccessControl ?? secureDefaultAccessControl,
       );
+      emitKeyChange(config.scope, storageKey, oldValue, rawValue, "set", "web");
       return;
     }
 
@@ -1714,11 +1996,21 @@ export function createStorageItem<T = undefined>(
     }
 
     WebStorage.set(storageKey, rawValue, config.scope);
+    emitKeyChange(config.scope, storageKey, oldValue, rawValue, "set", "web");
   };
 
   const removeStoredRaw = (): void => {
+    const oldValue = getEventRawValue(config.scope, storageKey);
     if (isBiometric) {
       WebStorage.deleteSecureBiometric(storageKey);
+      emitKeyChange(
+        config.scope,
+        storageKey,
+        oldValue,
+        undefined,
+        "remove",
+        "web",
+      );
       return;
     }
 
@@ -1727,6 +2019,14 @@ export function createStorageItem<T = undefined>(
     if (nonMemoryScope === StorageScope.Disk) {
       if (coalesceDiskWrites || diskWritesAsync) {
         scheduleDiskWrite(storageKey, undefined);
+        emitKeyChange(
+          config.scope,
+          storageKey,
+          oldValue,
+          undefined,
+          "remove",
+          "web",
+        );
         return;
       }
 
@@ -1739,6 +2039,14 @@ export function createStorageItem<T = undefined>(
         undefined,
         secureAccessControl ?? secureDefaultAccessControl,
       );
+      emitKeyChange(
+        config.scope,
+        storageKey,
+        oldValue,
+        undefined,
+        "remove",
+        "web",
+      );
       return;
     }
 
@@ -1747,15 +2055,32 @@ export function createStorageItem<T = undefined>(
     }
 
     WebStorage.remove(storageKey, config.scope);
+    emitKeyChange(
+      config.scope,
+      storageKey,
+      oldValue,
+      undefined,
+      "remove",
+      "web",
+    );
   };
 
   const writeValueWithoutValidation = (value: T): void => {
     if (isMemory) {
+      const oldValue = getEventRawValue(config.scope, storageKey);
       if (memoryExpiration) {
         memoryExpiration.set(storageKey, Date.now() + (expirationTtlMs ?? 0));
       }
       memoryStore.set(storageKey, value);
       notifyKeyListeners(memoryListeners, storageKey);
+      emitKeyChange(
+        config.scope,
+        storageKey,
+        oldValue,
+        typeof value === "string" ? value : undefined,
+        "set",
+        "memory",
+      );
       return;
     }
 
@@ -1927,11 +2252,20 @@ export function createStorageItem<T = undefined>(
       invalidateParsedCache();
 
       if (isMemory) {
+        const oldValue = getEventRawValue(config.scope, storageKey);
         if (memoryExpiration) {
           memoryExpiration.delete(storageKey);
         }
         memoryStore.delete(storageKey);
         notifyKeyListeners(memoryListeners, storageKey);
+        emitKeyChange(
+          config.scope,
+          storageKey,
+          oldValue,
+          undefined,
+          "remove",
+          "memory",
+        );
         return;
       }
 
@@ -1970,6 +2304,30 @@ export function createStorageItem<T = undefined>(
     };
   };
 
+  const subscribeSelector = <TSelected>(
+    selector: (value: T) => TSelected,
+    listener: StorageSelectorListener<TSelected>,
+    options: StorageSelectorSubscribeOptions<TSelected> = {},
+  ): (() => void) => {
+    const isEqual = options.isEqual ?? Object.is;
+    let currentValue = selector(getInternal());
+
+    if (options.fireImmediately === true) {
+      listener(currentValue, currentValue);
+    }
+
+    return subscribe(() => {
+      const nextValue = selector(getInternal());
+      if (isEqual(currentValue, nextValue)) {
+        return;
+      }
+
+      const previousValue = currentValue;
+      currentValue = nextValue;
+      listener(nextValue, previousValue);
+    });
+  };
+
   const storageItem: StorageItemInternal<T> = {
     get,
     getWithVersion,
@@ -1978,6 +2336,7 @@ export function createStorageItem<T = undefined>(
     delete: deleteItem,
     has: hasItem,
     subscribe,
+    subscribeSelector,
     serialize,
     deserialize,
     _triggerListeners: () => {
@@ -2130,6 +2489,17 @@ export function setBatch<T>(
           return;
         }
 
+        const changes = items.map(({ item, value }) =>
+          createKeyChange(
+            scope,
+            item.key,
+            getEventRawValue(scope, item.key),
+            typeof value === "string" ? value : undefined,
+            "setBatch",
+            "memory",
+          ),
+        );
+
         // Atomic write: update all values in memoryStore, invalidate caches, then batch-notify
         items.forEach(({ item, value }) => {
           memoryStore.set(item.key, value);
@@ -2138,6 +2508,7 @@ export function setBatch<T>(
         items.forEach(({ item }) =>
           notifyKeyListeners(memoryListeners, item.key),
         );
+        emitBatchChange(scope, "setBatch", "memory", changes);
         return;
       }
 
@@ -2156,6 +2527,10 @@ export function setBatch<T>(
         }
 
         flushSecureWrites();
+        const keys = secureEntries.map(({ item }) => item.key);
+        const oldValues = hasStorageChangeObservers(scope)
+          ? WebStorage.getBatch(keys, scope)
+          : [];
         const groupedByAccessControl = new Map<
           number,
           { keys: string[]; values: string[] }
@@ -2180,6 +2555,21 @@ export function setBatch<T>(
             cacheRawValue(scope, key, group.values[index]),
           );
         });
+        emitBatchChange(
+          scope,
+          "setBatch",
+          "web",
+          secureEntries.map(({ item, value }, index) =>
+            createKeyChange(
+              scope,
+              item.key,
+              oldValues[index],
+              item.serialize(value),
+              "setBatch",
+              "web",
+            ),
+          ),
+        );
         return;
       }
 
@@ -2195,8 +2585,26 @@ export function setBatch<T>(
 
       const keys = items.map((entry) => entry.item.key);
       const values = items.map((entry) => entry.item.serialize(entry.value));
+      const oldValues = hasStorageChangeObservers(scope)
+        ? WebStorage.getBatch(keys, scope)
+        : [];
       WebStorage.setBatch(keys, values, scope);
       keys.forEach((key, index) => cacheRawValue(scope, key, values[index]));
+      emitBatchChange(
+        scope,
+        "setBatch",
+        "web",
+        keys.map((key, index) =>
+          createKeyChange(
+            scope,
+            key,
+            oldValues[index],
+            values[index],
+            "setBatch",
+            "web",
+          ),
+        ),
+      );
     },
     items.length,
   );
@@ -2213,7 +2621,18 @@ export function removeBatch(
       assertBatchScope(items, scope);
 
       if (scope === StorageScope.Memory) {
+        const changes = items.map((item) =>
+          createKeyChange(
+            scope,
+            item.key,
+            getEventRawValue(scope, item.key),
+            undefined,
+            "removeBatch",
+            "memory",
+          ),
+        );
         items.forEach((item) => item.delete());
+        emitBatchChange(scope, "removeBatch", "memory", changes);
         return;
       }
 
@@ -2224,8 +2643,26 @@ export function removeBatch(
       if (scope === StorageScope.Secure) {
         flushSecureWrites();
       }
+      const oldValues = hasStorageChangeObservers(scope)
+        ? WebStorage.getBatch(keys, scope)
+        : [];
       WebStorage.removeBatch(keys, scope);
       keys.forEach((key) => cacheRawValue(scope, key, undefined));
+      emitBatchChange(
+        scope,
+        "removeBatch",
+        "web",
+        keys.map((key, index) =>
+          createKeyChange(
+            scope,
+            key,
+            oldValues[index],
+            undefined,
+            "removeBatch",
+            "web",
+          ),
+        ),
+      );
     },
     items.length,
   );

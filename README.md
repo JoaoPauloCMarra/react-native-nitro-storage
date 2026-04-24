@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/react-native-nitro-storage)](https://www.npmjs.com/package/react-native-nitro-storage)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![React Native](https://img.shields.io/badge/react--native-%3E%3D0.75-61dafb)](https://reactnative.dev/)
-[![Nitro Modules](https://img.shields.io/badge/nitro--modules-%3E%3D0.35.4-black)](https://nitro.margelo.com/)
+[![Nitro Modules](https://img.shields.io/badge/nitro--modules-%3E%3D0.35.5-black)](https://nitro.margelo.com/)
 
 One storage layer for render-time state, persisted app state, and native secrets.
 
@@ -42,6 +42,7 @@ Use it when you want one storage API for React Native and web, with fast synchro
 | Move existing MMKV data           | `migrateFromMMKV`                                             |
 | Persist storage on web            | `setWebDiskStorageBackend` or `createIndexedDBBackend`        |
 | Inspect secure backend state      | `getSecurityCapabilities`, `getSecureMetadata`, metadata APIs |
+| Connect external state/debug code | `subscribeNamespace`, `subscribePrefix`, `setEventObserver`   |
 
 ## Use It When
 
@@ -56,7 +57,7 @@ Use a database or server-state cache instead when you need relational queries, c
 - Three scopes: in-memory session state, persisted disk state, and platform secure storage.
 - Secure storage backed by iOS Keychain and Android Keystore/EncryptedSharedPreferences.
 - React hooks without providers: `useStorage`, `useStorageSelector`, and `useSetStorage`.
-- Batch reads/writes, namespace cleanup, raw import/export, transactions, and migrations.
+- Batch reads/writes, namespace cleanup, raw import/export, event subscriptions, transactions, and migrations.
 - Web parity with configurable Disk/Secure backends and an IndexedDB backend.
 - MMKV migration helper for moving existing keys without rewriting app code first.
 
@@ -188,6 +189,37 @@ runTransaction(StorageScope.Disk, (tx) => {
 });
 ```
 
+Create a raw snapshot for backups or test fixtures, then restore it later:
+
+```ts
+import { StorageScope, storage } from "react-native-nitro-storage";
+
+const snapshot = storage.export(StorageScope.Disk);
+
+storage.import(snapshot, StorageScope.Disk);
+```
+
+`storage.export(StorageScope.Secure)` returns raw secret values. Do not log Secure exports or include them in diagnostics, analytics, crash reports, or support bundles.
+
+Subscribe to storage changes outside React:
+
+```ts
+import { StorageScope, storage } from "react-native-nitro-storage";
+
+const unsubscribe = storage.subscribeNamespace(
+  "settings",
+  StorageScope.Disk,
+  (event) => {
+    if (event.type === "batch") {
+      console.log("settings changed", event.changes.length);
+      return;
+    }
+
+    console.log(event.key, event.operation);
+  },
+);
+```
+
 ## Storage Scopes
 
 | Scope                 | Backing store                                                                 | Best for                                         |
@@ -243,7 +275,7 @@ import {
 The main building blocks are:
 
 - `createStorageItem<T>(config)` for typed values.
-- `storage` for raw reads, namespace cleanup, secure metadata, metrics, and runtime capability checks.
+- `storage` for raw reads, namespace cleanup, events, secure metadata, metrics, and runtime capability checks.
 - `getBatch`, `setBatch`, and `removeBatch` for multi-key work.
 - `runTransaction` for synchronous rollback on failure.
 - `registerMigration` and `migrateToLatest` for versioned local data migrations.
@@ -265,7 +297,7 @@ Peer dependencies:
 
 - `react >=18.2.0`
 - `react-native >=0.75.0`
-- `react-native-nitro-modules >=0.35.4`
+- `react-native-nitro-modules >=0.35.5`
 
 ## Security Model
 
@@ -355,9 +387,11 @@ bun run format:check -- --filter=react-native-nitro-storage
 bun run typecheck -- --filter=react-native-nitro-storage
 bun run test:types -- --filter=react-native-nitro-storage
 bun run test -- --filter=react-native-nitro-storage
+bun run test:coverage -- --filter=react-native-nitro-storage
 bun run test:cpp -- --filter=react-native-nitro-storage
+bun run test:cpp:coverage -- --filter=react-native-nitro-storage
 bun run --cwd packages/react-native-nitro-storage check:pack
-npm publish --dry-run
+bun run publish-package:dry -- --yes --with-coverage
 ```
 
 ## Development
@@ -378,7 +412,7 @@ Release checks:
 bun run build -- --filter=react-native-nitro-storage
 bun run benchmark -- --filter=react-native-nitro-storage
 bun run --cwd packages/react-native-nitro-storage check:pack
-npm publish --dry-run
+bun run publish-package:dry -- --yes
 ```
 
 ## License

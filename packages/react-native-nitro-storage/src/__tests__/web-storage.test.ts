@@ -36,6 +36,7 @@ import {
 
 beforeEach(() => {
   storage.setDiskWritesAsync(false);
+  storage.setEventObserver(undefined);
 });
 
 function createStorageMock(): Storage {
@@ -200,6 +201,7 @@ describe("Web Storage", () => {
     setWebSecureStorageBackend(undefined);
     storage.clearAll();
     storage.setMetricsObserver(undefined);
+    storage.setEventObserver(undefined);
     storage.resetMetrics();
   });
 
@@ -764,6 +766,71 @@ describe("Web Storage", () => {
 
     removeBatch([item1, item2], StorageScope.Disk);
     expect(removeSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("includes previous raw values in Disk batch event envelopes on web", () => {
+    const events: unknown[] = [];
+    const item1 = createStorageItem({
+      key: "batch-event-1",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    });
+    const item2 = createStorageItem({
+      key: "batch-event-2",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    });
+
+    storage.setString("batch-event-1", "old-1", StorageScope.Disk);
+    storage.setString("batch-event-2", "old-2", StorageScope.Disk);
+
+    const unsubscribe = storage.subscribe(StorageScope.Disk, (event) => {
+      events.push(event);
+    });
+
+    setBatch(
+      [
+        { item: item1, value: "next-1" },
+        { item: item2, value: "next-2" },
+      ],
+      StorageScope.Disk,
+    );
+    removeBatch([item1, item2], StorageScope.Disk);
+    unsubscribe();
+
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({
+      type: "batch",
+      operation: "setBatch",
+      changes: [
+        {
+          key: "batch-event-1",
+          oldValue: "old-1",
+          newValue: serializeWithPrimitiveFastPath("next-1"),
+        },
+        {
+          key: "batch-event-2",
+          oldValue: "old-2",
+          newValue: serializeWithPrimitiveFastPath("next-2"),
+        },
+      ],
+    });
+    expect(events[1]).toMatchObject({
+      type: "batch",
+      operation: "removeBatch",
+      changes: [
+        {
+          key: "batch-event-1",
+          oldValue: serializeWithPrimitiveFastPath("next-1"),
+          newValue: undefined,
+        },
+        {
+          key: "batch-event-2",
+          oldValue: serializeWithPrimitiveFastPath("next-2"),
+          newValue: undefined,
+        },
+      ],
+    });
   });
 
   it("removeBatch on secure scope removes secure and biometric entries", () => {
@@ -1712,9 +1779,11 @@ describe("Web Storage", () => {
 
     const keys = storage.getAllKeys(StorageScope.Disk);
     const size = storage.size(StorageScope.Disk);
+    const hasKey = storage.has("idx-1", StorageScope.Disk);
 
     expect(keys).toEqual(expect.arrayContaining(["idx-1", "idx-2"]));
     expect(size).toBeGreaterThanOrEqual(2);
+    expect(hasKey).toBe(true);
     expect(keySpy).not.toHaveBeenCalled();
   });
 
@@ -1834,12 +1903,14 @@ describe("Web Storage", () => {
     item.set("value");
     item.get();
     storage.getAllKeys(StorageScope.Disk);
+    storage.export(StorageScope.Disk);
 
     const snapshot = storage.getMetricsSnapshot();
     expect(events.length).toBeGreaterThan(0);
     expect(snapshot["item:set"]).toBeDefined();
     expect(snapshot["item:get"]).toBeDefined();
     expect(snapshot["storage:getAllKeys"]).toBeDefined();
+    expect(snapshot["storage:export"]).toBeDefined();
   });
 
   // --- clearNamespace ---
@@ -1936,6 +2007,209 @@ describe("Web Storage", () => {
     storage.clearNamespace("tmp", StorageScope.Memory);
     expect(ns.get()).toBe("");
     expect(plain.get()).toBe("kept");
+  });
+
+  it("storage.clearNamespace notifies only affected memory keys", () => {
+    const ns = createStorageItem({
+      key: "notify",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+      namespace: "tmp",
+    });
+    const plain = createStorageItem({
+      key: "keep-notify",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    });
+    const nsListener = jest.fn();
+    const plainListener = jest.fn();
+    const unsubscribeNs = ns.subscribe(nsListener);
+    const unsubscribePlain = plain.subscribe(plainListener);
+
+    ns.set("val");
+    plain.set("kept");
+    nsListener.mockClear();
+    plainListener.mockClear();
+
+    storage.clearNamespace("missing", StorageScope.Memory);
+    expect(nsListener).not.toHaveBeenCalled();
+    expect(plainListener).not.toHaveBeenCalled();
+
+    storage.clearNamespace("tmp", StorageScope.Memory);
+    expect(nsListener).toHaveBeenCalledTimes(1);
+    expect(plainListener).not.toHaveBeenCalled();
+
+    unsubscribeNs();
+    unsubscribePlain();
+  });
+
+  it("emits raw scope, key, prefix, and namespace events on web", () => {
+    const scopeEvents: unknown[] = [];
+    const keyEvents: unknown[] = [];
+    const prefixEvents: unknown[] = [];
+    const namespaceEvents: unknown[] = [];
+
+    const unsubscribeScope = storage.subscribe(StorageScope.Memory, (event) =>
+      scopeEvents.push(event),
+    );
+    const unsubscribeKey = storage.subscribeKey(
+      StorageScope.Memory,
+      "auth:token",
+      (event) => keyEvents.push(event),
+    );
+    const unsubscribePrefix = storage.subscribePrefix(
+      StorageScope.Memory,
+      "auth:",
+      (event) => prefixEvents.push(event),
+    );
+    const unsubscribeNamespace = storage.subscribeNamespace(
+      "auth",
+      StorageScope.Memory,
+      (event) => namespaceEvents.push(event),
+    );
+
+    storage.setString("auth:token", "one", StorageScope.Memory);
+    storage.deleteString("auth:token", StorageScope.Memory);
+
+    expect(scopeEvents).toHaveLength(2);
+    expect(keyEvents).toHaveLength(2);
+    expect(prefixEvents).toHaveLength(2);
+    expect(namespaceEvents).toHaveLength(2);
+    expect(keyEvents[0]).toMatchObject({
+      type: "key",
+      key: "auth:token",
+      oldValue: undefined,
+      newValue: "one",
+      operation: "set",
+      source: "memory",
+    });
+    expect(keyEvents[1]).toMatchObject({
+      key: "auth:token",
+      oldValue: "one",
+      newValue: undefined,
+      operation: "remove",
+    });
+
+    unsubscribeScope();
+    unsubscribeKey();
+    unsubscribePrefix();
+    unsubscribeNamespace();
+  });
+
+  it("emits batch envelopes while preserving per-key item delivery on web", () => {
+    const scopeEvents: unknown[] = [];
+    const keyEvents: unknown[] = [];
+    const itemListener = jest.fn();
+    const first = createStorageItem({
+      key: "batch:first",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    });
+    const second = createStorageItem({
+      key: "batch:second",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    });
+    const unsubscribeScope = storage.subscribe(StorageScope.Memory, (event) =>
+      scopeEvents.push(event),
+    );
+    const unsubscribeKey = storage.subscribeKey(
+      StorageScope.Memory,
+      "batch:first",
+      (event) => keyEvents.push(event),
+    );
+    const unsubscribeItem = first.subscribe(itemListener);
+
+    setBatch(
+      [
+        { item: first, value: "one" },
+        { item: second, value: "two" },
+      ],
+      StorageScope.Memory,
+    );
+
+    expect(scopeEvents).toHaveLength(1);
+    expect(scopeEvents[0]).toMatchObject({
+      type: "batch",
+      operation: "setBatch",
+      source: "memory",
+      changes: [
+        { key: "batch:first", newValue: "one" },
+        { key: "batch:second", newValue: "two" },
+      ],
+    });
+    expect(keyEvents).toHaveLength(1);
+    expect(keyEvents[0]).toMatchObject({
+      type: "key",
+      key: "batch:first",
+      newValue: "one",
+      operation: "setBatch",
+    });
+    expect(itemListener).toHaveBeenCalledTimes(1);
+
+    unsubscribeScope();
+    unsubscribeKey();
+    unsubscribeItem();
+  });
+
+  it("supports item selector subscriptions with equality and immediate firing on web", () => {
+    const item = createStorageItem({
+      key: "selector-state",
+      scope: StorageScope.Memory,
+      defaultValue: { count: 1, label: "one" },
+    });
+    const listener = jest.fn();
+    const unsubscribe = item.subscribeSelector(
+      (value) => value.count,
+      listener,
+      { fireImmediately: true },
+    );
+
+    item.set({ count: 1, label: "renamed" });
+    item.set({ count: 2, label: "two" });
+
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(listener).toHaveBeenNthCalledWith(1, 1, 1);
+    expect(listener).toHaveBeenNthCalledWith(2, 2, 1);
+
+    unsubscribe();
+  });
+
+  it("supports a global event observer for devtools logging on web", () => {
+    const events: unknown[] = [];
+
+    storage.setEventObserver((event) => {
+      events.push(event);
+    });
+
+    storage.setString("devtools:one", "one", StorageScope.Memory);
+    setBatch(
+      [
+        {
+          item: createStorageItem({
+            key: "devtools:two",
+            scope: StorageScope.Memory,
+            defaultValue: "",
+          }),
+          value: "two",
+        },
+      ],
+      StorageScope.Memory,
+    );
+
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({
+      type: "key",
+      key: "devtools:one",
+      operation: "set",
+    });
+    expect(events[1]).toMatchObject({
+      type: "batch",
+      operation: "setBatch",
+      changes: [{ key: "devtools:two", newValue: "two" }],
+    });
+
+    storage.setEventObserver(undefined);
   });
 
   // --- clearBiometric ---
@@ -2126,6 +2400,23 @@ describe("storage.import (web)", () => {
     storage.import({ x: "1", y: "2" }, StorageScope.Memory);
     expect(storage.has("x", StorageScope.Memory)).toBe(true);
     expect(storage.has("y", StorageScope.Memory)).toBe(true);
+  });
+
+  it("exports raw key-value pairs from Memory scope", () => {
+    storage.import({ x: "1", y: "2" }, StorageScope.Memory);
+
+    expect(storage.export(StorageScope.Memory)).toEqual({
+      x: "1",
+      y: "2",
+    });
+  });
+
+  it("exports raw key-value pairs from Disk scope", () => {
+    storage.import({ "d-key": "d-val" }, StorageScope.Disk);
+
+    expect(storage.export(StorageScope.Disk)).toEqual({
+      "d-key": "d-val",
+    });
   });
 
   it("emits change listeners for each imported key in Memory scope", () => {

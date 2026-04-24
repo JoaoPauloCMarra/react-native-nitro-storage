@@ -25,17 +25,23 @@ import { Button, Colors } from "./shared";
 
 type LogEntry = {
   label: string;
-  status: "pass" | "fail" | "running";
+  status: "pass" | "fail" | "running" | "skipped";
   detail?: string;
 };
 
 type TestFn = () => void | Promise<void>;
+type SmokeTest = {
+  label: string;
+  fn: TestFn;
+  isSupported?: () => boolean;
+  unsupportedReason?: string;
+};
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
 }
 
-function buildTests(): { label: string; fn: TestFn }[] {
+function buildTests(): SmokeTest[] {
   return [
     {
       label: "Memory: set / get / delete / has",
@@ -387,6 +393,40 @@ function buildTests(): { label: string; fn: TestFn }[] {
       },
     },
     {
+      label: "Export + import snapshot",
+      fn: () => {
+        storage.setString("__smoke_exp_a__", "A", StorageScope.Memory);
+        storage.setString("__smoke_exp_b__", "B", StorageScope.Memory);
+
+        const exported = storage.export(StorageScope.Memory);
+
+        assert(exported.__smoke_exp_a__ === "A", "export A mismatch");
+        assert(exported.__smoke_exp_b__ === "B", "export B mismatch");
+
+        storage.deleteString("__smoke_exp_a__", StorageScope.Memory);
+        storage.deleteString("__smoke_exp_b__", StorageScope.Memory);
+        storage.import(
+          {
+            __smoke_exp_a__: exported.__smoke_exp_a__ ?? "",
+            __smoke_exp_b__: exported.__smoke_exp_b__ ?? "",
+          },
+          StorageScope.Memory,
+        );
+
+        assert(
+          storage.getString("__smoke_exp_a__", StorageScope.Memory) === "A",
+          "imported export A mismatch",
+        );
+        assert(
+          storage.getString("__smoke_exp_b__", StorageScope.Memory) === "B",
+          "imported export B mismatch",
+        );
+
+        storage.deleteString("__smoke_exp_a__", StorageScope.Memory);
+        storage.deleteString("__smoke_exp_b__", StorageScope.Memory);
+      },
+    },
+    {
       label: "Storage size / getAllKeys / getAll",
       fn: () => {
         storage.setString("__smoke_sz_1__", "x", StorageScope.Memory);
@@ -422,6 +462,125 @@ function buildTests(): { label: string; fn: TestFn }[] {
         assert(Object.keys(snap).length > 0, "expected non-empty snapshot");
         storage.resetMetrics();
         item.delete();
+      },
+    },
+    {
+      label: "Storage events: scope / key / prefix",
+      fn: () => {
+        const scopeEvents: string[] = [];
+        const keyEvents: string[] = [];
+        const prefixEvents: string[] = [];
+
+        const unsubscribeScope = storage.subscribe(StorageScope.Memory, (e) => {
+          scopeEvents.push(e.type);
+        });
+        const unsubscribeKey = storage.subscribeKey(
+          StorageScope.Memory,
+          "__smoke_evt_key__",
+          (e) => {
+            keyEvents.push(e.type);
+          },
+        );
+        const unsubscribePrefix = storage.subscribePrefix(
+          StorageScope.Memory,
+          "__smoke_evt_",
+          (e) => {
+            prefixEvents.push(e.type);
+          },
+        );
+
+        storage.setString("__smoke_evt_key__", "1", StorageScope.Memory);
+        setBatch(
+          [
+            {
+              item: createStorageItem({
+                key: "__smoke_evt_batch_a__",
+                scope: StorageScope.Memory,
+                defaultValue: "",
+              }),
+              value: "A",
+            },
+            {
+              item: createStorageItem({
+                key: "__smoke_evt_batch_b__",
+                scope: StorageScope.Memory,
+                defaultValue: "",
+              }),
+              value: "B",
+            },
+          ],
+          StorageScope.Memory,
+        );
+
+        assert(scopeEvents.length >= 2, "expected scope events");
+        assert(keyEvents.length === 1, "expected key event");
+        assert(prefixEvents.length >= 2, "expected prefix events");
+
+        unsubscribeScope();
+        unsubscribeKey();
+        unsubscribePrefix();
+        storage.deleteString("__smoke_evt_key__", StorageScope.Memory);
+        storage.deleteString("__smoke_evt_batch_a__", StorageScope.Memory);
+        storage.deleteString("__smoke_evt_batch_b__", StorageScope.Memory);
+      },
+    },
+    {
+      label: "Storage events: namespace + observer",
+      fn: () => {
+        const namespaceEvents: string[] = [];
+        const observedEvents: string[] = [];
+        const unsubscribeNamespace = storage.subscribeNamespace(
+          "__smoke_evt_ns__",
+          StorageScope.Memory,
+          (e) => {
+            namespaceEvents.push(e.type);
+          },
+        );
+
+        storage.setEventObserver((e) => {
+          observedEvents.push(e.type);
+        });
+
+        const item = createStorageItem({
+          key: "token",
+          namespace: "__smoke_evt_ns__",
+          scope: StorageScope.Memory,
+          defaultValue: "",
+        });
+        item.set("value");
+
+        storage.setEventObserver(undefined);
+        unsubscribeNamespace();
+        storage.clearNamespace("__smoke_evt_ns__", StorageScope.Memory);
+
+        assert(namespaceEvents.length === 1, "expected namespace event");
+        assert(observedEvents.length >= 1, "expected observed event");
+      },
+    },
+    {
+      label: "StorageItem subscribeSelector",
+      fn: () => {
+        const item = createStorageItem<{ count: number; label: string }>({
+          key: "__smoke_selector__",
+          scope: StorageScope.Memory,
+          defaultValue: { count: 0, label: "idle" },
+        });
+        const counts: number[] = [];
+        const unsubscribe = item.subscribeSelector(
+          (value) => value.count,
+          (next) => {
+            counts.push(next);
+          },
+          { fireImmediately: true },
+        );
+
+        item.set({ count: 0, label: "same-count" });
+        item.set({ count: 1, label: "changed" });
+
+        unsubscribe();
+        item.delete();
+
+        assert(counts.join(",") === "0,1", `unexpected counts ${counts}`);
       },
     },
     {
@@ -688,11 +847,9 @@ function buildTests(): { label: string; fn: TestFn }[] {
     },
     {
       label: "Web backends: override disk / secure / flush",
+      isSupported: () => Platform.OS === "web",
+      unsupportedReason: "Web-only backend override",
       fn: async () => {
-        if (Platform.OS !== "web") {
-          return;
-        }
-
         const diskStore = new Map<string, string>();
         const secureStore = new Map<string, string>();
         let flushed = false;
@@ -788,16 +945,48 @@ export function SmokeTestRunner() {
     setRunning(true);
     const tests = buildTests();
     const results: LogEntry[] = [];
-    setLogs(tests.map((t) => ({ label: t.label, status: "running" })));
+    setLogs(
+      tests.map((t) => ({
+        label: t.label,
+        status: t.isSupported?.() === false ? "skipped" : "running",
+        detail: t.isSupported?.() === false ? t.unsupportedReason : undefined,
+      })),
+    );
 
     for (let i = 0; i < tests.length; i++) {
       const test = tests[i];
+      if (test.isSupported?.() === false) {
+        results.push({
+          label: test.label,
+          status: "skipped",
+          detail: test.unsupportedReason,
+        });
+        setLogs([
+          ...results,
+          ...tests.slice(i + 1).map((t) => ({
+            label: t.label,
+            status:
+              t.isSupported?.() === false
+                ? ("skipped" as const)
+                : ("running" as const),
+            detail:
+              t.isSupported?.() === false ? t.unsupportedReason : undefined,
+          })),
+        ]);
+        continue;
+      }
+
       results.push({ label: test.label, status: "running" });
       setLogs([
         ...results,
-        ...tests
-          .slice(i + 1)
-          .map((t) => ({ label: t.label, status: "running" as const })),
+        ...tests.slice(i + 1).map((t) => ({
+          label: t.label,
+          status:
+            t.isSupported?.() === false
+              ? ("skipped" as const)
+              : ("running" as const),
+          detail: t.isSupported?.() === false ? t.unsupportedReason : undefined,
+        })),
       ]);
 
       // Yield to UI between tests
@@ -813,9 +1002,14 @@ export function SmokeTestRunner() {
 
       setLogs([
         ...results,
-        ...tests
-          .slice(i + 1)
-          .map((t) => ({ label: t.label, status: "running" as const })),
+        ...tests.slice(i + 1).map((t) => ({
+          label: t.label,
+          status:
+            t.isSupported?.() === false
+              ? ("skipped" as const)
+              : ("running" as const),
+          detail: t.isSupported?.() === false ? t.unsupportedReason : undefined,
+        })),
       ]);
     }
 
@@ -825,6 +1019,7 @@ export function SmokeTestRunner() {
 
   const passCount = logs.filter((l) => l.status === "pass").length;
   const failCount = logs.filter((l) => l.status === "fail").length;
+  const skippedCount = logs.filter((l) => l.status === "skipped").length;
   const total = logs.length;
 
   return (
@@ -836,6 +1031,7 @@ export function SmokeTestRunner() {
             <Text style={s.summary}>
               {passCount}/{total} passed
               {failCount > 0 ? ` · ${failCount} failed` : ""}
+              {skippedCount > 0 ? ` · ${skippedCount} skipped` : ""}
             </Text>
           ) : (
             <Text style={s.summary}>Run all features sequentially</Text>
@@ -866,7 +1062,9 @@ export function SmokeTestRunner() {
                   ? "✓"
                   : entry.status === "fail"
                     ? "✗"
-                    : "·"}
+                    : entry.status === "skipped"
+                      ? "–"
+                      : "·"}
               </Text>
               <View style={s.logContent}>
                 <Text
@@ -875,6 +1073,7 @@ export function SmokeTestRunner() {
                     entry.status === "pass" && s.logPass,
                     entry.status === "fail" && s.logFail,
                     entry.status === "running" && s.logRunning,
+                    entry.status === "skipped" && s.logSkipped,
                   ]}
                 >
                   {entry.label}
@@ -960,6 +1159,10 @@ const s = StyleSheet.create({
   },
   logRunning: {
     color: Colors.muted,
+  },
+  logSkipped: {
+    color: Colors.muted,
+    opacity: 0.55,
   },
   logDetail: {
     fontSize: 11,
