@@ -466,5 +466,9 @@ describe("createIndexedDBBackend", () => {
     backend.setItem("key", "value");
 
     expect(onError).toHaveBeenCalledWith(expect.any(Error));
+    await expect(backend.flush?.()).rejects.toThrow(
+      'Failed to queue IndexedDB write for "key".',
+    );
+    await expect(backend.flush?.()).resolves.toBeUndefined();
   });
 });

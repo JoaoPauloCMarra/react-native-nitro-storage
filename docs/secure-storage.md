@@ -184,7 +184,7 @@ Before releasing secure-storage changes, run:
 ```sh
 bun run test -- --filter=react-native-nitro-storage
 bun run test:cpp -- --filter=react-native-nitro-storage
-bun run --cwd packages/react-native-nitro-storage check:pack
+(cd packages/react-native-nitro-storage && bun run check:pack)
 ```
 
 Also run an end-to-end auth flow on a locked/unlocked real device when changing biometric or Keychain behavior.
