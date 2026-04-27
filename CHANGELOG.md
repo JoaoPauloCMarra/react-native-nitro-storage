@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
+## 0.5.2 - 2026-04-27
+
+### Fixed
+
+- Make `createIndexedDBBackend().flush()` reject queued IndexedDB write failures after surfacing them through `onError`.
+- Stabilize the release benchmark gate by sampling each benchmark three times while keeping the same regression thresholds.
+- Correct package content check commands in the release documentation for current Bun.
+
 ## 0.5.1 - 2026-04-24
 
 ### Added

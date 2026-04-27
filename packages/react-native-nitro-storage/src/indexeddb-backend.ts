@@ -72,6 +72,7 @@ export async function createIndexedDBBackend(
   const db = await openDB(dbName, storeName);
   const cache = new Map<string, string>();
   const pendingWrites = new Set<Promise<void>>();
+  const pendingErrors: Error[] = [];
   const subscribers = new Set<(event: WebStorageChangeEvent) => void>();
   const sourceId = `nitro-storage-${Math.random().toString(36).slice(2)}`;
   const channelName =
@@ -92,6 +93,7 @@ export async function createIndexedDBBackend(
       error instanceof Error
         ? error
         : new Error(String(error ?? "Unknown IndexedDB error"));
+    pendingErrors.push(normalized);
     options.onError?.(normalized);
   }
 
@@ -277,6 +279,12 @@ export async function createIndexedDBBackend(
     },
     async flush(): Promise<void> {
       await Promise.all(Array.from(pendingWrites));
+      if (pendingErrors.length === 0) {
+        return;
+      }
+
+      const [error] = pendingErrors.splice(0);
+      throw error;
     },
   };
 

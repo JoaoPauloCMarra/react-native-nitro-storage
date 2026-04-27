@@ -390,7 +390,7 @@ bun run test -- --filter=react-native-nitro-storage
 bun run test:coverage -- --filter=react-native-nitro-storage
 bun run test:cpp -- --filter=react-native-nitro-storage
 bun run test:cpp:coverage -- --filter=react-native-nitro-storage
-bun run --cwd packages/react-native-nitro-storage check:pack
+(cd packages/react-native-nitro-storage && bun run check:pack)
 bun run publish-package:dry -- --yes --with-coverage
 ```
 
@@ -411,7 +411,7 @@ Release checks:
 ```sh
 bun run build -- --filter=react-native-nitro-storage
 bun run benchmark -- --filter=react-native-nitro-storage
-bun run --cwd packages/react-native-nitro-storage check:pack
+(cd packages/react-native-nitro-storage && bun run check:pack)
 bun run publish-package:dry -- --yes
 ```
 
