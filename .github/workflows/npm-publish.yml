@@ -45,6 +45,11 @@ jobs:
           key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
           restore-keys: ${{ runner.os }}-bun-
 
+      - name: Install C++ coverage tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm
+
       - run: bun install --frozen-lockfile
 
       - name: Validate release tag
