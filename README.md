@@ -394,6 +394,9 @@ bun run test:cpp:coverage -- --filter=react-native-nitro-storage
 bun run publish-package:dry -- --yes --with-coverage
 ```
 
+Publishing a GitHub Release tagged `v<package.version>` triggers the npm workflow.
+The npm package must trust `.github/workflows/npm-publish.yml` in npm package settings.
+
 ## Development
 
 ```sh
