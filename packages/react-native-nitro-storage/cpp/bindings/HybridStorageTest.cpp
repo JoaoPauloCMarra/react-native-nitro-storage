@@ -535,13 +535,18 @@ void testInvalidInputsAndMissingAdapter() {
     auto adapter = std::make_shared<MockAdapter>();
     HybridStorage storage(adapter);
     const auto nan = std::numeric_limits<double>::quiet_NaN();
+    const auto inf = std::numeric_limits<double>::infinity();
 
     expectThrows([&]() { storage.set("bad", "value", -1.0); });
     expectThrows([&]() { storage.set("bad", "value", 1.5); });
     expectThrows([&]() { storage.set("bad", "value", nan); });
     expectThrows([&]() { storage.setSecureAccessControl(nan); });
+    expectThrows([&]() { storage.setSecureAccessControl(inf); });
+    expectThrows([&]() { storage.setSecureAccessControl(1.5); });
     expectThrows([&]() { storage.setSecureAccessControl(5.0); });
     expectThrows([&]() { storage.setSecureBiometricWithLevel("bad", "value", nan); });
+    expectThrows([&]() { storage.setSecureBiometricWithLevel("bad", "value", -inf); });
+    expectThrows([&]() { storage.setSecureBiometricWithLevel("bad", "value", 1.5); });
     expectThrows([&]() { storage.setSecureBiometricWithLevel("bad", "value", 3.0); });
 
     HybridStorage missingAdapter(nullptr);

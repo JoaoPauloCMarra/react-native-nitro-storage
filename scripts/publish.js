@@ -139,6 +139,14 @@ function checkNpmAuth() {
   return whoami !== null && whoami !== "";
 }
 
+function isNpmTrustedPublishingCI() {
+  return (
+    process.env.GITHUB_ACTIONS === "true" &&
+    Boolean(process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) &&
+    Boolean(process.env.ACTIONS_ID_TOKEN_REQUEST_URL)
+  );
+}
+
 function cleanupPackageDocs() {
   if (!fs.existsSync(packageDocsSyncScript)) {
     return;
@@ -341,6 +349,8 @@ Options:
 
     if (isDryRun) {
       console.log("  ✓ Skipping npm auth check in dry-run mode");
+    } else if (isNpmTrustedPublishingCI()) {
+      console.log("  ✓ Using npm Trusted Publishing/OIDC in GitHub Actions");
     } else if (!checkNpmAuth()) {
       log("✗ Not logged in to npm. Run: npm login", "red");
       process.exit(1);

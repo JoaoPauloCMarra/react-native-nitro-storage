@@ -1,0 +1,69 @@
+name: Publish npm
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  BUN_VERSION: "1.3.11"
+  NODE_VERSION: "24"
+  PACKAGE_DIR: packages/react-native-nitro-storage
+
+jobs:
+  publish:
+    name: Publish package
+    runs-on: ubuntu-latest
+    env:
+      DIST_TAG: ${{ github.event.release.prerelease && 'next' || 'latest' }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: "https://registry.npmjs.org"
+
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.bun/install/cache
+            node_modules
+            packages/*/node_modules
+            apps/*/node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
+          restore-keys: ${{ runner.os }}-bun-
+
+      - run: bun install --frozen-lockfile
+
+      - name: Validate release tag
+        run: |
+          version="$(node -p "require('./${PACKAGE_DIR}/package.json').version")"
+          expected_tag="v${version}"
+          if [ "${RELEASE_TAG}" != "${expected_tag}" ]; then
+            echo "::error::Release tag ${RELEASE_TAG} does not match package version ${expected_tag}"
+            exit 1
+          fi
+
+      - name: Check npm version availability
+        run: |
+          package_name="$(node -p "require('./${PACKAGE_DIR}/package.json').name")"
+          version="$(node -p "require('./${PACKAGE_DIR}/package.json').version")"
+          if npm view "${package_name}@${version}" version >/dev/null 2>&1; then
+            echo "::error::${package_name}@${version} is already published"
+            exit 1
+          fi
+
+      - name: Publish to npm
+        run: bun run publish-package -- --yes --with-coverage --tag="${DIST_TAG}"

@@ -498,11 +498,13 @@ void HybridStorage::setSecureAccessControl(double level) {
     if (std::isnan(level) || std::isinf(level)) {
         throw std::runtime_error("NitroStorage: Invalid access control level");
     }
-    int intLevel = static_cast<int>(level);
-    if (intLevel < 0 || intLevel > 4) {
+    if (level < 0.0 || level > 4.0) {
         throw std::runtime_error(
-            "NitroStorage: Invalid access control level " + std::to_string(intLevel) +
-            ". Expected 0-4.");
+            "NitroStorage: Invalid access control level. Expected 0-4.");
+    }
+    int intLevel = static_cast<int>(level);
+    if (level != static_cast<double>(intLevel)) {
+        throw std::runtime_error("NitroStorage: Invalid access control level");
     }
     ensureAdapter();
     nativeAdapter_->setSecureAccessControl(intLevel);
@@ -529,11 +531,14 @@ void HybridStorage::setSecureBiometricWithLevel(const std::string& key, const st
         throw std::runtime_error(
             "NitroStorage: Invalid biometric level");
     }
-    int intLevel = static_cast<int>(level);
-    if (intLevel < 0 || intLevel > 2) {
+    if (level < 0.0 || level > 2.0) {
         throw std::runtime_error(
-            "NitroStorage: Invalid biometric level " + std::to_string(intLevel) +
-            ". Expected 0 (none), 1 (user presence), or 2 (biometric only).");
+            "NitroStorage: Invalid biometric level. Expected 0 (none), 1 (user presence), or 2 (biometric only).");
+    }
+    int intLevel = static_cast<int>(level);
+    if (level != static_cast<double>(intLevel)) {
+        throw std::runtime_error(
+            "NitroStorage: Invalid biometric level");
     }
     ensureAdapter();
     try {

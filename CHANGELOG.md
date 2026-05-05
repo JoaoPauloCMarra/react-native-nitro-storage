@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
+## 0.5.3 - 2026-05-05
+
+### Fixed
+
+- Reject fractional C++ secure access-control and biometric levels before casting them for native adapters.
+- Align the Expo example with SDK 55 dependency validation for `expo` and `babel-preset-expo`.
+- Patch generated example native projects to avoid fixable iOS deployment-target and Android Gradle syntax warnings.
+- Publish GitHub Releases to npm through a Trusted Publishing/OIDC workflow.
+- Resolve the package build's TypeScript binary lookup warning during release checks.
+
 ## 0.5.2 - 2026-04-27
 
 ### Fixed
