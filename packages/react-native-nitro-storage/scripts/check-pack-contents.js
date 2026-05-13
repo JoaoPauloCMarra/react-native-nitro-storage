@@ -10,6 +10,7 @@ const requiredFiles = [
   "LICENSE",
   "SECURITY.md",
   "app.plugin.js",
+  ".watchmanconfig",
   "docs/api-reference.md",
   "docs/secure-storage.md",
   "docs/mmkv-migration.md",
