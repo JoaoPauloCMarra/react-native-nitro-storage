@@ -119,8 +119,24 @@ type RawBatchPathItem = {
   _hasValidation?: boolean;
   _hasExpiration?: boolean;
   _isBiometric?: boolean;
+  _biometricLevel?: BiometricLevel;
   _secureAccessControl?: AccessControl;
 };
+type RollbackRecord =
+  | {
+      kind: "memory";
+      value: unknown;
+    }
+  | {
+      kind: "raw";
+      value: string | undefined;
+      accessControl?: AccessControl;
+    }
+  | {
+      kind: "biometric";
+      value: string | undefined;
+      level: BiometricLevel;
+    };
 
 function asInternal<T>(item: StorageItem<T>): StorageItemInternal<T> {
   return item as StorageItemInternal<T>;
@@ -134,6 +150,27 @@ function isUpdater<T>(
 
 function typedKeys<K extends string, V>(record: Record<K, V>): K[] {
   return Object.keys(record) as K[];
+}
+function assertEnumInteger(
+  value: number,
+  min: number,
+  max: number,
+  label: string,
+): void {
+  if (!Number.isFinite(value) || value < min || value > max) {
+    throw new Error(`NitroStorage: Invalid ${label}`);
+  }
+  if (value !== Math.trunc(value)) {
+    throw new Error(`NitroStorage: Invalid ${label}`);
+  }
+}
+
+function assertAccessControlLevel(level: number): void {
+  assertEnumInteger(level, 0, 4, "access control level");
+}
+
+function assertBiometricLevel(level: number): void {
+  assertEnumInteger(level, 0, 2, "biometric level");
 }
 type NonMemoryScope = StorageScope.Disk | StorageScope.Secure;
 type PendingDiskWrite = {
@@ -1062,6 +1099,7 @@ export const storage = {
   },
   setAccessControl: (level: AccessControl) => {
     measureOperation("storage:setAccessControl", StorageScope.Secure, () => {
+      assertAccessControlLevel(level);
       secureDefaultAccessControl = level;
       getStorageModule().setSecureAccessControl(level);
     });
@@ -1326,6 +1364,7 @@ type StorageItemInternal<T> = StorageItem<T> & {
   _hasExpiration: boolean;
   _readCacheEnabled: boolean;
   _isBiometric: boolean;
+  _biometricLevel: BiometricLevel;
   _defaultValue: T;
   _secureAccessControl?: AccessControl;
 };
@@ -1395,6 +1434,12 @@ export function createStorageItem<T = undefined>(
 
   if (expiration && expiration.ttlMs <= 0) {
     throw new Error("expiration.ttlMs must be greater than 0.");
+  }
+  if (config.scope === StorageScope.Secure) {
+    assertBiometricLevel(resolvedBiometricLevel);
+    if (secureAccessControl !== undefined) {
+      assertAccessControlLevel(secureAccessControl);
+    }
   }
 
   const listeners = new Set<() => void>();
@@ -1907,6 +1952,7 @@ export function createStorageItem<T = undefined>(
     _hasExpiration: expiration !== undefined,
     _readCacheEnabled: readCache,
     _isBiometric: isBiometric,
+    _biometricLevel: resolvedBiometricLevel,
     _defaultValue: defaultValue,
     ...(secureAccessControl !== undefined
       ? { _secureAccessControl: secureAccessControl }
@@ -2292,19 +2338,40 @@ export function runTransaction<T>(
     }
 
     const NOT_SET = Symbol();
-    const rollback = new Map<string, unknown>();
+    const rollback = new Map<string, RollbackRecord>();
 
-    const rememberRollback = (key: string) => {
+    const rememberRollback = (
+      key: string,
+      item?: Pick<StorageItem<unknown>, "key" | "scope">,
+    ) => {
       if (rollback.has(key)) {
         return;
       }
       if (scope === StorageScope.Memory) {
-        rollback.set(
-          key,
-          memoryStore.has(key) ? memoryStore.get(key) : NOT_SET,
-        );
+        rollback.set(key, {
+          kind: "memory",
+          value: memoryStore.has(key) ? memoryStore.get(key) : NOT_SET,
+        });
       } else {
-        rollback.set(key, getRawValue(key, scope));
+        const internal = item
+          ? (item as StorageItemInternal<unknown>)
+          : undefined;
+        if (scope === StorageScope.Secure && internal?._isBiometric === true) {
+          rollback.set(key, {
+            kind: "biometric",
+            value: getStorageModule().getSecureBiometric(key),
+            level: internal._biometricLevel,
+          });
+          return;
+        }
+        rollback.set(key, {
+          kind: "raw",
+          value: getRawValue(key, scope),
+          ...(scope === StorageScope.Secure &&
+          internal?._secureAccessControl !== undefined
+            ? { accessControl: internal._secureAccessControl }
+            : {}),
+        });
       }
     };
 
@@ -2325,12 +2392,12 @@ export function runTransaction<T>(
       },
       setItem: (item, value) => {
         assertBatchScope([item], scope);
-        rememberRollback(item.key);
+        rememberRollback(item.key, item);
         item.set(value);
       },
       removeItem: (item) => {
         assertBatchScope([item], scope);
-        rememberRollback(item.key);
+        rememberRollback(item.key, item);
         item.delete();
       },
     };
@@ -2340,25 +2407,49 @@ export function runTransaction<T>(
     } catch (error) {
       const rollbackEntries = Array.from(rollback.entries()).reverse();
       if (scope === StorageScope.Memory) {
-        rollbackEntries.forEach(([key, previousValue]) => {
-          if (previousValue === NOT_SET) {
+        rollbackEntries.forEach(([key, record]) => {
+          if (record.value === NOT_SET) {
             memoryStore.delete(key);
           } else {
-            memoryStore.set(key, previousValue);
+            memoryStore.set(key, record.value);
           }
           notifyKeyListeners(memoryListeners, key);
         });
       } else {
-        const keysToSet: string[] = [];
-        const valuesToSet: string[] = [];
+        const groupedKeysToSet = new Map<
+          AccessControl,
+          { keys: string[]; values: string[] }
+        >();
         const keysToRemove: string[] = [];
 
-        rollbackEntries.forEach(([key, previousValue]) => {
-          if (previousValue === undefined) {
+        rollbackEntries.forEach(([key, record]) => {
+          if (record.kind === "biometric") {
+            if (record.value === undefined) {
+              getStorageModule().deleteSecureBiometric(key);
+            } else {
+              getStorageModule().setSecureBiometricWithLevel(
+                key,
+                record.value,
+                record.level,
+              );
+            }
+            return;
+          }
+          if (record.kind !== "raw") {
+            return;
+          }
+          if (record.value === undefined) {
             keysToRemove.push(key);
           } else {
-            keysToSet.push(key);
-            valuesToSet.push(previousValue as string);
+            const accessControl =
+              record.accessControl ?? secureDefaultAccessControl;
+            const existingGroup = groupedKeysToSet.get(accessControl);
+            const group = existingGroup ?? { keys: [], values: [] };
+            group.keys.push(key);
+            group.values.push(record.value);
+            if (!existingGroup) {
+              groupedKeysToSet.set(accessControl, group);
+            }
           }
         });
 
@@ -2368,12 +2459,15 @@ export function runTransaction<T>(
         if (scope === StorageScope.Secure) {
           flushSecureWrites();
         }
-        if (keysToSet.length > 0) {
-          getStorageModule().setBatch(keysToSet, valuesToSet, scope);
-          keysToSet.forEach((key, index) =>
-            cacheRawValue(scope, key, valuesToSet[index]),
+        groupedKeysToSet.forEach((group, accessControl) => {
+          if (scope === StorageScope.Secure) {
+            getStorageModule().setSecureAccessControl(accessControl);
+          }
+          getStorageModule().setBatch(group.keys, group.values, scope);
+          group.keys.forEach((key, index) =>
+            cacheRawValue(scope, key, group.values[index]),
           );
-        }
+        });
         if (keysToRemove.length > 0) {
           getStorageModule().removeBatch(keysToRemove, scope);
           keysToRemove.forEach((key) => cacheRawValue(scope, key, undefined));

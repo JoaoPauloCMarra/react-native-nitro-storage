@@ -1704,6 +1704,23 @@ describe("Web Storage", () => {
     expect(item.get()).toBe("1234");
   });
 
+  it("biometric level none uses regular secure fallback", () => {
+    const item = createStorageItem({
+      key: "bio-none",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+      biometricLevel: BiometricLevel.None,
+    });
+
+    item.set("plain-secure");
+
+    expect(globalThis.localStorage.getItem("__bio_bio-none")).toBeNull();
+    expect(globalThis.localStorage.getItem("__secure_bio-none")).toBe(
+      serializeWithPrimitiveFastPath("plain-secure"),
+    );
+  });
+
   it("biometric updates notify subscribers", () => {
     const item = createStorageItem({
       key: "bio-listener",
@@ -2287,8 +2304,6 @@ describe("Web Storage", () => {
     nowSpy.mockRestore();
   });
 
-  // --- accessControl is a no-op on web ---
-
   it("accessControl option does not throw on web", () => {
     expect(() =>
       createStorageItem({
@@ -2305,6 +2320,31 @@ describe("Web Storage", () => {
     ).not.toThrow();
     expect(() => storage.setSecureWritesAsync(true)).not.toThrow();
     expect(() => storage.setKeychainAccessGroup("group.test")).not.toThrow();
+  });
+
+  it("rejects invalid secure access-control and biometric levels on web", () => {
+    expect(() =>
+      storage.setAccessControl(Number.NaN as unknown as AccessControl),
+    ).toThrow(/Invalid access control level/);
+    expect(() =>
+      storage.setAccessControl(1.5 as unknown as AccessControl),
+    ).toThrow(/Invalid access control level/);
+    expect(() =>
+      createStorageItem({
+        key: "invalid-access-control",
+        scope: StorageScope.Secure,
+        defaultValue: "",
+        accessControl: 5 as unknown as AccessControl,
+      }),
+    ).toThrow(/Invalid access control level/);
+    expect(() =>
+      createStorageItem({
+        key: "invalid-biometric-level",
+        scope: StorageScope.Secure,
+        defaultValue: "",
+        biometricLevel: Number.POSITIVE_INFINITY as unknown as BiometricLevel,
+      }),
+    ).toThrow(/Invalid biometric level/);
   });
 
   // --- edge: biometric ignores memory scope ---
@@ -2971,6 +3011,48 @@ describe("web transaction edge cases", () => {
 
     expect(item.get()).toBe("default");
     expect(globalThis.localStorage.getItem("txn-rb-new")).toBeNull();
+  });
+
+  it("transaction rollback restores secure biometric values", () => {
+    const item = createStorageItem({
+      key: "txn-rb-bio",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+      biometricLevel: BiometricLevel.BiometryOrPasscode,
+    });
+    item.set("before");
+
+    expect(() =>
+      runTransaction(StorageScope.Secure, (tx) => {
+        tx.setItem(item, "during");
+        throw new Error("abort");
+      }),
+    ).toThrow("abort");
+
+    expect(globalThis.localStorage.getItem("__bio_txn-rb-bio")).toBe(
+      serializeWithPrimitiveFastPath("before"),
+    );
+    expect(item.get()).toBe("before");
+  });
+
+  it("transaction rollback removes new secure biometric values", () => {
+    const item = createStorageItem({
+      key: "txn-rb-new-bio",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+
+    expect(() =>
+      runTransaction(StorageScope.Secure, (tx) => {
+        tx.setItem(item, "created");
+        throw new Error("abort");
+      }),
+    ).toThrow("abort");
+
+    expect(globalThis.localStorage.getItem("__bio_txn-rb-new-bio")).toBeNull();
+    expect(item.get()).toBe("");
   });
 
   it("transaction in Memory scope rolls back correctly", () => {

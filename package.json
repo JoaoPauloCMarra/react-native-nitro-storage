@@ -11,6 +11,7 @@
     "publish-package:dry": "node scripts/publish.js --dry-run",
     "build": "turbo run build",
     "lint": "turbo run lint",
+    "lint:check": "turbo run lint:check",
     "format": "turbo run format",
     "format:check": "turbo run format:check",
     "clean": "turbo run clean",

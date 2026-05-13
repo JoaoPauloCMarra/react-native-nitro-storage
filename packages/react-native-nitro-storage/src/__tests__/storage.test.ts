@@ -186,6 +186,31 @@ describe("createStorageItem", () => {
     );
   });
 
+  it("rejects invalid secure access-control and biometric levels", () => {
+    expect(() =>
+      storage.setAccessControl(Number.NaN as unknown as AccessControl),
+    ).toThrow(/Invalid access control level/);
+    expect(() =>
+      storage.setAccessControl(1.5 as unknown as AccessControl),
+    ).toThrow(/Invalid access control level/);
+    expect(() =>
+      createStorageItem({
+        key: "invalid-access-control",
+        scope: StorageScope.Secure,
+        defaultValue: "",
+        accessControl: -1 as unknown as AccessControl,
+      }),
+    ).toThrow(/Invalid access control level/);
+    expect(() =>
+      createStorageItem({
+        key: "invalid-biometric-level",
+        scope: StorageScope.Secure,
+        defaultValue: "",
+        biometricLevel: Number.POSITIVE_INFINITY as unknown as BiometricLevel,
+      }),
+    ).toThrow(/Invalid biometric level/);
+  });
+
   it("deletes value from storage", () => {
     const item = createStorageItem({
       key: "test-key",
@@ -2379,6 +2404,86 @@ describe("transaction rollback", () => {
     expect(mockHybridObject.removeBatch).toHaveBeenCalledWith(
       ["tx-new-key"],
       StorageScope.Disk,
+    );
+  });
+
+  it("transaction rollback restores secure biometric values", () => {
+    mockHybridObject.getSecureBiometric.mockReturnValue(
+      serializeWithPrimitiveFastPath("secure-before"),
+    );
+
+    const item = createStorageItem({
+      key: "tx-secure-bio",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+      biometricLevel: BiometricLevel.BiometryOrPasscode,
+    });
+
+    expect(() =>
+      runTransaction(StorageScope.Secure, (tx) => {
+        tx.setItem(item, "secure-during");
+        throw new Error("rollback");
+      }),
+    ).toThrow("rollback");
+
+    expect(
+      mockHybridObject.setSecureBiometricWithLevel,
+    ).toHaveBeenLastCalledWith(
+      "tx-secure-bio",
+      serializeWithPrimitiveFastPath("secure-before"),
+      BiometricLevel.BiometryOrPasscode,
+    );
+  });
+
+  it("transaction rollback removes newly-created secure biometric values", () => {
+    mockHybridObject.getSecureBiometric.mockReturnValue(undefined);
+
+    const item = createStorageItem({
+      key: "tx-secure-bio-new",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+
+    expect(() =>
+      runTransaction(StorageScope.Secure, (tx) => {
+        tx.setItem(item, "secure-created");
+        throw new Error("rollback");
+      }),
+    ).toThrow("rollback");
+
+    expect(mockHybridObject.deleteSecureBiometric).toHaveBeenCalledWith(
+      "tx-secure-bio-new",
+    );
+  });
+
+  it("transaction rollback restores secure access-control items with item access control", () => {
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("secure-before"),
+    );
+
+    const item = createStorageItem({
+      key: "tx-secure-access-control",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      accessControl: AccessControl.AfterFirstUnlock,
+    });
+
+    expect(() =>
+      runTransaction(StorageScope.Secure, (tx) => {
+        tx.setItem(item, "secure-during");
+        throw new Error("rollback");
+      }),
+    ).toThrow("rollback");
+
+    expect(mockHybridObject.setSecureAccessControl).toHaveBeenCalledWith(
+      AccessControl.AfterFirstUnlock,
+    );
+    expect(mockHybridObject.setBatch).toHaveBeenCalledWith(
+      ["tx-secure-access-control"],
+      [serializeWithPrimitiveFastPath("secure-before")],
+      StorageScope.Secure,
     );
   });
 });
