@@ -124,6 +124,11 @@ function getPackageVersion() {
   return packageJson.version;
 }
 
+function getPackageName() {
+  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+  return packageJson.name;
+}
+
 function getGitStatus() {
   const status = execCommandWithOutput("git status --porcelain", {
     cwd: packageDir,
@@ -137,6 +142,14 @@ function getGitStatus() {
 function checkNpmAuth() {
   const whoami = execCommandWithOutput("npm whoami 2>/dev/null");
   return whoami !== null && whoami !== "";
+}
+
+function isPackageVersionPublished(packageName, version) {
+  return (
+    execCommandWithOutput(
+      `npm view ${shellQuote(`${packageName}@${version}`)} version 2>/dev/null`,
+    ) !== null
+  );
 }
 
 function isNpmTrustedPublishingCI() {
@@ -319,6 +332,7 @@ Options:
   log("📦 Publishing react-native-nitro-storage", "bold");
   console.log("");
 
+  const packageName = getPackageName();
   const version = getPackageVersion();
   cleanupPackageDocs();
   assertReleaseDocs(version);
@@ -332,6 +346,12 @@ Options:
 
   if (!skipChecks) {
     log("Running pre-publish checks...", "cyan");
+
+    if (isPackageVersionPublished(packageName, version)) {
+      log(`✗ ${packageName}@${version} is already published`, "red");
+      process.exit(1);
+    }
+    console.log(`  ✓ ${packageName}@${version} is not published on npm`);
 
     const gitStatus = getGitStatus();
     if (gitStatus.length > 0) {
@@ -362,9 +382,11 @@ Options:
     console.log("");
   }
 
-  runCheck("🧹 Running lint...", `bun run lint -- --filter=${packageFilter}`, {
-    cwd: projectRoot,
-  });
+  runCheck(
+    "🧹 Running lint...",
+    `bun run lint:check -- --filter=${packageFilter}`,
+    { cwd: projectRoot },
+  );
   runCheck(
     "🎨 Running format check...",
     `bun run format:check -- --filter=${packageFilter}`,

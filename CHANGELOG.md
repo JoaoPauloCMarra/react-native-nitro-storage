@@ -4,10 +4,15 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
-## 0.5.3 - 2026-05-05
+## 0.5.4 - 2026-05-13
 
 ### Fixed
 
+- Fixed the Android example launcher icon by adding an adaptive icon foreground and dark brand background.
+- Align the Expo example with the current SDK 55 patch-level dependency recommendations.
+- Align web secure runtime validation with native for access-control and biometric levels.
+- Preserve secure biometric and access-control item semantics during transaction rollback.
+- Keep web raw batch writes from indexing keys whose values were not written.
 - Reject fractional C++ secure access-control and biometric levels before casting them for native adapters.
 - Align the Expo example with SDK 55 dependency validation for `expo` and `babel-preset-expo`.
 - Patch generated example native projects to avoid fixable iOS deployment-target and Android Gradle syntax warnings.

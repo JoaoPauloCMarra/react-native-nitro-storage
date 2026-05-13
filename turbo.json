@@ -8,6 +8,9 @@
     "lint": {
       "dependsOn": ["^build"]
     },
+    "lint:check": {
+      "dependsOn": ["^build"]
+    },
     "format": {},
     "format:check": {},
     "clean": {

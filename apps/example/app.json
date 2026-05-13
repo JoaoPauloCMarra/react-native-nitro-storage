@@ -9,10 +9,14 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.nitrostorage.example",
+      "bundleIdentifier": "com.nitrostorage.example"
     },
     "android": {
-      "package": "com.nitrostorage.example"
+      "package": "com.nitrostorage.example",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#07131E"
+      }
     },
     "plugins": [
       "expo-router",
