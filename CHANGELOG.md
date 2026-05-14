@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
+## 0.5.5 - 2026-05-14
+
+### Added
+
+- Add secure export guardrails: `storage.export(StorageScope.Secure)` now requires an explicit `{ includeSecureValues: true }` opt-in, with `storage.exportSecureUnsafe()` available for short-lived secure migration flows.
+- Add secure event observer redaction options so `storage.setEventObserver()` redacts Secure values by default and requires explicit opt-in for raw Secure event values.
+- Add Expo plugin Android backup rules that exclude Nitro Storage secure preference files from cloud backup and device transfer.
+- Add public web backend contract exports for `WebDiskStorageBackend` and `WebSecureStorageBackend` from the native and web entrypoints.
+
+### Changed
+
+- Close replaced web storage backends so IndexedDB-backed `BroadcastChannel` and database handles do not leak after backend swaps.
+- Update README and package docs for the current secure export, event observer, Expo backup, web backend, and TypeScript usage surface.
+- Update safe native/tooling dependencies, including Nitro `0.35.6`, AndroidX Security Crypto `1.1.0`, RN 0.83 Babel preset patch, Expo preset patch, SWC, Node types, and Turbo.
+- Extend the example app so web, Android, and iOS expose the same secure export guard, event observer redaction, and web backend override flows where each platform supports them.
+
+### Fixed
+
+- Avoid Metro private `metro-config/src/defaults/exclusionList` imports and exclude generated Android `.cxx` directories from Metro and Watchman scans.
+- Remove package-owned Android native log spam for expected unavailable biometric storage paths.
+- Modernize Android Gradle assignment syntax to avoid package-owned Gradle warnings.
+
 ## 0.5.4 - 2026-05-13
 
 ### Fixed

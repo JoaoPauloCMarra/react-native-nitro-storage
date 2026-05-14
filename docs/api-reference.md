@@ -72,41 +72,42 @@ See [react-hooks.md](react-hooks.md).
 
 `storage` exposes raw and cross-item utilities:
 
-| Method                                           | Purpose                                                       |
-| ------------------------------------------------ | ------------------------------------------------------------- |
-| `clear(scope)`                                   | Clear one scope.                                              |
-| `clearAll()`                                     | Clear Memory, Disk, and Secure scopes.                        |
-| `clearNamespace(namespace, scope)`               | Remove keys under `namespace:`.                               |
-| `subscribe(scope, listener)`                     | Subscribe to raw scope-level change events.                   |
-| `subscribeKey(scope, key, listener)`             | Subscribe to raw events for one key.                          |
-| `subscribePrefix(scope, prefix, listener)`       | Subscribe to raw events for matching key prefixes.            |
-| `subscribeNamespace(namespace, scope, listener)` | Subscribe to raw events for `namespace:` keys.                |
-| `setEventObserver(observer)`                     | Receive all change events for devtools or logging.            |
-| `clearBiometric()`                               | Clear biometric Secure entries.                               |
-| `has(key, scope)`                                | Check for a raw key.                                          |
-| `getAllKeys(scope)`                              | List raw keys.                                                |
-| `getKeysByPrefix(prefix, scope)`                 | List raw keys with a prefix.                                  |
-| `getByPrefix(prefix, scope)`                     | Read raw string values by prefix.                             |
-| `getAll(scope)`                                  | Read all raw string values in a scope.                        |
-| `size(scope)`                                    | Return approximate scope entry count.                         |
-| `setAccessControl(accessControl)`                | Set the default Secure access control level.                  |
-| `setSecureWritesAsync(enabled)`                  | Toggle Android secure writes between sync and async modes.    |
-| `setDiskWritesAsync(enabled)`                    | Toggle coalesced Disk write behavior.                         |
-| `flushDiskWrites()`                              | Flush pending Disk writes.                                    |
-| `flushSecureWrites()`                            | Flush pending Secure writes.                                  |
-| `setKeychainAccessGroup(group)`                  | Configure iOS Keychain access group.                          |
-| `setMetricsObserver(observer)`                   | Receive operation timing events.                              |
-| `getMetricsSnapshot()`                           | Read aggregated metrics.                                      |
-| `resetMetrics()`                                 | Clear metrics counters.                                       |
-| `getCapabilities()`                              | Read runtime storage capabilities.                            |
-| `getSecurityCapabilities()`                      | Read secure backend capability metadata.                      |
-| `getSecureMetadata(key)`                         | Read secure metadata for one key without returning its value. |
-| `getAllSecureMetadata()`                         | Read secure metadata for all secure keys without values.      |
-| `getString(key, scope)`                          | Read a raw string.                                            |
-| `setString(key, value, scope)`                   | Write a raw string.                                           |
-| `deleteString(key, scope)`                       | Remove a raw key.                                             |
-| `export(scope)`                                  | Snapshot raw strings from one scope.                          |
-| `import(data, scope)`                            | Bulk import raw strings.                                      |
+| Method                                           | Purpose                                                                                   |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `clear(scope)`                                   | Clear one scope.                                                                          |
+| `clearAll()`                                     | Clear Memory, Disk, and Secure scopes.                                                    |
+| `clearNamespace(namespace, scope)`               | Remove keys under `namespace:`.                                                           |
+| `subscribe(scope, listener)`                     | Subscribe to raw scope-level change events.                                               |
+| `subscribeKey(scope, key, listener)`             | Subscribe to raw events for one key.                                                      |
+| `subscribePrefix(scope, prefix, listener)`       | Subscribe to raw events for matching key prefixes.                                        |
+| `subscribeNamespace(namespace, scope, listener)` | Subscribe to raw events for `namespace:` keys.                                            |
+| `setEventObserver(observer, options?)`           | Receive all change events for devtools or logging. Secure values are redacted by default. |
+| `clearBiometric()`                               | Clear biometric Secure entries.                                                           |
+| `has(key, scope)`                                | Check for a raw key.                                                                      |
+| `getAllKeys(scope)`                              | List raw keys.                                                                            |
+| `getKeysByPrefix(prefix, scope)`                 | List raw keys with a prefix.                                                              |
+| `getByPrefix(prefix, scope)`                     | Read raw string values by prefix.                                                         |
+| `getAll(scope)`                                  | Read all raw string values in a scope.                                                    |
+| `size(scope)`                                    | Return approximate scope entry count.                                                     |
+| `setAccessControl(accessControl)`                | Set the default Secure access control level.                                              |
+| `setSecureWritesAsync(enabled)`                  | Toggle Android secure writes between sync and async modes.                                |
+| `setDiskWritesAsync(enabled)`                    | Toggle coalesced Disk write behavior.                                                     |
+| `flushDiskWrites()`                              | Flush pending Disk writes.                                                                |
+| `flushSecureWrites()`                            | Flush pending Secure writes.                                                              |
+| `setKeychainAccessGroup(group)`                  | Configure iOS Keychain access group.                                                      |
+| `setMetricsObserver(observer)`                   | Receive operation timing events.                                                          |
+| `getMetricsSnapshot()`                           | Read aggregated metrics.                                                                  |
+| `resetMetrics()`                                 | Clear metrics counters.                                                                   |
+| `getCapabilities()`                              | Read runtime storage capabilities.                                                        |
+| `getSecurityCapabilities()`                      | Read secure backend capability metadata.                                                  |
+| `getSecureMetadata(key)`                         | Read secure metadata for one key without returning its value.                             |
+| `getAllSecureMetadata()`                         | Read secure metadata for all secure keys without values.                                  |
+| `getString(key, scope)`                          | Read a raw string.                                                                        |
+| `setString(key, value, scope)`                   | Write a raw string.                                                                       |
+| `deleteString(key, scope)`                       | Remove a raw key.                                                                         |
+| `export(scope, options?)`                        | Snapshot raw strings from one scope. Secure scope requires explicit unsafe opt-in.        |
+| `exportSecureUnsafe()`                           | Snapshot raw Secure strings for short-lived migration workflows.                          |
+| `import(data, scope)`                            | Bulk import raw strings.                                                                  |
 
 Raw string APIs bypass item serialization and validation. Prefer `StorageItem<T>` unless you are migrating, exporting/importing, or writing a custom integration.
 
@@ -115,7 +116,7 @@ const diskSnapshot = storage.export(StorageScope.Disk);
 storage.import(diskSnapshot, StorageScope.Disk);
 ```
 
-Secure exports contain raw secret values. Do not log `storage.export(StorageScope.Secure)` output or attach it to diagnostics, analytics, crash reports, or support bundles.
+Secure exports contain raw secret values. `storage.export(StorageScope.Secure)` throws unless called with `{ includeSecureValues: true }`; `storage.exportSecureUnsafe()` is the explicit equivalent. Do not log Secure exports or attach them to diagnostics, analytics, crash reports, or support bundles.
 
 ## Event Subscriptions
 
@@ -148,6 +149,8 @@ storage.setEventObserver((event) => {
   }
 });
 ```
+
+`setEventObserver()` redacts Secure `oldValue` and `newValue` fields by default. Pass `{ redactSecureValues: false }` only for in-memory debugging paths that never persist logs. Raw `subscribe*()` APIs preserve values for state integrations.
 
 Local batch APIs emit one `type: "batch"` envelope to scope and prefix/namespace listeners. Key subscribers receive the matching per-key change so direct key integrations do not need to unpack batch envelopes. Secure events can include raw secret values; do not log Secure event payloads in production.
 

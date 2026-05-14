@@ -24,6 +24,27 @@ config.resolver.nodeModulesPaths = [
   path.resolve(monorepoRoot, "node_modules"),
 ];
 
+const generatedNitroModulesCxx = new RegExp(
+  `${path
+    .resolve(
+      monorepoRoot,
+      "node_modules/react-native-nitro-modules/android/.cxx",
+    )
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[/\\\\].*`,
+);
+const bunOldNodeModules = new RegExp(
+  `${path
+    .resolve(monorepoRoot, "node_modules/.old-")
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^/\\\\]+(?:[/\\\\].*)?$`,
+);
+config.resolver.blockList = Array.isArray(config.resolver.blockList)
+  ? [...config.resolver.blockList, generatedNitroModulesCxx, bunOldNodeModules]
+  : [
+      config.resolver.blockList,
+      generatedNitroModulesCxx,
+      bunOldNodeModules,
+    ].filter(Boolean);
+
 // Web platform: exclude native-only deps, use web entry for local package
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (platform === "web") {
@@ -35,9 +56,9 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
         context,
         path.resolve(
           monorepoRoot,
-          "packages/react-native-nitro-storage/src/index.web.ts"
+          "packages/react-native-nitro-storage/src/index.web.ts",
         ),
-        platform
+        platform,
       );
     }
   }

@@ -82,7 +82,7 @@ storage.import(snapshot, StorageScope.Disk);
 
 For Memory scope, import is atomic: all keys are written before listeners fire. For Disk and Secure, import delegates to native or web batch paths.
 
-Secure exports contain raw secret values. Do not log them or include them in diagnostics, analytics, crash reports, or support bundles.
+Secure exports contain raw secret values. `storage.export(StorageScope.Secure)` requires `{ includeSecureValues: true }`; `storage.exportSecureUnsafe()` is the explicit equivalent. Do not log Secure exports or include them in diagnostics, analytics, crash reports, or support bundles.
 
 ## Transactions
 

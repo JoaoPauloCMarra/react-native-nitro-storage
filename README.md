@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/react-native-nitro-storage)](https://www.npmjs.com/package/react-native-nitro-storage)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![React Native](https://img.shields.io/badge/react--native-%3E%3D0.75-61dafb)](https://reactnative.dev/)
-[![Nitro Modules](https://img.shields.io/badge/nitro--modules-%3E%3D0.35.5-black)](https://nitro.margelo.com/)
+[![Nitro Modules](https://img.shields.io/badge/nitro--modules-%3E%3D0.35.6-black)](https://nitro.margelo.com/)
 
 One storage layer for render-time state, persisted app state, and native secrets.
 
@@ -20,6 +20,7 @@ Use it when you want one storage API for React Native and web, with fast synchro
 - [Quick Start](#quick-start)
 - [Storage Scopes](#storage-scopes)
 - [Docs](#docs)
+- [TypeScript And IDE Safety](#typescript-and-ide-safety)
 - [Platform Support](#platform-support)
 - [Security Model](#security-model)
 - [Migration Paths](#migration-paths)
@@ -83,7 +84,8 @@ bunx expo install react-native-nitro-storage react-native-nitro-modules
         "react-native-nitro-storage",
         {
           "faceIDPermission": "Allow $(PRODUCT_NAME) to protect your secure data with Face ID",
-          "addBiometricPermissions": true
+          "addBiometricPermissions": true,
+          "configureAndroidBackup": true
         }
       ]
     ]
@@ -95,7 +97,7 @@ bunx expo install react-native-nitro-storage react-native-nitro-modules
 bunx expo prebuild
 ```
 
-The Expo plugin sets `NSFaceIDUsageDescription`, can opt into Android biometric permissions, and initializes the Android storage adapter in `MainApplication`.
+The Expo plugin sets `NSFaceIDUsageDescription`, can opt into Android biometric permissions, initializes the Android storage adapter in `MainApplication`, and writes Android backup rules that exclude Nitro Storage secure preference files from cloud backup and device transfer. Set `configureAndroidBackup: false` only when you maintain equivalent backup rules yourself.
 
 Bare React Native projects should install pods after adding the package:
 
@@ -199,7 +201,7 @@ const snapshot = storage.export(StorageScope.Disk);
 storage.import(snapshot, StorageScope.Disk);
 ```
 
-`storage.export(StorageScope.Secure)` returns raw secret values. Do not log Secure exports or include them in diagnostics, analytics, crash reports, or support bundles.
+`storage.export(StorageScope.Secure)` throws unless you pass `{ includeSecureValues: true }`. Prefer `storage.exportSecureUnsafe()` only for short-lived in-memory secure migration workflows. Do not log Secure exports or include them in diagnostics, analytics, crash reports, or support bundles.
 
 Subscribe to storage changes outside React:
 
@@ -284,6 +286,44 @@ The main building blocks are:
 
 See the full [API reference](docs/api-reference.md).
 
+## TypeScript And IDE Safety
+
+The public API is designed around typed storage items. Define the value type, default value, serializer, parser, and validator in one place so reads, writes, React hooks, batch APIs, migrations, and transactions all share the same contract.
+
+```ts
+type Preferences = {
+  theme: "system" | "light" | "dark";
+  compactMode: boolean;
+};
+
+const preferencesItem = createStorageItem<Preferences>({
+  key: "preferences",
+  scope: StorageScope.Disk,
+  defaultValue: { theme: "system", compactMode: false },
+  validate: (value): value is Preferences =>
+    typeof value === "object" &&
+    value !== null &&
+    ["system", "light", "dark"].includes(
+      (value as Partial<Preferences>).theme ?? "",
+    ) &&
+    typeof (value as Partial<Preferences>).compactMode === "boolean",
+});
+
+preferencesItem.set((current) => ({
+  ...current,
+  compactMode: !current.compactMode,
+}));
+```
+
+For web backend overrides, import the backend contracts instead of using loose object shapes:
+
+```ts
+import type {
+  WebDiskStorageBackend,
+  WebSecureStorageBackend,
+} from "react-native-nitro-storage";
+```
+
 ## Platform Support
 
 | Platform | Status    | Notes                                                                                                  |
@@ -297,7 +337,7 @@ Peer dependencies:
 
 - `react >=18.2.0`
 - `react-native >=0.75.0`
-- `react-native-nitro-modules >=0.35.5`
+- `react-native-nitro-modules >=0.35.6`
 
 ## Security Model
 

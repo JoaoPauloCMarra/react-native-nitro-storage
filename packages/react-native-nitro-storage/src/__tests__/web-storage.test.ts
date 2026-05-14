@@ -113,6 +113,7 @@ function createWebBackendMock(name = "mock-backend") {
       };
     }),
     flush: jest.fn(async () => {}),
+    close: jest.fn(),
     emit,
   };
 }
@@ -2229,6 +2230,63 @@ describe("Web Storage", () => {
     storage.setEventObserver(undefined);
   });
 
+  it("redacts secure values for the global event observer by default on web", () => {
+    const events: unknown[] = [];
+
+    storage.setEventObserver((event) => {
+      events.push(event);
+    });
+
+    storage.setString("secure:event", "secret-value", StorageScope.Secure);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "key",
+      scope: StorageScope.Secure,
+      key: "secure:event",
+      oldValue: undefined,
+      newValue: "[secure]",
+    });
+
+    storage.setEventObserver(undefined);
+  });
+
+  it("allows explicit raw secure values for the global event observer on web", () => {
+    const events: unknown[] = [];
+
+    storage.setEventObserver(
+      (event) => {
+        events.push(event);
+      },
+      { redactSecureValues: false },
+    );
+
+    storage.setString("secure:event:raw", "secret-value", StorageScope.Secure);
+
+    expect(events[0]).toMatchObject({
+      type: "key",
+      scope: StorageScope.Secure,
+      key: "secure:event:raw",
+      newValue: "secret-value",
+    });
+
+    storage.setEventObserver(undefined);
+  });
+
+  it("requires explicit opt-in for secure raw export on web", () => {
+    storage.setString("secure:export", "secret-value", StorageScope.Secure);
+
+    expect(() => storage.export(StorageScope.Secure)).toThrow(
+      /exporting Secure scope exposes raw secret values/,
+    );
+    expect(
+      storage.export(StorageScope.Secure, { includeSecureValues: true }),
+    ).toEqual({ "secure:export": "secret-value" });
+    expect(storage.exportSecureUnsafe()).toEqual({
+      "secure:export": "secret-value",
+    });
+  });
+
   // --- clearBiometric ---
 
   it("storage.clearBiometric removes all __bio_ prefixed entries", () => {
@@ -2566,6 +2624,24 @@ describe("web backend switching", () => {
     const backend = getWebSecureStorageBackend();
     expect(backend).toBeDefined();
     expect(backend).not.toBe(custom);
+    expect(custom.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes replaced web storage backends", () => {
+    const firstSecure = createWebBackendMock("first-secure");
+    const nextSecure = createWebBackendMock("next-secure");
+    const firstDisk = createWebBackendMock("first-disk");
+    const nextDisk = createWebBackendMock("next-disk");
+
+    setWebSecureStorageBackend(firstSecure);
+    setWebSecureStorageBackend(nextSecure);
+    setWebDiskStorageBackend(firstDisk);
+    setWebDiskStorageBackend(nextDisk);
+
+    expect(firstSecure.close).toHaveBeenCalledTimes(1);
+    expect(nextSecure.close).not.toHaveBeenCalled();
+    expect(firstDisk.close).toHaveBeenCalledTimes(1);
+    expect(nextDisk.close).not.toHaveBeenCalled();
   });
 
   it("getWebDiskStorageBackend returns default backend when reset to undefined", () => {

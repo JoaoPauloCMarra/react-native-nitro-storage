@@ -139,6 +139,7 @@ function makeFakeIDB(): {
       transaction(storeName: string, mode: IDBTransactionMode = "readonly") {
         return makeTransaction(entries, storeName, mode);
       },
+      close() {},
     };
 
     const req: {
@@ -247,6 +248,7 @@ describe("createIndexedDBBackend", () => {
     expect(typeof backend.getAllKeys).toBe("function");
     expect(typeof backend.flush).toBe("function");
     expect(typeof backend.subscribe).toBe("function");
+    expect(typeof backend.close).toBe("function");
   });
 
   it("getItem returns null for a key that was never set", async () => {
@@ -407,6 +409,17 @@ describe("createIndexedDBBackend", () => {
     });
   });
 
+  it("closes the backend and rejects further synchronous operations", async () => {
+    const backend = await createIndexedDBBackend("close-db", "kv");
+    backend.setItem("key", "value");
+
+    backend.close?.();
+    backend.close?.();
+
+    expect(() => backend.getItem("key")).toThrow(/closed/);
+    expect(() => backend.setItem("other", "value")).toThrow(/closed/);
+  });
+
   it("surfaces async queue failures through onError", async () => {
     Object.defineProperty(globalThis, "indexedDB", {
       value: {
@@ -418,6 +431,7 @@ describe("createIndexedDBBackend", () => {
             createObjectStore() {
               return {};
             },
+            close() {},
             transaction(_storeName: string, mode: IDBTransactionMode) {
               if (mode === "readwrite") {
                 throw new Error("write failed");

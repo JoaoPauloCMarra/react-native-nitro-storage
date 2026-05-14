@@ -2832,6 +2832,64 @@ describe("memory scope optimizations", () => {
 
     storage.setEventObserver(undefined);
   });
+
+  it("redacts secure values for the global event observer by default", () => {
+    const events: unknown[] = [];
+
+    storage.setEventObserver((event) => {
+      events.push(event);
+    });
+
+    storage.setString("secure:event", "secret-value", StorageScope.Secure);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "key",
+      scope: StorageScope.Secure,
+      key: "secure:event",
+      oldValue: undefined,
+      newValue: "[secure]",
+    });
+
+    storage.setEventObserver(undefined);
+  });
+
+  it("allows explicit raw secure values for the global event observer", () => {
+    const events: unknown[] = [];
+
+    storage.setEventObserver(
+      (event) => {
+        events.push(event);
+      },
+      { redactSecureValues: false },
+    );
+
+    storage.setString("secure:event:raw", "secret-value", StorageScope.Secure);
+
+    expect(events[0]).toMatchObject({
+      type: "key",
+      scope: StorageScope.Secure,
+      key: "secure:event:raw",
+      newValue: "secret-value",
+    });
+
+    storage.setEventObserver(undefined);
+  });
+
+  it("requires explicit opt-in for secure raw export", () => {
+    mockHybridObject.getAllKeys.mockReturnValue(["secure:export"]);
+    mockHybridObject.getBatch.mockReturnValue(["secret-value"]);
+
+    expect(() => storage.export(StorageScope.Secure)).toThrow(
+      /exporting Secure scope exposes raw secret values/,
+    );
+    expect(
+      storage.export(StorageScope.Secure, { includeSecureValues: true }),
+    ).toEqual({ "secure:export": "secret-value" });
+    expect(storage.exportSecureUnsafe()).toEqual({
+      "secure:export": "secret-value",
+    });
+  });
 });
 
 describe("storage.clearBiometric", () => {

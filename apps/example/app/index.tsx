@@ -1,19 +1,26 @@
 import { useRef, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Platform, StyleSheet, Text, View } from "react-native";
 import {
   createSecureAuthStorage,
   createStorageItem,
+  flushWebStorageBackends,
   getBatch,
   getStorageErrorCode,
+  getWebDiskStorageBackend,
+  getWebSecureStorageBackend,
   migrateToLatest,
   registerMigration,
   removeBatch,
   runTransaction,
   setBatch,
+  setWebDiskStorageBackend,
+  setWebSecureStorageBackend,
   storage,
   StorageScope,
   useStorage,
   useStorageSelector,
+  type WebDiskStorageBackend,
+  type WebSecureStorageBackend,
 } from "react-native-nitro-storage";
 import {
   Button,
@@ -56,7 +63,6 @@ const namespacedItem = createStorageItem({
 });
 
 type AppConfig = { theme: "dark" | "light"; notifications: boolean };
-
 const configItem = createStorageItem<AppConfig>({
   key: "app-config",
   scope: StorageScope.Disk,
@@ -148,6 +154,7 @@ const bufferedDiskItem = createStorageItem({
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const HOOK_LABELS = ["initial", "alpha", "beta", "gamma", "delta"];
+const isWebRuntime = Platform.OS === "web";
 
 let migVer = 30_000;
 
@@ -239,12 +246,67 @@ export default function HomeScreen() {
   const [diskBufferingEnabled, setDiskBufferingEnabled] = useState(false);
   const [diskBufferedPreview, setDiskBufferedPreview] = useState("(empty)");
   const [classifiedErrorCode, setClassifiedErrorCode] = useState("(none)");
+  const [secureExportStatus, setSecureExportStatus] = useState("(not run)");
+  const [secureObserverStatus, setSecureObserverStatus] = useState("(not run)");
+  const [webBackendStatus, setWebBackendStatus] = useState(
+    isWebRuntime ? "default localStorage backends" : "native platform backends",
+  );
   const capabilities = storage.getCapabilities();
   const securityCapabilities = storage.getSecurityCapabilities();
 
   const refreshSecureMetadata = () => {
     setSecureMetadata(storage.getSecureMetadata("secure-token"));
     setSecureMetadataCount(storage.getAllSecureMetadata().length);
+  };
+
+  const installWebBackends = () => {
+    if (!isWebRuntime) {
+      setWebBackendStatus("native platforms ignore web backend overrides");
+      return;
+    }
+
+    const diskStore = new Map<string, string>();
+    const secureStore = new Map<string, string>();
+    const createBackend = (
+      name: string,
+      store: Map<string, string>,
+    ): WebDiskStorageBackend | WebSecureStorageBackend => ({
+      name,
+      getItem: (key) => store.get(key) ?? null,
+      setItem: (key, value) => {
+        store.set(key, value);
+      },
+      removeItem: (key) => {
+        store.delete(key);
+      },
+      clear: () => {
+        store.clear();
+      },
+      getAllKeys: () => Array.from(store.keys()),
+      flush: async () => {},
+    });
+
+    const diskBackend = createBackend("example-web-disk", diskStore);
+    const secureBackend = createBackend("example-web-secure", secureStore);
+    setWebDiskStorageBackend(diskBackend);
+    setWebSecureStorageBackend(secureBackend);
+    storage.setString("web-backend-disk", "disk", StorageScope.Disk);
+    storage.setString("web-backend-secure", "secure", StorageScope.Secure);
+    void flushWebStorageBackends().then(() => {
+      const diskName = getWebDiskStorageBackend()?.name ?? "none";
+      const secureName = getWebSecureStorageBackend()?.name ?? "none";
+      setWebBackendStatus(`${diskName} / ${secureName}`);
+    });
+  };
+
+  const resetWebBackends = () => {
+    setWebDiskStorageBackend(undefined);
+    setWebSecureStorageBackend(undefined);
+    setWebBackendStatus(
+      isWebRuntime
+        ? "default localStorage backends"
+        : "native platform backends",
+    );
   };
 
   return (
@@ -289,6 +351,132 @@ export default function HomeScreen() {
             style={styles.flex1}
           />
         </View>
+      </Card>
+
+      <Card
+        title="Secure Export Guard"
+        subtitle="safe defaults for secret snapshots"
+        indicatorColor={Colors.secure}
+      >
+        <View style={styles.row}>
+          <Button
+            testID="secure-export-seed"
+            title="Seed Secret"
+            onPress={() => {
+              storage.setString(
+                "secure-export-demo",
+                "demo-secret",
+                StorageScope.Secure,
+              );
+              setSecureExportStatus("seeded secure-export-demo");
+              refreshSecureMetadata();
+            }}
+            style={styles.flex1}
+          />
+          <Button
+            testID="secure-export-guarded"
+            title="Guarded Export"
+            variant="secondary"
+            onPress={() => {
+              try {
+                storage.export(StorageScope.Secure);
+                setSecureExportStatus("unexpected export success");
+              } catch (error) {
+                setSecureExportStatus(
+                  getStorageErrorCode(error) ??
+                    "blocked by secure export guard",
+                );
+              }
+            }}
+            style={styles.flex1}
+          />
+        </View>
+        <View style={styles.row}>
+          <Button
+            testID="secure-export-explicit"
+            title="Explicit Export"
+            onPress={() => {
+              const exported = storage.export(StorageScope.Secure, {
+                includeSecureValues: true,
+              });
+              setSecureExportStatus(`${Object.keys(exported).length} keys`);
+            }}
+            style={styles.flex1}
+          />
+          <Button
+            testID="secure-export-unsafe"
+            title="Unsafe Helper"
+            variant="danger"
+            onPress={() => {
+              const exported = storage.exportSecureUnsafe();
+              setSecureExportStatus(`${Object.keys(exported).length} raw keys`);
+            }}
+            style={styles.flex1}
+          />
+        </View>
+        <StatusRow
+          testID="secure-export-status"
+          label="Result"
+          value={secureExportStatus}
+        />
+      </Card>
+
+      <Card
+        title="Secure Event Observer"
+        subtitle="redacted by default, raw by explicit opt-in"
+        indicatorColor={Colors.secure}
+      >
+        <View style={styles.row}>
+          <Button
+            testID="event-observer-redacted"
+            title="Redacted"
+            onPress={() => {
+              storage.setEventObserver((event) => {
+                if (event.type === "key") {
+                  setSecureObserverStatus(event.newValue ?? "(empty)");
+                }
+              });
+              storage.setString(
+                "secure-observer-demo",
+                "observer-secret",
+                StorageScope.Secure,
+              );
+              storage.setEventObserver(undefined);
+            }}
+            style={styles.flex1}
+          />
+          <Button
+            testID="event-observer-raw"
+            title="Raw Opt-In"
+            variant="secondary"
+            onPress={() => {
+              storage.setEventObserver(
+                (event) => {
+                  if (event.type === "key") {
+                    setSecureObserverStatus(
+                      event.newValue
+                        ? `raw value observed (${event.newValue.length} chars)`
+                        : "(empty)",
+                    );
+                  }
+                },
+                { redactSecureValues: false },
+              );
+              storage.setString(
+                "secure-observer-demo",
+                "observer-secret",
+                StorageScope.Secure,
+              );
+              storage.setEventObserver(undefined);
+            }}
+            style={styles.flex1}
+          />
+        </View>
+        <StatusRow
+          testID="event-observer-status"
+          label="Observed newValue"
+          value={secureObserverStatus}
+        />
       </Card>
 
       {/* 2. Disk Scope */}
@@ -1092,6 +1280,38 @@ export default function HomeScreen() {
           }}
           size="sm"
         />
+      </Card>
+
+      <Card
+        title="Web Backend Overrides"
+        subtitle="custom disk and secure adapters on web"
+        indicatorColor={Colors.disk}
+      >
+        <StatusRow
+          testID="web-backend-platform"
+          label="Platform"
+          value={Platform.OS}
+        />
+        <StatusRow
+          testID="web-backend-status"
+          label="Backend"
+          value={webBackendStatus}
+        />
+        <View style={styles.row}>
+          <Button
+            testID="web-backend-install"
+            title="Install"
+            onPress={installWebBackends}
+            style={styles.flex1}
+          />
+          <Button
+            testID="web-backend-reset"
+            title="Reset"
+            variant="secondary"
+            onPress={resetWebBackends}
+            style={styles.flex1}
+          />
+        </View>
       </Card>
 
       <Card
