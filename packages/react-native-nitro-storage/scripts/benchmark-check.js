@@ -3,7 +3,12 @@ const fs = require("fs");
 const { performance } = require("perf_hooks");
 
 const packageRoot = path.join(__dirname, "..");
-const entrypointPath = path.join(packageRoot, "lib", "commonjs", "index.web.js");
+const entrypointPath = path.join(
+  packageRoot,
+  "lib",
+  "commonjs",
+  "index.web.js",
+);
 
 let storageModule;
 if (!fs.existsSync(entrypointPath)) {
@@ -127,9 +132,12 @@ const batchItems = Array.from({ length: 32 }, (_, index) =>
     key: `__benchmark_batch_${index}__`,
     scope: StorageScope.Memory,
     defaultValue: 0,
-  })
+  }),
 );
-const batchPayload = batchItems.map((item, index) => ({ item, value: index + 1 }));
+const batchPayload = batchItems.map((item, index) => ({
+  item,
+  value: index + 1,
+}));
 const batchIterations = 400;
 const batchOperationsPerIteration = batchItems.length * 3;
 const batchMetric = measureBestOf(
@@ -141,7 +149,7 @@ const batchMetric = measureBestOf(
       getBatch(batchItems, StorageScope.Memory);
       removeBatch(batchItems, StorageScope.Memory);
     }
-  }
+  },
 );
 
 const diskCounter = createStorageItem({
@@ -198,37 +206,37 @@ metrics.forEach(printMetric);
 const failures = [];
 if (setMetric.opsPerSecond < thresholds.memorySetOpsPerSecond) {
   failures.push(
-    `memory:set dropped below ${thresholds.memorySetOpsPerSecond.toLocaleString()} ops/s`
+    `memory:set dropped below ${thresholds.memorySetOpsPerSecond.toLocaleString()} ops/s`,
   );
 }
 if (getMetric.opsPerSecond < thresholds.memoryGetOpsPerSecond) {
   failures.push(
-    `memory:get dropped below ${thresholds.memoryGetOpsPerSecond.toLocaleString()} ops/s`
+    `memory:get dropped below ${thresholds.memoryGetOpsPerSecond.toLocaleString()} ops/s`,
   );
 }
 if (batchMetric.opsPerSecond < thresholds.memoryBatchOpsPerSecond) {
   failures.push(
-    `memory:batch dropped below ${thresholds.memoryBatchOpsPerSecond.toLocaleString()} ops/s`
+    `memory:batch dropped below ${thresholds.memoryBatchOpsPerSecond.toLocaleString()} ops/s`,
   );
 }
 if (diskSetMetric.opsPerSecond < thresholds.diskSetOpsPerSecond) {
   failures.push(
-    `disk:set dropped below ${thresholds.diskSetOpsPerSecond.toLocaleString()} ops/s`
+    `disk:set dropped below ${thresholds.diskSetOpsPerSecond.toLocaleString()} ops/s`,
   );
 }
 if (diskGetMetric.opsPerSecond < thresholds.diskGetOpsPerSecond) {
   failures.push(
-    `disk:get dropped below ${thresholds.diskGetOpsPerSecond.toLocaleString()} ops/s`
+    `disk:get dropped below ${thresholds.diskGetOpsPerSecond.toLocaleString()} ops/s`,
   );
 }
 if (secureSetMetric.opsPerSecond < thresholds.secureSetOpsPerSecond) {
   failures.push(
-    `secure:set dropped below ${thresholds.secureSetOpsPerSecond.toLocaleString()} ops/s`
+    `secure:set dropped below ${thresholds.secureSetOpsPerSecond.toLocaleString()} ops/s`,
   );
 }
 if (secureGetMetric.opsPerSecond < thresholds.secureGetOpsPerSecond) {
   failures.push(
-    `secure:get dropped below ${thresholds.secureGetOpsPerSecond.toLocaleString()} ops/s`
+    `secure:get dropped below ${thresholds.secureGetOpsPerSecond.toLocaleString()} ops/s`,
   );
 }
 

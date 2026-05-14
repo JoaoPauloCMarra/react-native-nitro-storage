@@ -33,9 +33,12 @@ Optional methods improve performance and observability:
 - `size()`
 - `subscribe(listener)`
 - `flush()`
+- `close()`
 - `name`
 
 `subscribe(listener)` should report `{ key, newValue }` changes. Use `key: null` when the whole backend is cleared.
+
+`close()` should release backend-owned resources such as database handles or broadcast channels. Nitro Storage calls it when a configured Disk or Secure backend is replaced.
 
 ## Disk Backend
 
@@ -94,6 +97,8 @@ setWebSecureStorageBackend(backend);
 ```
 
 Reads are synchronous because they are served from memory after initial load. Writes update memory first and persist to IndexedDB in the background.
+
+The IndexedDB backend exposes `close()` and rejects later synchronous operations after it is closed.
 
 ## Cross-tab Updates
 

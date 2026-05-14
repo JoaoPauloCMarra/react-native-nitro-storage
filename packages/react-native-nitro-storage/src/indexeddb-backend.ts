@@ -74,6 +74,7 @@ export async function createIndexedDBBackend(
   const pendingWrites = new Set<Promise<void>>();
   const pendingErrors: Error[] = [];
   const subscribers = new Set<(event: WebStorageChangeEvent) => void>();
+  let closed = false;
   const sourceId = `nitro-storage-${Math.random().toString(36).slice(2)}`;
   const channelName =
     options.channelName ?? `nitro-storage:${dbName}:${storeName}`;
@@ -81,6 +82,12 @@ export async function createIndexedDBBackend(
     typeof BroadcastChannel !== "undefined"
       ? new BroadcastChannel(channelName)
       : null;
+
+  function assertOpen(): void {
+    if (closed) {
+      throw new Error(`IndexedDB backend "${dbName}/${storeName}" is closed.`);
+    }
+  }
 
   function emitExternal(event: WebStorageChangeEvent): void {
     subscribers.forEach((subscriber) => {
@@ -98,6 +105,10 @@ export async function createIndexedDBBackend(
   }
 
   channel?.addEventListener("message", (event: MessageEvent) => {
+    if (closed) {
+      return;
+    }
+
     const data = event.data as
       | (WebStorageChangeEvent & { sourceId?: string })
       | undefined;
@@ -209,34 +220,41 @@ export async function createIndexedDBBackend(
   const backend: WebSecureStorageBackend = {
     name: `indexeddb:${dbName}/${storeName}`,
     getItem(key: string): string | null {
+      assertOpen();
       return cache.get(key) ?? null;
     },
 
     setItem(key: string, value: string): void {
+      assertOpen();
       cache.set(key, value);
       persistSet(key, value);
       publish({ key, newValue: value });
     },
 
     removeItem(key: string): void {
+      assertOpen();
       cache.delete(key);
       persistDelete(key);
       publish({ key, newValue: null });
     },
 
     clear(): void {
+      assertOpen();
       cache.clear();
       persistClear();
       publish({ key: null, newValue: null });
     },
 
     getAllKeys(): string[] {
+      assertOpen();
       return Array.from(cache.keys());
     },
     getMany(keys: string[]): (string | null)[] {
+      assertOpen();
       return keys.map((key) => cache.get(key) ?? null);
     },
     setMany(entries): void {
+      assertOpen();
       entries.forEach(([key, value]) => {
         cache.set(key, value);
       });
@@ -253,6 +271,7 @@ export async function createIndexedDBBackend(
       }
     },
     removeMany(keys: string[]): void {
+      assertOpen();
       keys.forEach((key) => {
         cache.delete(key);
       });
@@ -269,9 +288,11 @@ export async function createIndexedDBBackend(
       }
     },
     size(): number {
+      assertOpen();
       return cache.size;
     },
     subscribe(listener): () => void {
+      assertOpen();
       subscribers.add(listener);
       return () => {
         subscribers.delete(listener);
@@ -285,6 +306,15 @@ export async function createIndexedDBBackend(
 
       const [error] = pendingErrors.splice(0);
       throw error;
+    },
+    close(): void {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      subscribers.clear();
+      channel?.close();
+      db.close();
     },
   };
 

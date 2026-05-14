@@ -1,0 +1,10 @@
+{
+  "ignore_dirs": [
+    "node_modules",
+    "node_modules/react-native-nitro-modules/android/.cxx",
+    "node_modules/.cache",
+    "android/.cxx",
+    "apps/example/android/.cxx",
+    "packages/react-native-nitro-storage/android/.cxx"
+  ]
+}

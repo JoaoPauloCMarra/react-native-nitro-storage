@@ -55,6 +55,8 @@ export type {
   StorageKeyChangeEvent,
 } from "./storage-events";
 export type {
+  WebDiskStorageBackend,
+  WebSecureStorageBackend,
   WebStorageBackend,
   WebStorageChangeEvent,
   WebStorageScope,
@@ -76,6 +78,12 @@ export type StorageMetricsEvent = {
   keysCount: number;
 };
 export type StorageMetricsObserver = (event: StorageMetricsEvent) => void;
+export type StorageEventObserverOptions = {
+  redactSecureValues?: boolean;
+};
+export type StorageExportOptions = {
+  includeSecureValues?: boolean;
+};
 export type StorageMetricSummary = {
   count: number;
   totalDurationMs: number;
@@ -229,6 +237,7 @@ const suppressedNativeEvents = new Map<NonMemoryScope, Map<string, number>>([
 ]);
 let metricsObserver: StorageMetricsObserver | undefined;
 let eventObserver: StorageEventListener | undefined;
+let eventObserverRedactSecureValues = true;
 const metricsCounters = new Map<
   string,
   { count: number; totalDurationMs: number; maxDurationMs: number }
@@ -411,6 +420,49 @@ function hasStorageChangeObservers(scope: StorageScope): boolean {
   return storageEvents.hasListeners(scope) || eventObserver !== undefined;
 }
 
+function shouldReadPreviousEventValues(scope: StorageScope): boolean {
+  if (storageEvents.hasListeners(scope)) {
+    return true;
+  }
+  if (!eventObserver) {
+    return false;
+  }
+  return scope !== StorageScope.Secure || !eventObserverRedactSecureValues;
+}
+
+const SECURE_EVENT_REDACTED_VALUE = "[secure]";
+
+function redactSecureKeyChange(
+  event: StorageKeyChangeEvent,
+): StorageKeyChangeEvent {
+  if (event.scope !== StorageScope.Secure) {
+    return event;
+  }
+
+  return {
+    ...event,
+    oldValue:
+      event.oldValue === undefined ? undefined : SECURE_EVENT_REDACTED_VALUE,
+    newValue:
+      event.newValue === undefined ? undefined : SECURE_EVENT_REDACTED_VALUE,
+  };
+}
+
+function eventForGlobalObserver(event: StorageChangeEvent): StorageChangeEvent {
+  if (!eventObserverRedactSecureValues || event.scope !== StorageScope.Secure) {
+    return event;
+  }
+
+  if (event.type === "key") {
+    return redactSecureKeyChange(event);
+  }
+
+  return {
+    ...event,
+    changes: event.changes.map(redactSecureKeyChange),
+  };
+}
+
 function emitKeyChange(
   scope: StorageScope,
   key: string,
@@ -436,7 +488,7 @@ function emitKeyChange(
     source,
   );
   storageEvents.emitKey(event);
-  eventObserver?.(event);
+  eventObserver?.(eventForGlobalObserver(event));
 }
 
 function emitBatchChange(
@@ -466,7 +518,7 @@ function emitBatchChange(
     changes,
   };
   storageEvents.emitBatch(event);
-  eventObserver?.(event);
+  eventObserver?.(eventForGlobalObserver(event));
 }
 
 function readPendingSecureWrite(key: string): string | undefined {
@@ -811,8 +863,12 @@ export const storage = {
   ): (() => void) => {
     return storage.subscribePrefix(scope, prefixKey(namespace, ""), listener);
   },
-  setEventObserver: (observer?: StorageEventListener) => {
+  setEventObserver: (
+    observer?: StorageEventListener,
+    options: StorageEventObserverOptions = {},
+  ) => {
     eventObserver = observer;
+    eventObserverRedactSecureValues = options.redactSecureValues !== false;
     if (observer) {
       ensureNativeScopeSubscription(StorageScope.Disk);
       ensureNativeScopeSubscription(StorageScope.Secure);
@@ -823,7 +879,7 @@ export const storage = {
   },
   clear: (scope: StorageScope) => {
     measureOperation("storage:clear", scope, () => {
-      const previousValues = hasStorageChangeObservers(scope)
+      const previousValues = shouldReadPreviousEventValues(scope)
         ? storage.getAll(scope)
         : {};
       if (scope === StorageScope.Memory) {
@@ -927,7 +983,7 @@ export const storage = {
       }
 
       const keyPrefix = prefixKey(namespace, "");
-      const previousValues = hasStorageChangeObservers(scope)
+      const previousValues = shouldReadPreviousEventValues(scope)
         ? storage.getByPrefix(keyPrefix, scope)
         : {};
       if (scope === StorageScope.Disk) {
@@ -1077,9 +1133,24 @@ export const storage = {
       return result;
     });
   },
-  export: (scope: StorageScope): Record<string, string> => {
+  export: (
+    scope: StorageScope,
+    options: StorageExportOptions = {},
+  ): Record<string, string> => {
+    if (scope === StorageScope.Secure && options.includeSecureValues !== true) {
+      throw new Error(
+        "NitroStorage: exporting Secure scope exposes raw secret values. Pass { includeSecureValues: true } or use exportSecureUnsafe().",
+      );
+    }
     return measureOperation("storage:export", scope, () =>
       storage.getAll(scope),
+    );
+  },
+  exportSecureUnsafe: (): Record<string, string> => {
+    return measureOperation(
+      "storage:exportSecureUnsafe",
+      StorageScope.Secure,
+      () => storage.getAll(StorageScope.Secure),
     );
   },
   size: (scope: StorageScope): number => {
@@ -2136,7 +2207,7 @@ export function setBatch<T>(
         flushSecureWrites();
         const storageModule = getStorageModule();
         const keys = secureEntries.map(({ item }) => item.key);
-        const oldValues = hasStorageChangeObservers(scope)
+        const oldValues = shouldReadPreviousEventValues(scope)
           ? (storageModule.getBatch(keys, scope) ?? [])
           : [];
         const groupedByAccessControl = new Map<
@@ -2193,7 +2264,7 @@ export function setBatch<T>(
 
       const keys = items.map((entry) => entry.item.key);
       const values = items.map((entry) => entry.item.serialize(entry.value));
-      const oldValues = hasStorageChangeObservers(scope)
+      const oldValues = shouldReadPreviousEventValues(scope)
         ? (getStorageModule().getBatch(keys, scope) ?? [])
         : [];
 
@@ -2252,7 +2323,7 @@ export function removeBatch(
       if (scope === StorageScope.Secure) {
         flushSecureWrites();
       }
-      const oldValues = hasStorageChangeObservers(scope)
+      const oldValues = shouldReadPreviousEventValues(scope)
         ? (getStorageModule().getBatch(keys, scope) ?? [])
         : [];
       getStorageModule().removeBatch(keys, scope);

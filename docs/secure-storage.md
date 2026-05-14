@@ -4,6 +4,8 @@ Secure scope is for secrets: refresh tokens, credentials, API tokens, and device
 
 Use Disk scope for non-secret persisted state. Secure storage has stronger boundaries but more platform rules, especially around biometric prompts, device lock state, and backup/restore behavior.
 
+Keep Secure values small. Platform secure stores are optimized for credentials and keys, not large payloads or support bundles.
+
 ## Store a Secure Token
 
 ```ts
@@ -116,12 +118,12 @@ const allKeys = storage.getAllSecureMetadata();
 
 ## Secure Export Warning
 
-`storage.export(StorageScope.Secure)` returns raw secret values so it can round-trip with `storage.import(data, StorageScope.Secure)`.
+`storage.export(StorageScope.Secure)` throws unless you explicitly opt into exposing raw secret values. Use `storage.exportSecureUnsafe()` or `storage.export(StorageScope.Secure, { includeSecureValues: true })` only when you need to round-trip with `storage.import(data, StorageScope.Secure)`.
 
 ```ts
 import { storage, StorageScope } from "react-native-nitro-storage";
 
-const secureSnapshot = storage.export(StorageScope.Secure);
+const secureSnapshot = storage.exportSecureUnsafe();
 storage.import(secureSnapshot, StorageScope.Secure);
 ```
 
@@ -129,9 +131,18 @@ Only keep Secure exports in memory for the shortest possible workflow. Do not lo
 
 ## Secure Event Warning
 
-Secure scope event subscriptions and `storage.setEventObserver()` can receive raw secret values in `oldValue`, `newValue`, or batch `changes`.
+Secure scope event subscriptions can receive raw secret values in `oldValue`, `newValue`, or batch `changes`. `storage.setEventObserver()` redacts Secure values by default because observer callbacks are commonly used for logging and devtools.
 
-Use Secure events for in-memory coordination only. Do not log Secure event payloads or send them to analytics, crash reporting, support bundles, or devtools sessions that persist outside the device.
+Use Secure events for in-memory coordination only. Do not log Secure event payloads or send them to analytics, crash reporting, support bundles, or devtools sessions that persist outside the device. Pass `{ redactSecureValues: false }` to `setEventObserver()` only for local, non-persistent debugging.
+
+## Android Backup Rules
+
+Android secure storage uses encrypted SharedPreferences. Restored encrypted preference files can become unreadable when the app's Keystore keys are not restored with them. The Expo plugin configures backup exclusions for Nitro Storage secure files by default:
+
+- `NitroStorageSecure.xml`
+- `NitroStorageBiometric.xml`
+
+If you disable `configureAndroidBackup` or maintain custom Android backup XML, add equivalent exclusions for both cloud backup and device transfer.
 
 ## Locked Keychain Errors
 

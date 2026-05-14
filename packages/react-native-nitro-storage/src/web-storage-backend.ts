@@ -21,6 +21,7 @@ export type WebStorageBackend = {
   size?: () => number;
   subscribe?: (listener: (event: WebStorageChangeEvent) => void) => () => void;
   flush?: () => Promise<void>;
+  close?: () => void;
   name?: string;
 };
 

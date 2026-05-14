@@ -6,6 +6,10 @@ import {
   type SecurityCapabilities,
   type StorageMetricsEvent,
   type StorageMetricsObserver,
+  type StorageEventObserverOptions,
+  type StorageExportOptions,
+  type WebDiskStorageBackend,
+  type WebSecureStorageBackend,
   createSecureAuthStorage,
   createStorageItem,
   getWebSecureStorageBackend,
@@ -80,7 +84,9 @@ const prefixedEntriesRecord: Record<string, string> = prefixedEntries;
 void prefixedKeysArray;
 void prefixedEntriesRecord;
 
-const metricsObserver: StorageMetricsObserver = (event: StorageMetricsEvent) => {
+const metricsObserver: StorageMetricsObserver = (
+  event: StorageMetricsEvent,
+) => {
   const operationName: string = event.operation;
   void operationName;
 };
@@ -88,6 +94,11 @@ storage.setMetricsObserver(metricsObserver);
 storage.getMetricsSnapshot();
 storage.resetMetrics();
 storage.setMetricsObserver(undefined);
+const observerOptions: StorageEventObserverOptions = {
+  redactSecureValues: true,
+};
+storage.setEventObserver(() => {}, observerOptions);
+storage.setEventObserver(undefined);
 
 storage.setAccessControl(AccessControl.WhenUnlockedThisDeviceOnly);
 storage.setSecureWritesAsync(true);
@@ -100,9 +111,27 @@ const secureMetadata: SecureStorageMetadata =
   storage.getSecureMetadata("auth:accessToken");
 const secureMetadataList: SecureStorageMetadata[] =
   storage.getAllSecureMetadata();
+const exportOptions: StorageExportOptions = { includeSecureValues: true };
+const secureExport: Record<string, string> = storage.export(
+  StorageScope.Secure,
+  exportOptions,
+);
+const secureUnsafeExport: Record<string, string> = storage.exportSecureUnsafe();
 void securityCapabilities;
 void secureMetadata;
 void secureMetadataList;
+void secureExport;
+void secureUnsafeExport;
+
+const typedWebDiskBackend: WebDiskStorageBackend = {
+  getItem: () => null,
+  setItem: () => {},
+  removeItem: () => {},
+  clear: () => {},
+  getAllKeys: () => [],
+};
+const typedWebSecureBackend: WebSecureStorageBackend = typedWebDiskBackend;
+void typedWebSecureBackend;
 
 setWebSecureStorageBackend(undefined);
 getWebSecureStorageBackend();

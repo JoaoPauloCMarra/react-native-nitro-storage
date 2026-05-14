@@ -278,7 +278,7 @@ storage.setEventObserver((event) => {
 });
 ```
 
-Use `subscribePrefix()` or `subscribeNamespace()` for targeted integrations. Use `setEventObserver()` for devtools-style logging. Secure events can include raw secret values, so filter them out of logs.
+Use `subscribePrefix()` or `subscribeNamespace()` for targeted integrations. Use `setEventObserver()` for devtools-style logging; it redacts Secure values by default. Raw Secure subscriptions can include secret values, so filter them out of logs.
 
 ## Capability Checks
 

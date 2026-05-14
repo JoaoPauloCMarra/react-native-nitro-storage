@@ -29,6 +29,13 @@ const forbiddenPatterns = [
   /^cpp\/build\//,
   /^android\/build\//,
   /^android\/\.cxx\//,
+  /^apps\/example\/(?:android|ios)\//,
+  /(?:^|\/)\.env(?:\.|$)/,
+  /(?:^|\/)npm-debug\.log$/,
+  /(?:^|\/)yarn-error\.log$/,
+  /(?:^|\/)bun(?:fig)?\.lockb$/,
+  /(?:^|\/)[^/]*\.(?:jks|keystore|p8|p12|pem|mobileprovision)$/,
+  /(?:^|\/)[^/]*\.tgz$/,
   /(?:^|\/)[^/]*Test\.cpp$/,
 ];
 
