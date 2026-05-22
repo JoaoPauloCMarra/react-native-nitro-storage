@@ -305,13 +305,13 @@ async function main() {
     console.log(`Usage: bun run publish-package[:dry] -- [options]
 
 Options:
-  --dry-run                 Run npm publish in dry-run mode.
+  --dry-run                 Run package pack validation without publishing.
   --yes                     Skip interactive confirmations.
   --allow-dirty             Allow uncommitted changes.
   --skip-checks             Skip git/auth preflight only.
   --skip-pack-preview       Skip the npm pack summary preview.
   --with-coverage           Run JS/TS and C++ coverage gates before packaging.
-  --verify-npm-lifecycle    Dry-run npm publish with lifecycle scripts enabled.
+  --verify-npm-lifecycle    Run dry-run packaging with lifecycle scripts enabled.
   --tag=<tag>               npm dist tag, default latest.
 `);
     return;
@@ -468,7 +468,7 @@ Options:
   }
 
   if (isDryRun) {
-    log("🏃 Running package publish dry-run...", "cyan");
+    log("🏃 Running package pack dry-run...", "cyan");
     if (!verifyNpmLifecycle) {
       if (!preparePackageDocs()) {
         log("✗ Failed to prepare package docs", "red");
@@ -477,12 +477,12 @@ Options:
       }
     }
     const dryPublishCommand = verifyNpmLifecycle
-      ? `bun publish --dry-run --tag ${shellQuote(tag)} --access public`
-      : `bun publish --dry-run --ignore-scripts --tag ${shellQuote(tag)} --access public`;
+      ? "bun pm pack --dry-run"
+      : "bun pm pack --dry-run --ignore-scripts";
     const ok = execCommand(dryPublishCommand, { cwd: packageDir });
     cleanupPackageDocs();
     if (!ok) {
-      log("✗ npm publish dry-run failed", "red");
+      log("✗ package pack dry-run failed", "red");
       process.exit(1);
     }
     console.log("");
