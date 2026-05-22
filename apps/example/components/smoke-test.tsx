@@ -197,7 +197,7 @@ function buildTests(): SmokeTest[] {
     },
     {
       label: "TTL expiration (Memory)",
-      fn: () => {
+      fn: async () => {
         const item = createStorageItem({
           key: "__smoke_ttl__",
           scope: StorageScope.Memory,
@@ -205,11 +205,7 @@ function buildTests(): SmokeTest[] {
           expiration: { ttlMs: 1 },
         });
         item.set("temp");
-        // Value should expire almost immediately
-        const start = Date.now();
-        while (Date.now() - start < 5) {
-          /* spin */
-        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
         const val = item.get();
         assert(val === "", `expected expired, got "${val}"`);
       },
@@ -311,14 +307,16 @@ function buildTests(): SmokeTest[] {
           defaultValue: 0,
         });
         item.set(50);
+        let rolledBack = false;
         try {
           runTransaction(StorageScope.Memory, (tx) => {
             tx.setItem(item, 999);
             throw new Error("rollback");
           });
         } catch {
-          // expected
+          rolledBack = true;
         }
+        assert(rolledBack, "expected rollback transaction to throw");
         assert(
           item.get() === 50,
           `expected 50 after rollback, got ${item.get()}`,
@@ -770,14 +768,16 @@ function buildTests(): SmokeTest[] {
           item.get() === "committed",
           `expected committed, got ${item.get()}`,
         );
+        let rolledBack = false;
         try {
           runTransaction(StorageScope.Disk, (tx) => {
             tx.setItem(item, "should-rollback");
             throw new Error("rollback");
           });
         } catch {
-          // expected
+          rolledBack = true;
         }
+        assert(rolledBack, "expected disk rollback transaction to throw");
         assert(
           item.get() === "committed",
           `expected committed after rollback, got ${item.get()}`,
@@ -989,7 +989,6 @@ export function SmokeTestRunner() {
         })),
       ]);
 
-      // Yield to UI between tests
       await new Promise((r) => setTimeout(r, 16));
 
       try {
@@ -1114,7 +1113,7 @@ const s = StyleSheet.create({
     fontSize: 17,
     fontWeight: "800",
     color: Colors.text,
-    letterSpacing: -0.2,
+    letterSpacing: 0,
   },
   summary: {
     fontSize: 12,

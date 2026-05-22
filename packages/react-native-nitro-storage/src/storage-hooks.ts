@@ -2,13 +2,13 @@ import { useRef, useSyncExternalStore } from "react";
 
 type HookStorageItem<T> = {
   get: () => T;
-  set: (value: T | ((prev: T) => T)) => void;
+  set: StorageSetter<T>;
   subscribe: (callback: () => void) => () => void;
 };
 
-export function useStorage<T>(
-  item: HookStorageItem<T>,
-): [T, (value: T | ((prev: T) => T)) => void] {
+export type StorageSetter<T> = (value: T | ((prev: T) => T)) => void;
+
+export function useStorage<T>(item: HookStorageItem<T>): [T, StorageSetter<T>] {
   const value = useSyncExternalStore(item.subscribe, item.get, item.get);
   return [value, item.set];
 }
@@ -17,7 +17,7 @@ export function useStorageSelector<T, TSelected>(
   item: HookStorageItem<T>,
   selector: (value: T) => TSelected,
   isEqual: (prev: TSelected, next: TSelected) => boolean = Object.is,
-): [TSelected, (value: T | ((prev: T) => T)) => void] {
+): [TSelected, StorageSetter<T>] {
   const selectedRef = useRef<
     { hasValue: false } | { hasValue: true; value: TSelected }
   >({
@@ -43,6 +43,6 @@ export function useStorageSelector<T, TSelected>(
   return [selectedValue, item.set];
 }
 
-export function useSetStorage<T>(item: HookStorageItem<T>) {
+export function useSetStorage<T>(item: HookStorageItem<T>): StorageSetter<T> {
   return item.set;
 }

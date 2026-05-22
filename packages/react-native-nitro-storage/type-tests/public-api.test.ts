@@ -8,6 +8,8 @@ import {
   type StorageMetricsObserver,
   type StorageEventObserverOptions,
   type StorageExportOptions,
+  type StorageItemConfig,
+  type StorageSetter,
   type WebDiskStorageBackend,
   type WebSecureStorageBackend,
   createSecureAuthStorage,
@@ -50,7 +52,9 @@ const positiveBoolean: boolean = isPositive;
 setPositiveSource(3);
 
 const setCountOnly = useSetStorage(countItem);
+const setCountOnlyTyped: StorageSetter<number> = setCountOnly;
 setCountOnly(4);
+void setCountOnlyTyped;
 
 const auth = createSecureAuthStorage(
   {
@@ -69,7 +73,7 @@ type AccessTokenAssert = Assert<Equals<typeof accessTokenValue, string>>;
 
 setBatch([{ item: countItem, value: 5 }], StorageScope.Memory);
 const values = getBatch([countItem], StorageScope.Memory);
-const valuesUnknownArray: unknown[] = values;
+const firstValue: number = values[0];
 removeBatch([countItem], StorageScope.Memory);
 
 const versionedSnapshot = countItem.getWithVersion();
@@ -142,8 +146,18 @@ const levelNumber: number = level;
 // Ensure compile-time only references are used.
 void countValueNumber;
 void positiveBoolean;
-void valuesUnknownArray;
+void firstValue;
 void levelNumber;
+
+const preferencesConfig = {
+  key: "preferences",
+  scope: StorageScope.Disk,
+  defaultValue: { theme: "system", compactMode: false },
+} satisfies StorageItemConfig<{
+  theme: "system" | "light" | "dark";
+  compactMode: boolean;
+}>;
+void preferencesConfig;
 
 createStorageItem({
   key: "bad-expiration",

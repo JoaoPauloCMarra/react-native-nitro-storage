@@ -35,8 +35,6 @@ import {
 } from "../components/shared";
 import { SmokeTestRunner } from "../components/smoke-test";
 
-// ─── Module-level storage items ───────────────────────────────────────────────
-
 const counterItem = createStorageItem({
   key: "counter",
   scope: StorageScope.Memory,
@@ -151,23 +149,18 @@ const bufferedDiskItem = createStorageItem({
   coalesceDiskWrites: true,
 });
 
-// ─── Component ────────────────────────────────────────────────────────────────
-
 const HOOK_LABELS = ["initial", "alpha", "beta", "gamma", "delta"];
 const isWebRuntime = Platform.OS === "web";
 
 let migVer = 30_000;
 
 export default function HomeScreen() {
-  // 1. Memory Scope
   const [counter, setCounter] = useStorage(counterItem);
 
-  // 2. Disk Scope
   const [diskName, setDiskName] = useStorage(diskNameItem);
   const [tempDiskName, setTempDiskName] = useState("");
   const tempDiskNameRef = useRef("");
 
-  // 3. Secure Scope
   const [token, setToken] = useStorage(secureTokenItem);
   const [tempToken, setTempToken] = useState("");
   const tempTokenRef = useRef("");
@@ -178,50 +171,39 @@ export default function HomeScreen() {
     () => storage.getAllSecureMetadata().length,
   );
 
-  // 4. Namespaces
   const [nsPref, setNsPref] = useStorage(namespacedItem);
   const [tempNsPref, setTempNsPref] = useState("");
   const tempNsPrefRef = useRef("");
 
-  // 5. JSON Objects
   const [config, setConfig] = useStorage(configItem);
 
-  // 6. Auth Storage Factory
   const [atValue] = useStorage(authStorage.accessToken);
   const [rtValue] = useStorage(authStorage.refreshToken);
 
-  // 7. Namespaced Auth Storage
   const [nsAtValue] = useStorage(nsAuthStorage.accessToken);
   const [nsRtValue] = useStorage(nsAuthStorage.refreshToken);
 
-  // 9. Hooks
   const [hookCount, setHookCount] = useStorage(hookCountItem);
   const [hookLabel, setHookLabel] = useStorage(hookLabelItem);
   const [hookLabelIdx, setHookLabelIdx] = useState(0);
   const [selectedTheme] = useStorageSelector(configItem, (c) => c.theme);
 
-  // 10. Validation
   const [age] = useStorage(ageItem);
   const [ageInput, setAgeInput] = useState(String(age));
   const ageInputRef = useRef(String(age));
 
-  // 11. TTL
   const [ttlVal, setTtlVal] = useState(() => ttlItem.get());
 
-  // 12. Transactions
   const [balance] = useStorage(balanceItem);
   const [txLog] = useStorage(txLogItem);
 
-  // 13. Migrations
   const [migResult, setMigResult] = useState("(not run)");
 
-  // 14. Batch Operations
   const [v1] = useStorage(batch1);
   const [v2] = useStorage(batch2);
   const [v3] = useStorage(batch3);
   const [batchResponse, setBatchResponse] = useState<string | null>(null);
 
-  // 8. Storage Utils — reactive size state
   const [diskSize, setDiskSize] = useState(() =>
     storage.size(StorageScope.Disk),
   );
@@ -229,7 +211,6 @@ export default function HomeScreen() {
     storage.size(StorageScope.Memory),
   );
 
-  // 15. Scope Control — reactive size state
   const [scopeDiskSize, setScopeDiskSize] = useState(() =>
     storage.size(StorageScope.Disk),
   );
@@ -237,10 +218,8 @@ export default function HomeScreen() {
     storage.size(StorageScope.Memory),
   );
 
-  // 16. Raw String API
   const [rawValue, setRawValue] = useState<string | undefined>();
 
-  // 17. Prefix & Keys
   const [prefixKeys, setPrefixKeys] = useState<string[]>([]);
   const [allMemoryKeys, setAllMemoryKeys] = useState<string[]>([]);
   const [diskBufferingEnabled, setDiskBufferingEnabled] = useState(false);
@@ -311,7 +290,6 @@ export default function HomeScreen() {
 
   return (
     <Page title="Nitro Storage" subtitle="Complete feature showcase">
-      {/* 1. Memory Scope */}
       <Card
         title="Memory Scope"
         subtitle="In-process ephemeral storage"
@@ -431,17 +409,20 @@ export default function HomeScreen() {
             testID="event-observer-redacted"
             title="Redacted"
             onPress={() => {
-              storage.setEventObserver((event) => {
-                if (event.type === "key") {
-                  setSecureObserverStatus(event.newValue ?? "(empty)");
-                }
-              });
-              storage.setString(
-                "secure-observer-demo",
-                "observer-secret",
-                StorageScope.Secure,
-              );
-              storage.setEventObserver(undefined);
+              try {
+                storage.setEventObserver((event) => {
+                  if (event.type === "key") {
+                    setSecureObserverStatus(event.newValue ?? "(empty)");
+                  }
+                });
+                storage.setString(
+                  "secure-observer-demo",
+                  "observer-secret",
+                  StorageScope.Secure,
+                );
+              } finally {
+                storage.setEventObserver(undefined);
+              }
             }}
             style={styles.flex1}
           />
@@ -450,24 +431,27 @@ export default function HomeScreen() {
             title="Raw Opt-In"
             variant="secondary"
             onPress={() => {
-              storage.setEventObserver(
-                (event) => {
-                  if (event.type === "key") {
-                    setSecureObserverStatus(
-                      event.newValue
-                        ? `raw value observed (${event.newValue.length} chars)`
-                        : "(empty)",
-                    );
-                  }
-                },
-                { redactSecureValues: false },
-              );
-              storage.setString(
-                "secure-observer-demo",
-                "observer-secret",
-                StorageScope.Secure,
-              );
-              storage.setEventObserver(undefined);
+              try {
+                storage.setEventObserver(
+                  (event) => {
+                    if (event.type === "key") {
+                      setSecureObserverStatus(
+                        event.newValue
+                          ? `raw value observed (${event.newValue.length} chars)`
+                          : "(empty)",
+                      );
+                    }
+                  },
+                  { redactSecureValues: false },
+                );
+                storage.setString(
+                  "secure-observer-demo",
+                  "observer-secret",
+                  StorageScope.Secure,
+                );
+              } finally {
+                storage.setEventObserver(undefined);
+              }
             }}
             style={styles.flex1}
           />
@@ -479,7 +463,6 @@ export default function HomeScreen() {
         />
       </Card>
 
-      {/* 2. Disk Scope */}
       <Card
         title="Disk Scope"
         subtitle="Persistent storage"
@@ -530,7 +513,6 @@ export default function HomeScreen() {
         />
       </Card>
 
-      {/* 3. Secure Scope */}
       <Card
         title="Secure Scope"
         subtitle="Hardware encrypted"
@@ -591,7 +573,6 @@ export default function HomeScreen() {
         />
       </Card>
 
-      {/* 4. Namespaces */}
       <Card
         title="Namespaces"
         subtitle="Scoped key isolation"
@@ -636,7 +617,6 @@ export default function HomeScreen() {
         />
       </Card>
 
-      {/* 5. JSON Objects */}
       <Card
         title="JSON Objects"
         subtitle="Typed serialization"
@@ -677,7 +657,6 @@ export default function HomeScreen() {
         </CodeBlock>
       </Card>
 
-      {/* 6. Auth Storage Factory */}
       <Card
         title="Auth Storage Factory"
         subtitle="createSecureAuthStorage"
@@ -716,7 +695,6 @@ export default function HomeScreen() {
         />
       </Card>
 
-      {/* 7. Namespaced Auth Storage */}
       <Card
         title="Namespaced Auth Storage"
         subtitle="createSecureAuthStorage + namespace"
@@ -754,7 +732,6 @@ export default function HomeScreen() {
         />
       </Card>
 
-      {/* 8. Storage Utils */}
       <Card title="Storage Utils" subtitle="Introspection and wipe">
         <Section title="Key counts">
           <StatusRow
@@ -807,7 +784,6 @@ export default function HomeScreen() {
         </Section>
       </Card>
 
-      {/* 9. Hooks */}
       <Card
         title="Hooks"
         subtitle="useStorage / useStorageSelector"
@@ -844,7 +820,6 @@ export default function HomeScreen() {
         />
       </Card>
 
-      {/* 10. Validation */}
       <Card
         title="Validation"
         subtitle="validate / onValidationError"
@@ -894,7 +869,6 @@ export default function HomeScreen() {
         />
       </Card>
 
-      {/* 11. TTL Expiration */}
       <Card
         title="TTL Expiration"
         subtitle="5-second TTL demo"
@@ -928,7 +902,6 @@ export default function HomeScreen() {
         />
       </Card>
 
-      {/* 12. Transactions */}
       <Card
         title="Transactions"
         subtitle="runTransaction + rollback"
@@ -971,7 +944,7 @@ export default function HomeScreen() {
                   throw new Error("rollback-demo");
                 });
               } catch {
-                // intentional rollback
+                txLogItem.set("Rollback restored previous balance");
               }
             }}
             variant="danger"
@@ -992,7 +965,6 @@ export default function HomeScreen() {
         />
       </Card>
 
-      {/* 13. Migrations */}
       <Card title="Migrations" subtitle="registerMigration / migrateToLatest">
         <View style={styles.row}>
           <Button
@@ -1025,7 +997,6 @@ export default function HomeScreen() {
         <StatusRow testID="mig-result" label="Result" value={migResult} />
       </Card>
 
-      {/* 14. Batch Operations */}
       <Card
         title="Batch Operations"
         subtitle="setBatch / getBatch / removeBatch"
@@ -1095,7 +1066,6 @@ export default function HomeScreen() {
         ) : null}
       </Card>
 
-      {/* 15. Scope Control */}
       <Card
         title="Scope Control"
         subtitle="Key counts and clear"
@@ -1151,7 +1121,6 @@ export default function HomeScreen() {
           size="sm"
         />
       </Card>
-      {/* 16. Raw String API */}
       <Card
         title="Raw String API"
         subtitle="getString / setString / deleteString"
@@ -1187,7 +1156,6 @@ export default function HomeScreen() {
         />
       </Card>
 
-      {/* 17. Prefix & Keys */}
       <Card
         title="Prefix & Keys"
         subtitle="getAllKeys / getKeysByPrefix"
@@ -1385,7 +1353,6 @@ export default function HomeScreen() {
         </View>
       </Card>
 
-      {/* Smoke Test Runner */}
       <SmokeTestRunner />
     </Page>
   );

@@ -1,6 +1,5 @@
 import React from "react";
 import {
-  Dimensions,
   Platform,
   Pressable,
   ScrollView,
@@ -13,7 +12,6 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-const { width } = Dimensions.get("window");
 const isWeb = Platform.OS === "web";
 
 const fontSans400 = "Inter_400Regular";
@@ -39,7 +37,6 @@ export const Colors = {
   disk: "#1d4ed8",
   secure: "#0d9488",
   accent: "#334155",
-  purple: "#334155",
 };
 
 type ButtonVariant = "primary" | "danger" | "secondary" | "ghost" | "success";
@@ -279,16 +276,6 @@ type PageProps = {
   scroll?: boolean;
 };
 
-function Atmosphere() {
-  return (
-    <View pointerEvents="none" style={styles.atmosphere}>
-      <View style={styles.orbTopLeft} />
-      <View style={styles.orbTopRight} />
-      <View style={styles.orbBottom} />
-    </View>
-  );
-}
-
 function Header({ title, subtitle }: { title?: string; subtitle?: string }) {
   if (!title && !subtitle) return null;
 
@@ -312,7 +299,6 @@ export const Page = ({
   if (scroll) {
     return (
       <View style={styles.container}>
-        <Atmosphere />
         <ScrollView
           contentContainerStyle={[
             styles.scrollContent,
@@ -330,7 +316,6 @@ export const Page = ({
 
   return (
     <View style={styles.container}>
-      <Atmosphere />
       <View
         style={[
           styles.scrollContent,
@@ -350,37 +335,6 @@ export const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.background,
   },
-  atmosphere: {
-    ...StyleSheet.absoluteFillObject,
-    overflow: "hidden",
-  },
-  orbTopLeft: {
-    position: "absolute",
-    width: 260,
-    height: 260,
-    borderRadius: 200,
-    backgroundColor: "#99f6e433",
-    top: -70,
-    left: -60,
-  },
-  orbTopRight: {
-    position: "absolute",
-    width: 240,
-    height: 240,
-    borderRadius: 200,
-    backgroundColor: "#93c5fd33",
-    top: 10,
-    right: -80,
-  },
-  orbBottom: {
-    position: "absolute",
-    width: 220,
-    height: 220,
-    borderRadius: 200,
-    backgroundColor: "#fcd34d2a",
-    bottom: -70,
-    left: 70,
-  },
   pageBody: {
     flex: 1,
   },
@@ -388,7 +342,7 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 108,
     gap: 14,
-    maxWidth: isWeb ? 860 : width,
+    maxWidth: isWeb ? 860 : "100%",
     alignSelf: "center",
     width: "100%",
   },
@@ -401,7 +355,7 @@ export const styles = StyleSheet.create({
     lineHeight: 38,
     fontFamily: fontSans800,
     color: Colors.text,
-    letterSpacing: -0.6,
+    letterSpacing: 0,
   },
   headerSubtitle: {
     fontSize: 14,
@@ -411,7 +365,7 @@ export const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: Colors.surface,
-    borderRadius: 18,
+    borderRadius: 8,
     padding: 16,
     borderWidth: 1,
     borderColor: Colors.border,
@@ -443,7 +397,7 @@ export const styles = StyleSheet.create({
     fontSize: 17,
     fontFamily: fontSans800,
     color: Colors.text,
-    letterSpacing: -0.2,
+    letterSpacing: 0,
   },
   cardSubtitle: {
     fontSize: 11,

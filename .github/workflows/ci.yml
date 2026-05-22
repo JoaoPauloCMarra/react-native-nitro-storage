@@ -55,3 +55,84 @@ jobs:
 
       - name: Package content check
         run: bun run --cwd packages/react-native-nitro-storage check:pack
+
+  example-android:
+    name: Example Android Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: actions/setup-java@v5.0.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3.2.2
+
+      - uses: actions/cache@v5.0.5
+        with:
+          path: |
+            ~/.bun/install/cache
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            node_modules
+            packages/*/node_modules
+            apps/*/node_modules
+          key: ${{ runner.os }}-example-android-${{ hashFiles('**/bun.lock') }}
+          restore-keys: ${{ runner.os }}-example-android-
+
+      - run: bun install --frozen-lockfile
+
+      - name: Expo dependency check
+        run: bun run example:doctor
+
+      - name: Example TypeScript check
+        run: bun run example:typecheck
+
+      - name: Prebuild Android
+        run: CI=1 bun run --cwd apps/example prebuild -- --platform android
+
+      - name: Assemble Android example
+        run: bun run example:android:assemble
+
+  example-ios:
+    name: Example iOS Build
+    runs-on: macos-26
+
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - uses: actions/cache@v5.0.5
+        with:
+          path: |
+            ~/.bun/install/cache
+            ~/Library/Caches/CocoaPods
+            Pods
+            node_modules
+            packages/*/node_modules
+            apps/*/node_modules
+          key: ${{ runner.os }}-example-ios-${{ hashFiles('**/bun.lock') }}
+          restore-keys: ${{ runner.os }}-example-ios-
+
+      - run: bun install --frozen-lockfile
+
+      - name: Expo dependency check
+        run: bun run example:doctor
+
+      - name: Example TypeScript check
+        run: bun run example:typecheck
+
+      - name: Prebuild iOS
+        run: CI=1 bun run --cwd apps/example prebuild -- --platform ios
+
+      - name: Build iOS example
+        run: bun run example:ios:build

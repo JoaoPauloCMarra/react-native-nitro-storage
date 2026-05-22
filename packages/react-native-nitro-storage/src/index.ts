@@ -35,6 +35,7 @@ import {
   type StorageEventListener,
   type StorageKeyChangeEvent,
 } from "./storage-events";
+import type { StorageSetter } from "./storage-hooks";
 
 export { StorageScope, AccessControl, BiometricLevel } from "./Storage.types";
 export type { Storage } from "./Storage.nitro";
@@ -54,6 +55,7 @@ export type {
   StorageEventListener,
   StorageKeyChangeEvent,
 } from "./storage-events";
+export type { StorageSetter } from "./storage-hooks";
 export type {
   WebDiskStorageBackend,
   WebSecureStorageBackend,
@@ -1387,7 +1389,7 @@ export async function flushWebStorageBackends(): Promise<void> {
   // Native platforms do not use web storage backends.
 }
 
-export interface StorageItemConfig<T> {
+export type StorageItemConfig<T> = {
   key: string;
   scope: StorageScope;
   defaultValue?: T;
@@ -1404,12 +1406,12 @@ export interface StorageItemConfig<T> {
   biometric?: boolean;
   biometricLevel?: BiometricLevel;
   accessControl?: AccessControl;
-}
+};
 
-export interface StorageItem<T> {
+export type StorageItem<T> = {
   get: () => T;
   getWithVersion: () => VersionedValue<T>;
-  set: (value: T | ((prev: T) => T)) => void;
+  set: StorageSetter<T>;
   setIfVersion: (
     version: StorageVersion,
     value: T | ((prev: T) => T),
@@ -1426,7 +1428,7 @@ export interface StorageItem<T> {
   deserialize: (value: string) => T;
   scope: StorageScope;
   key: string;
-}
+};
 
 type StorageItemInternal<T> = StorageItem<T> & {
   _triggerListeners: () => void;
@@ -2050,16 +2052,20 @@ type BatchReadItem<T> = Pick<
   _secureAccessControl?: AccessControl;
 };
 type BatchRemoveItem = Pick<StorageItem<unknown>, "key" | "scope" | "delete">;
+type BatchValues<TItems extends readonly BatchReadItem<unknown>[]> = {
+  [Index in keyof TItems]: TItems[Index] extends BatchReadItem<infer Value>
+    ? Value
+    : never;
+};
 
 export type StorageBatchSetItem<T> = {
   item: StorageItem<T>;
   value: T;
 };
 
-export function getBatch(
-  items: readonly BatchReadItem<unknown>[],
-  scope: StorageScope,
-): unknown[] {
+export function getBatch<
+  const TItems extends readonly BatchReadItem<unknown>[],
+>(items: TItems, scope: StorageScope): BatchValues<TItems> {
   return measureOperation(
     "batch:get",
     scope,
@@ -2138,7 +2144,7 @@ export function getBatch(
       });
     },
     items.length,
-  );
+  ) as BatchValues<TItems>;
 }
 
 export function setBatch<T>(

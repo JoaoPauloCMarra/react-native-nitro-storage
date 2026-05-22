@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
-## 0.5.5 - 2026-05-14
+## 0.5.6 - 2026-05-22
 
 ### Added
 
@@ -17,13 +17,19 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 
 - Close replaced web storage backends so IndexedDB-backed `BroadcastChannel` and database handles do not leak after backend swaps.
 - Update README and package docs for the current secure export, event observer, Expo backup, web backend, and TypeScript usage surface.
-- Update safe native/tooling dependencies, including Nitro `0.35.6`, AndroidX Security Crypto `1.1.0`, RN 0.83 Babel preset patch, Expo preset patch, SWC, Node types, and Turbo.
+- Preserve tuple value types in `getBatch()` so IDEs infer each returned value from its matching `StorageItem`.
+- Align the workspace and example with Expo SDK 56, React Native 0.85.3, React 19.2.3, TypeScript 6.0.3, and Nitro Modules 0.35.7.
+- Enable Expo SDK 56 Android precompiled headers in the example app to reduce native C++ build time.
+- Update safe native/tooling dependencies, including Nitro `0.35.7`, AndroidX Security Crypto `1.1.0`, React Native 0.85 Babel preset, Expo SDK 56 packages, SWC, Node types, and Turbo.
+- Add example release gates for Expo Doctor, TypeScript, prebuild, Android assemble, and iOS simulator builds.
+- Run the iOS example build gate on the GitHub Actions macOS 26 image so SDK 56 uses an Xcode/Swift toolchain new enough for ExpoModulesJSI.
 - Extend the example app so web, Android, and iOS expose the same secure export guard, event observer redaction, and web backend override flows where each platform supports them.
 
 ### Fixed
 
 - Avoid Metro private `metro-config/src/defaults/exclusionList` imports and exclude generated Android `.cxx` directories from Metro and Watchman scans.
 - Remove package-owned Android native log spam for expected unavailable biometric storage paths.
+- Remove the stale example-only `fmt` compatibility config plugin now that the example runs on the SDK 56 / React Native 0.85 native project stack.
 - Modernize Android Gradle assignment syntax to avoid package-owned Gradle warnings.
 
 ## 0.5.4 - 2026-05-13
