@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/react-native-nitro-storage)](https://www.npmjs.com/package/react-native-nitro-storage)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![React Native](https://img.shields.io/badge/react--native-%3E%3D0.75-61dafb)](https://reactnative.dev/)
-[![Nitro Modules](https://img.shields.io/badge/nitro--modules-%3E%3D0.35.6-black)](https://nitro.margelo.com/)
+[![Nitro Modules](https://img.shields.io/badge/nitro--modules-%3E%3D0.35.7-black)](https://nitro.margelo.com/)
 
 One storage layer for render-time state, persisted app state, and native secrets.
 
@@ -97,6 +97,8 @@ bunx expo install react-native-nitro-storage react-native-nitro-modules
 bunx expo prebuild
 ```
 
+The example project is aligned with Expo SDK 56, React Native 0.85, and React 19.2.
+
 The Expo plugin sets `NSFaceIDUsageDescription`, can opt into Android biometric permissions, initializes the Android storage adapter in `MainApplication`, and writes Android backup rules that exclude Nitro Storage secure preference files from cloud backup and device transfer. Set `configureAndroidBackup: false` only when you maintain equivalent backup rules yourself.
 
 Bare React Native projects should install pods after adding the package:
@@ -124,18 +126,21 @@ Create storage items outside React render functions, then use them from anywhere
 import {
   createStorageItem,
   StorageScope,
+  type StorageItemConfig,
   useStorage,
 } from "react-native-nitro-storage";
 
 type Theme = "system" | "light" | "dark";
 
-export const themeItem = createStorageItem<Theme>({
+const themeConfig = {
   key: "theme",
   scope: StorageScope.Disk,
   defaultValue: "system",
   validate: (value): value is Theme =>
     value === "system" || value === "light" || value === "dark",
-});
+} satisfies StorageItemConfig<Theme>;
+
+export const themeItem = createStorageItem(themeConfig);
 
 export function ThemeButton() {
   const [theme, setTheme] = useStorage(themeItem);
@@ -291,23 +296,39 @@ See the full [API reference](docs/api-reference.md).
 The public API is designed around typed storage items. Define the value type, default value, serializer, parser, and validator in one place so reads, writes, React hooks, batch APIs, migrations, and transactions all share the same contract.
 
 ```ts
+import {
+  StorageScope,
+  createStorageItem,
+  type StorageItemConfig,
+} from "react-native-nitro-storage";
+
 type Preferences = {
   theme: "system" | "light" | "dark";
   compactMode: boolean;
 };
 
-const preferencesItem = createStorageItem<Preferences>({
+function isPreferences(value: unknown): value is Preferences {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Partial<Preferences>;
+  return (
+    (candidate.theme === "system" ||
+      candidate.theme === "light" ||
+      candidate.theme === "dark") &&
+    typeof candidate.compactMode === "boolean"
+  );
+}
+
+const preferencesConfig = {
   key: "preferences",
   scope: StorageScope.Disk,
   defaultValue: { theme: "system", compactMode: false },
-  validate: (value): value is Preferences =>
-    typeof value === "object" &&
-    value !== null &&
-    ["system", "light", "dark"].includes(
-      (value as Partial<Preferences>).theme ?? "",
-    ) &&
-    typeof (value as Partial<Preferences>).compactMode === "boolean",
-});
+  validate: isPreferences,
+} satisfies StorageItemConfig<Preferences>;
+
+const preferencesItem = createStorageItem(preferencesConfig);
 
 preferencesItem.set((current) => ({
   ...current,
@@ -333,11 +354,21 @@ import type {
 | Expo     | Supported | Add the included config plugin before prebuild.                                                        |
 | Web      | Supported | Defaults to localStorage-style backends; IndexedDB backend is available for persistent Secure storage. |
 
+Tested release matrix:
+
+| Surface       | Version |
+| ------------- | ------- |
+| Expo example  | SDK 56  |
+| React Native  | 0.85.3  |
+| React         | 19.2.3  |
+| Nitro Modules | 0.35.7  |
+| TypeScript    | 6.0.3   |
+
 Peer dependencies:
 
 - `react >=18.2.0`
 - `react-native >=0.75.0`
-- `react-native-nitro-modules >=0.35.6`
+- `react-native-nitro-modules >=0.35.7`
 
 ## Security Model
 
@@ -430,6 +461,11 @@ bun run test -- --filter=react-native-nitro-storage
 bun run test:coverage -- --filter=react-native-nitro-storage
 bun run test:cpp -- --filter=react-native-nitro-storage
 bun run test:cpp:coverage -- --filter=react-native-nitro-storage
+bun run example:doctor
+bun run example:typecheck
+bun run example:prebuild:clean
+bun run example:android:assemble
+bun run example:ios:build
 (cd packages/react-native-nitro-storage && bun run check:pack)
 bun run publish-package:dry -- --yes --with-coverage
 ```
@@ -454,6 +490,11 @@ Release checks:
 ```sh
 bun run build -- --filter=react-native-nitro-storage
 bun run benchmark -- --filter=react-native-nitro-storage
+bun run example:doctor
+bun run example:typecheck
+bun run example:prebuild:clean
+bun run example:android:assemble
+bun run example:ios:build
 (cd packages/react-native-nitro-storage && bun run check:pack)
 bun run publish-package:dry -- --yes
 ```

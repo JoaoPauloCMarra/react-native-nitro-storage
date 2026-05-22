@@ -25,12 +25,16 @@
         {
           "ios": {
             "buildReactNativeFromSource": true
+          },
+          "android": {
+            "usePrecompiledHeaders": true
           }
         }
       ],
-      "./plugins/with-fmt-ios-compat",
       "react-native-nitro-storage",
-      "expo-font"
+      "expo-font",
+      "expo-asset",
+      "expo-status-bar"
     ],
     "experiments": {
       "typedRoutes": true

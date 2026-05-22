@@ -37,6 +37,6 @@ body:
     attributes:
       label: Versions
       description: react-native-nitro-storage, react-native, react-native-nitro-modules, Expo if used.
-      placeholder: "react-native-nitro-storage 0.5.0, RN 0.83.2, Nitro 0.35.4"
+      placeholder: "react-native-nitro-storage 0.5.6, RN 0.85.3, Nitro 0.35.7"
     validations:
       required: true
