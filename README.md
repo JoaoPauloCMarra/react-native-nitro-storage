@@ -364,6 +364,8 @@ Tested release matrix:
 | Nitro Modules | 0.35.7  |
 | TypeScript    | 6.0.3   |
 
+The iOS example build requires Xcode 26 or newer. GitHub Actions should use the `macos-26` runner image for SDK 56 iOS build validation.
+
 Peer dependencies:
 
 - `react >=18.2.0`

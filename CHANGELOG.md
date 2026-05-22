@@ -22,6 +22,7 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 - Enable Expo SDK 56 Android precompiled headers in the example app to reduce native C++ build time.
 - Update safe native/tooling dependencies, including Nitro `0.35.7`, AndroidX Security Crypto `1.1.0`, React Native 0.85 Babel preset, Expo SDK 56 packages, SWC, Node types, and Turbo.
 - Add example release gates for Expo Doctor, TypeScript, prebuild, Android assemble, and iOS simulator builds.
+- Run the iOS example build gate on the GitHub Actions macOS 26 image so SDK 56 uses an Xcode/Swift toolchain new enough for ExpoModulesJSI.
 - Extend the example app so web, Android, and iOS expose the same secure export guard, event observer redaction, and web backend override flows where each platform supports them.
 
 ### Fixed
