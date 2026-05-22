@@ -11,9 +11,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "prebuild": "env -u NO_COLOR expo prebuild",
     "prebuild:clean": "env -u NO_COLOR expo prebuild --clean",
-    "lint": "bunx eslint app components --max-warnings=0 --fix",
+    "lint": "bunx eslint app components --max-warnings=0",
+    "lint:fix": "bunx eslint app components --max-warnings=0 --fix",
     "android:assemble": "cd android && NODE_ENV=development ANDROID_HOME=${ANDROID_HOME:-$HOME/Library/Android/sdk} ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Library/Android/sdk}} ./gradlew --no-daemon -PreactNativeArchitectures=arm64-v8a :app:assembleDebug",
-    "ios:build": "xcodebuild -workspace ios/NitroStorage.xcworkspace -scheme NitroStorage -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build"
+    "ios:build": "cd ios && pod install && xcodebuild -workspace NitroStorage.xcworkspace -scheme NitroStorage -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build"
   },
   "dependencies": {
     "@babel/runtime": "^7.29.2",

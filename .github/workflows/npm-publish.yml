@@ -61,5 +61,8 @@ jobs:
             exit 1
           fi
 
+      - name: Release preflight
+        run: bun run release:preflight
+
       - name: Publish to npm
         run: bun run publish-package -- --yes --with-coverage --tag="${DIST_TAG}"

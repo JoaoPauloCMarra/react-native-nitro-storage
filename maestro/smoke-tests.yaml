@@ -1,0 +1,15 @@
+appId: com.nitrostorage.example
+name: "Smoke Tests - All Pass"
+---
+- clearState
+- launchApp
+- scrollUntilVisible:
+    element: "Smoke Test"
+    direction: UP
+    speed: 100
+    timeout: 120000
+- tapOn: "Run All"
+- extendedWaitUntil:
+    visible: "37/38 passed · 1 skipped"
+    timeout: 60000
+- assertNotVisible: "failed"

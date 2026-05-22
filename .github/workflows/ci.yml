@@ -32,29 +32,14 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      - name: Lint
-        run: bun run lint
-
-      - name: Format check
-        run: bun run format:check
-
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Type-level API tests
-        run: bun run test:types
+      - name: Release preflight
+        run: bun run release:preflight
 
       - name: Unit tests with coverage
         run: bun run test:coverage
 
-      - name: Benchmark regression checks
-        run: bun run benchmark
-
-      - name: C++ tests
-        run: bun run test:cpp
-
-      - name: Package content check
-        run: bun run --cwd packages/react-native-nitro-storage check:pack
+      - name: C++ coverage
+        run: bun run test:cpp:coverage
 
   example-android:
     name: Example Android Build

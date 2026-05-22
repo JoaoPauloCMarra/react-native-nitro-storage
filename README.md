@@ -455,21 +455,13 @@ Nitro Storage is strongest when the app needs synchronous reads, React bindings,
 - Run the full package gate before release:
 
 ```sh
-bun run lint -- --filter=react-native-nitro-storage
-bun run format:check -- --filter=react-native-nitro-storage
-bun run typecheck -- --filter=react-native-nitro-storage
-bun run test:types -- --filter=react-native-nitro-storage
-bun run test -- --filter=react-native-nitro-storage
+bun run release:preflight
 bun run test:coverage -- --filter=react-native-nitro-storage
-bun run test:cpp -- --filter=react-native-nitro-storage
 bun run test:cpp:coverage -- --filter=react-native-nitro-storage
-bun run example:doctor
-bun run example:typecheck
 bun run example:prebuild:clean
 bun run example:android:assemble
 bun run example:ios:build
-(cd packages/react-native-nitro-storage && bun run check:pack)
-bun run publish-package:dry -- --yes --with-coverage
+bun run example:smoke
 ```
 
 Publishing a GitHub Release tagged `v<package.version>` triggers the npm workflow.
@@ -479,26 +471,18 @@ The npm package must trust `.github/workflows/npm-publish.yml` in npm package se
 
 ```sh
 bun install
-bun run lint -- --filter=react-native-nitro-storage
-bun run format:check -- --filter=react-native-nitro-storage
-bun run typecheck -- --filter=react-native-nitro-storage
-bun run test:types -- --filter=react-native-nitro-storage
-bun run test -- --filter=react-native-nitro-storage
-bun run test:cpp -- --filter=react-native-nitro-storage
+bun run check
+bun run example:check
 ```
 
 Release checks:
 
 ```sh
-bun run build -- --filter=react-native-nitro-storage
-bun run benchmark -- --filter=react-native-nitro-storage
-bun run example:doctor
-bun run example:typecheck
+bun run release:preflight
 bun run example:prebuild:clean
 bun run example:android:assemble
 bun run example:ios:build
-(cd packages/react-native-nitro-storage && bun run check:pack)
-bun run publish-package:dry -- --yes
+bun run example:smoke
 ```
 
 ## License

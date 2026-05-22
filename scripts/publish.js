@@ -348,10 +348,18 @@ Options:
     log("Running pre-publish checks...", "cyan");
 
     if (isPackageVersionPublished(packageName, version)) {
-      log(`✗ ${packageName}@${version} is already published`, "red");
-      process.exit(1);
+      if (isDryRun) {
+        log(
+          `⚠️  ${packageName}@${version} is already published; continuing dry-run validation`,
+          "yellow",
+        );
+      } else {
+        log(`✗ ${packageName}@${version} is already published`, "red");
+        process.exit(1);
+      }
+    } else {
+      console.log(`  ✓ ${packageName}@${version} is not published on npm`);
     }
-    console.log(`  ✓ ${packageName}@${version} is not published on npm`);
 
     const gitStatus = getGitStatus();
     if (gitStatus.length > 0) {
@@ -460,8 +468,7 @@ Options:
   }
 
   if (isDryRun) {
-    log("🏃 Running npm publish dry-run...", "cyan");
-    const lifecycleFlag = verifyNpmLifecycle ? "" : " --ignore-scripts";
+    log("🏃 Running package publish dry-run...", "cyan");
     if (!verifyNpmLifecycle) {
       if (!preparePackageDocs()) {
         log("✗ Failed to prepare package docs", "red");
@@ -469,7 +476,9 @@ Options:
         process.exit(1);
       }
     }
-    const dryPublishCommand = `npm publish --dry-run${lifecycleFlag} --tag ${shellQuote(tag)} --access public`;
+    const dryPublishCommand = verifyNpmLifecycle
+      ? `bun publish --dry-run --tag ${shellQuote(tag)} --access public`
+      : `bun publish --dry-run --ignore-scripts --tag ${shellQuote(tag)} --access public`;
     const ok = execCommand(dryPublishCommand, { cwd: packageDir });
     cleanupPackageDocs();
     if (!ok) {

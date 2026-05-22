@@ -290,6 +290,8 @@ export default function HomeScreen() {
 
   return (
     <Page title="Nitro Storage" subtitle="Complete feature showcase">
+      <SmokeTestRunner />
+
       <Card
         title="Memory Scope"
         subtitle="In-process ephemeral storage"
@@ -1352,8 +1354,6 @@ export default function HomeScreen() {
           />
         </View>
       </Card>
-
-      <SmokeTestRunner />
     </Page>
   );
 }
