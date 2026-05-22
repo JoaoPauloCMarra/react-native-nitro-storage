@@ -14,7 +14,7 @@ env:
 jobs:
   quality:
     name: Lint, Typecheck & Unit Tests
-    runs-on: ubuntu-latest
+    runs-on: macos-26
 
     steps:
       - uses: actions/checkout@v6.0.2
