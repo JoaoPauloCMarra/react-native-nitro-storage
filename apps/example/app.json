@@ -37,6 +37,7 @@
       "expo-status-bar"
     ],
     "experiments": {
+      "reactCompiler": true,
       "typedRoutes": true
     }
   }
