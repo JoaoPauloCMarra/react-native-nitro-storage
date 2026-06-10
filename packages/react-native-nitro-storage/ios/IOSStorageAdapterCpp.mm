@@ -190,6 +190,106 @@ static NSMutableDictionary* allAccountsQuery(NSString* service, NSString* access
     return query;
 }
 
+static NSString* nsStringFromStdString(const std::string& value) {
+    return [NSString stringWithUTF8String:value.c_str()];
+}
+
+static NSData* nsDataFromStdString(const std::string& value) {
+    return [nsStringFromStdString(value) dataUsingEncoding:NSUTF8StringEncoding];
+}
+
+static void setSecureValue(
+    NSString* nsKey,
+    NSData* data,
+    NSString* group,
+    int accessControlLevel
+) {
+    NSMutableDictionary* query = baseKeychainQuery(nsKey, kKeychainService, group);
+    NSDictionary* updateAttributes = @{
+        (__bridge id)kSecValueData: data
+    };
+
+    OSStatus status = SecItemUpdate((__bridge CFDictionaryRef)query, (__bridge CFDictionaryRef)updateAttributes);
+    if (status == errSecSuccess) {
+        return;
+    }
+
+    if (status == errSecItemNotFound) {
+        query[(__bridge id)kSecValueData] = data;
+        query[(__bridge id)kSecAttrAccessible] = (__bridge id)accessControlAttr(accessControlLevel);
+        const OSStatus addStatus = SecItemAdd((__bridge CFDictionaryRef)query, NULL);
+        if (addStatus == errSecSuccess) {
+            return;
+        }
+        if (addStatus == errSecInteractionNotAllowed) {
+            throw taggedStorageError(
+                "keychain_locked",
+                "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
+                "The item is not accessible until the device is unlocked."
+            );
+        }
+        throw std::runtime_error(
+            "NitroStorage: Secure set failed with status " + std::to_string(addStatus)
+        );
+    }
+
+    if (status == errSecInteractionNotAllowed) {
+        throw taggedStorageError(
+            "keychain_locked",
+            "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
+            "The item is not accessible until the device is unlocked."
+        );
+    }
+    throw std::runtime_error(
+        "NitroStorage: Secure set failed with status " + std::to_string(status)
+    );
+}
+
+static std::optional<std::string> getSecureValue(NSString* nsKey, NSString* group) {
+    NSMutableDictionary* query = baseKeychainQuery(nsKey, kKeychainService, group);
+    query[(__bridge id)kSecReturnData] = @YES;
+    query[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
+    disableKeychainInteraction(query);
+
+    CFTypeRef result = NULL;
+    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
+    if (status == errSecSuccess && result) {
+        NSData* data = (__bridge_transfer NSData*)result;
+        NSString* str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+        if (str) return std::string([str UTF8String]);
+    }
+    if (status == errSecInteractionNotAllowed) {
+        throw taggedStorageError(
+            "keychain_locked",
+            "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
+            "The item is not accessible until the device is unlocked."
+        );
+    }
+    return std::nullopt;
+}
+
+static void deleteSecureValue(NSString* nsKey, NSString* group) {
+    NSMutableDictionary* secureQuery = baseKeychainQuery(nsKey, kKeychainService, group);
+    OSStatus secureStatus = SecItemDelete((__bridge CFDictionaryRef)secureQuery);
+    if (secureStatus == errSecInteractionNotAllowed) {
+        throw taggedStorageError(
+            "keychain_locked",
+            "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
+            "The item is not accessible until the device is unlocked."
+        );
+    }
+
+    NSMutableDictionary* biometricQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
+    OSStatus biometricStatus = SecItemDelete((__bridge CFDictionaryRef)biometricQuery);
+    if (biometricStatus == errSecInteractionNotAllowed) {
+        throw taggedStorageError(
+            "keychain_locked",
+            "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
+            "The item is not accessible until the device is unlocked."
+        );
+    }
+}
+
 static std::vector<std::string> keychainAccountsForService(NSString* service, NSString* accessGroup) {
     NSMutableDictionary* query = allAccountsQuery(service, accessGroup);
     disableKeychainInteraction(query);
@@ -225,8 +325,8 @@ static std::vector<std::string> keychainAccountsForService(NSString* service, NS
 }
 
 void IOSStorageAdapterCpp::setSecure(const std::string& key, const std::string& value) {
-    NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
-    NSData* data = [[NSString stringWithUTF8String:value.c_str()] dataUsingEncoding:NSUTF8StringEncoding];
+    NSString* nsKey = nsStringFromStdString(key);
+    NSData* data = nsDataFromStdString(value);
     std::string groupStr;
     int accessControlLevel;
     {
@@ -235,112 +335,30 @@ void IOSStorageAdapterCpp::setSecure(const std::string& key, const std::string& 
         accessControlLevel = accessControlLevel_;
     }
     NSString* group = groupStr.empty() ? nil : [NSString stringWithUTF8String:groupStr.c_str()];
-    NSMutableDictionary* query = baseKeychainQuery(nsKey, kKeychainService, group);
-
-    NSDictionary* updateAttributes = @{
-        (__bridge id)kSecValueData: data
-    };
-
-    OSStatus status = SecItemUpdate((__bridge CFDictionaryRef)query, (__bridge CFDictionaryRef)updateAttributes);
-
-    if (status == errSecSuccess) {
-        markSecureKeySet(key);
-        return;
-    }
-
-    if (status == errSecItemNotFound) {
-        query[(__bridge id)kSecValueData] = data;
-        query[(__bridge id)kSecAttrAccessible] = (__bridge id)accessControlAttr(accessControlLevel);
-        const OSStatus addStatus = SecItemAdd((__bridge CFDictionaryRef)query, NULL);
-        if (addStatus != errSecSuccess) {
-            if (addStatus == errSecInteractionNotAllowed) {
-                throw taggedStorageError(
-                    "keychain_locked",
-                    "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
-                    "The item is not accessible until the device is unlocked."
-                );
-            }
-            throw std::runtime_error(
-                "NitroStorage: Secure set failed with status " + std::to_string(addStatus)
-            );
-        }
-        markSecureKeySet(key);
-        return;
-    }
-
-    if (status == errSecInteractionNotAllowed) {
-        throw taggedStorageError(
-            "keychain_locked",
-            "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
-            "The item is not accessible until the device is unlocked."
-        );
-    }
-    throw std::runtime_error(
-        "NitroStorage: Secure set failed with status " + std::to_string(status)
-    );
+    setSecureValue(nsKey, data, group, accessControlLevel);
+    markSecureKeySet(key);
 }
 
 std::optional<std::string> IOSStorageAdapterCpp::getSecure(const std::string& key) {
-    NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
+    NSString* nsKey = nsStringFromStdString(key);
     std::string groupStr;
     {
         std::lock_guard<std::mutex> lock(accessGroupMutex_);
         groupStr = keychainAccessGroup_;
     }
     NSString* group = groupStr.empty() ? nil : [NSString stringWithUTF8String:groupStr.c_str()];
-    NSMutableDictionary* query = baseKeychainQuery(nsKey, kKeychainService, group);
-    query[(__bridge id)kSecReturnData] = @YES;
-    query[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
-    disableKeychainInteraction(query);
-
-    CFTypeRef result = NULL;
-    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
-    if (status == errSecSuccess && result) {
-        NSData* data = (__bridge_transfer NSData*)result;
-        NSString* str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-        if (str) return std::string([str UTF8String]);
-    }
-    if (status == errSecInteractionNotAllowed) {
-        throw taggedStorageError(
-            "keychain_locked",
-            "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
-            "The item is not accessible until the device is unlocked."
-        );
-    }
-    return std::nullopt;
+    return getSecureValue(nsKey, group);
 }
 
 void IOSStorageAdapterCpp::deleteSecure(const std::string& key) {
-    NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
+    NSString* nsKey = nsStringFromStdString(key);
     std::string groupStr;
     {
         std::lock_guard<std::mutex> lock(accessGroupMutex_);
         groupStr = keychainAccessGroup_;
     }
     NSString* group = groupStr.empty() ? nil : [NSString stringWithUTF8String:groupStr.c_str()];
-
-    NSMutableDictionary* secureQuery = baseKeychainQuery(nsKey, kKeychainService, group);
-    OSStatus secureStatus = SecItemDelete((__bridge CFDictionaryRef)secureQuery);
-    if (secureStatus == errSecInteractionNotAllowed) {
-        throw taggedStorageError(
-            "keychain_locked",
-            "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
-            "The item is not accessible until the device is unlocked."
-        );
-    }
-
-    NSMutableDictionary* biometricQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
-    OSStatus biometricStatus = SecItemDelete((__bridge CFDictionaryRef)biometricQuery);
-    if (biometricStatus == errSecInteractionNotAllowed) {
-        throw taggedStorageError(
-            "keychain_locked",
-            "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
-            "The item is not accessible until the device is unlocked."
-        );
-    }
-
-    // errSecItemNotFound means the item was already gone — that's fine (idempotent).
-    // Only update the cache if the delete actually ran (success or item-not-found).
+    deleteSecureValue(nsKey, group);
     markSecureKeyRemoved(key);
     markBiometricKeyRemoved(key);
 }
@@ -400,25 +418,53 @@ void IOSStorageAdapterCpp::setSecureBatch(
     const std::vector<std::string>& keys,
     const std::vector<std::string>& values
 ) {
+    std::string groupStr;
+    int accessControlLevel;
+    {
+        std::lock_guard<std::mutex> lock(accessGroupMutex_);
+        groupStr = keychainAccessGroup_;
+        accessControlLevel = accessControlLevel_;
+    }
+    NSString* group = groupStr.empty() ? nil : [NSString stringWithUTF8String:groupStr.c_str()];
     for (size_t i = 0; i < keys.size() && i < values.size(); ++i) {
-        setSecure(keys[i], values[i]);
+        setSecureValue(
+            nsStringFromStdString(keys[i]),
+            nsDataFromStdString(values[i]),
+            group,
+            accessControlLevel
+        );
+        markSecureKeySet(keys[i]);
     }
 }
 
 std::vector<std::optional<std::string>> IOSStorageAdapterCpp::getSecureBatch(
     const std::vector<std::string>& keys
 ) {
+    std::string groupStr;
+    {
+        std::lock_guard<std::mutex> lock(accessGroupMutex_);
+        groupStr = keychainAccessGroup_;
+    }
+    NSString* group = groupStr.empty() ? nil : [NSString stringWithUTF8String:groupStr.c_str()];
     std::vector<std::optional<std::string>> results;
     results.reserve(keys.size());
     for (const auto& key : keys) {
-        results.push_back(getSecure(key));
+        results.push_back(getSecureValue(nsStringFromStdString(key), group));
     }
     return results;
 }
 
 void IOSStorageAdapterCpp::deleteSecureBatch(const std::vector<std::string>& keys) {
+    std::string groupStr;
+    {
+        std::lock_guard<std::mutex> lock(accessGroupMutex_);
+        groupStr = keychainAccessGroup_;
+    }
+    NSString* group = groupStr.empty() ? nil : [NSString stringWithUTF8String:groupStr.c_str()];
     for (const auto& key : keys) {
-        deleteSecure(key);
+        deleteSecureValue(nsStringFromStdString(key), group);
+        markSecureKeyRemoved(key);
+        markBiometricKeyRemoved(key);
     }
 }
 

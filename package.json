@@ -25,7 +25,10 @@
     "test:coverage": "turbo run test:coverage --filter=react-native-nitro-storage",
     "benchmark": "turbo run benchmark --filter=react-native-nitro-storage",
     "test:cpp": "turbo run test:cpp --filter=react-native-nitro-storage",
+    "test:cpp:asan": "turbo run test:cpp:asan --filter=react-native-nitro-storage",
     "test:cpp:coverage": "turbo run test:cpp:coverage --filter=react-native-nitro-storage",
+    "test:cpp:tsan": "turbo run test:cpp:tsan --filter=react-native-nitro-storage",
+    "test:cpp:ubsan": "turbo run test:cpp:ubsan --filter=react-native-nitro-storage",
     "check": "bun run lint:check -- --filter=react-native-nitro-storage && bun run format:check -- --filter=react-native-nitro-storage && bun run typecheck -- --filter=react-native-nitro-storage && bun run test:types -- --filter=react-native-nitro-storage && bun run test -- --filter=react-native-nitro-storage && bun run test:cpp -- --filter=react-native-nitro-storage",
     "check:ci": "bun run check && bun run benchmark -- --filter=react-native-nitro-storage",
     "audit:package": "bun run --cwd packages/react-native-nitro-storage check:pack && bun pm pack --cwd packages/react-native-nitro-storage --dry-run",
@@ -69,10 +72,10 @@
     "react-native": "0.85.3",
     "react-native-nitro-modules": "0.35.7",
     "@types/react": "~19.2.14",
-    "expo": "~56.0.4",
+    "expo": "~56.0.9",
     "react-native-screens": "4.25.2",
-    "expo-constants": "56.0.15",
-    "expo-linking": "~56.0.11"
+    "expo-constants": "~56.0.17",
+    "expo-linking": "~56.0.13"
   },
   "packageManager": "bun@1.3.14",
   "trustedDependencies": [

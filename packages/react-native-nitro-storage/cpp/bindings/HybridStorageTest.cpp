@@ -1,6 +1,7 @@
 #include "HybridStorage.hpp"
 #include "../core/NativeStorageAdapter.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <iostream>
 #include <limits>
@@ -8,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace margelo::nitro::NitroStorage;
@@ -438,6 +440,33 @@ void testListenerExceptionsAreIgnored() {
     unsubscribeSecond();
 }
 
+void testListenerUnsubscribeStress() {
+    auto adapter = std::make_shared<MockAdapter>();
+    auto storage = std::make_shared<HybridStorage>(adapter);
+    int callCount = 0;
+    std::vector<std::function<void()>> unsubscribers;
+
+    for (int index = 0; index < 24; index += 1) {
+        unsubscribers.push_back(storage->addOnChange(0.0, [&](const std::string&, const std::optional<std::string>&) {
+            callCount += 1;
+        }));
+    }
+
+    for (size_t index = 0; index < unsubscribers.size(); index += 2) {
+        unsubscribers[index]();
+    }
+
+    storage->set("listener-stress", "value", 0.0);
+    assert(callCount == 12);
+
+    for (auto& unsubscribe : unsubscribers) {
+        unsubscribe();
+    }
+
+    storage->set("listener-stress", "next", 0.0);
+    assert(callCount == 12);
+}
+
 void testSecureConfigPassThrough() {
     auto adapter = std::make_shared<MockAdapter>();
     HybridStorage storage(adapter);
@@ -590,6 +619,53 @@ void testHydratedKeyIndexUpdates() {
     assert(storage.getAllKeys(1.0).empty());
 }
 
+void testHydratedBatchKeyIndexUpdates() {
+    auto adapter = std::make_shared<MockAdapter>();
+    HybridStorage storage(adapter);
+
+    storage.setBatch({"disk-a", "disk-b"}, {"1", "2"}, 1.0);
+    assert(storage.getAllKeys(1.0).size() == 2);
+    assert(storage.getKeysByPrefix("disk-", 1.0).size() == 2);
+
+    storage.setBatch({"disk-c", "other-a"}, {"3", "4"}, 1.0);
+    assert(storage.getKeysByPrefix("disk-", 1.0).size() == 3);
+    assert(storage.getKeysByPrefix("other-", 1.0).size() == 1);
+
+    storage.removeBatch({"disk-a", "disk-c"}, 1.0);
+    assert(!storage.has("disk-a", 1.0));
+    assert(!storage.has("disk-c", 1.0));
+    assert(storage.getKeysByPrefix("disk-", 1.0).size() == 1);
+    assert(storage.getAllKeys(1.0).size() == 2);
+}
+
+void testConcurrentMemoryAccess() {
+    auto adapter = std::make_shared<MockAdapter>();
+    auto storage = std::make_shared<HybridStorage>(adapter);
+    std::atomic<int> failures{0};
+    std::vector<std::thread> threads;
+
+    for (int threadIndex = 0; threadIndex < 4; threadIndex += 1) {
+        threads.emplace_back([storage, threadIndex, &failures]() {
+            for (int iteration = 0; iteration < 250; iteration += 1) {
+                const auto key = "thread-" + std::to_string(threadIndex) + "-" + std::to_string(iteration % 16);
+                const auto value = std::to_string(threadIndex * 1000 + iteration);
+                storage->set(key, value, 0.0);
+                const auto stored = storage->get(key, 0.0);
+                if (!stored.has_value() || stored.value().empty()) {
+                    failures.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        });
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    assert(failures.load(std::memory_order_relaxed) == 0);
+    assert(storage->getAllKeys(0.0).size() == 64);
+}
+
 void testUnknownNativeFailuresAreWrapped() {
     auto adapter = std::make_shared<UnknownThrowingAdapter>();
     HybridStorage storage(adapter);
@@ -626,6 +702,7 @@ int main() {
     testMemoryAndSecureBatchPaths();
     testBatchListeners();
     testListenerExceptionsAreIgnored();
+    testListenerUnsubscribeStress();
     testSecureConfigPassThrough();
     testRemoveByPrefix();
     testGetKeysByPrefix();
@@ -635,6 +712,8 @@ int main() {
     testInvalidInputsAndMissingAdapter();
     testNativeTaggedErrorsPassThrough();
     testHydratedKeyIndexUpdates();
+    testHydratedBatchKeyIndexUpdates();
+    testConcurrentMemoryAccess();
     testUnknownNativeFailuresAreWrapped();
 
     std::cout << "✅ HybridStorage C++ tests passed!" << std::endl;

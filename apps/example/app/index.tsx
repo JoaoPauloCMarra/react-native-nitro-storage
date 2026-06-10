@@ -149,10 +149,159 @@ const bufferedDiskItem = createStorageItem({
   coalesceDiskWrites: true,
 });
 
+const benchmarkDiskItems = Array.from({ length: 24 }, (_, index) =>
+  createStorageItem({
+    key: `bench:disk:${index}`,
+    scope: StorageScope.Disk,
+    defaultValue: "",
+  }),
+);
+
+const benchmarkSecureItems = Array.from({ length: 6 }, (_, index) =>
+  createStorageItem({
+    key: `bench:secure:${index}`,
+    scope: StorageScope.Secure,
+    defaultValue: "",
+  }),
+);
+
 const HOOK_LABELS = ["initial", "alpha", "beta", "gamma", "delta"];
 const isWebRuntime = Platform.OS === "web";
 
 let migVer = 30_000;
+
+type RuntimeBenchmarkResult = {
+  label: string;
+  operations: number;
+  durationMs: number;
+};
+
+function nowMs() {
+  return globalThis.performance?.now() ?? Date.now();
+}
+
+function measureRuntime(
+  label: string,
+  operations: number,
+  run: () => void,
+): RuntimeBenchmarkResult {
+  const start = nowMs();
+  run();
+  return {
+    label,
+    operations,
+    durationMs: nowMs() - start,
+  };
+}
+
+function formatRuntimeBenchmarkResult(result: RuntimeBenchmarkResult) {
+  const opsPerSecond =
+    result.durationMs > 0
+      ? Math.round((result.operations / result.durationMs) * 1000)
+      : result.operations;
+
+  return `${result.label}: ${result.operations} ops in ${result.durationMs.toFixed(2)} ms (${opsPerSecond.toLocaleString()} ops/s)`;
+}
+
+function runRuntimeBenchmark() {
+  const memoryKeys = Array.from(
+    { length: 64 },
+    (_, index) => `bench:mem:${index}`,
+  );
+  const memoryResults: RuntimeBenchmarkResult[] = [];
+
+  storage.resetMetrics();
+
+  try {
+    memoryResults.push(
+      measureRuntime("memory set/get", 4_000, () => {
+        for (let index = 0; index < 2_000; index += 1) {
+          const key = memoryKeys[index % memoryKeys.length];
+          storage.setString(key, `value-${index}`, StorageScope.Memory);
+          storage.getString(key, StorageScope.Memory);
+        }
+      }),
+    );
+
+    memoryResults.push(
+      measureRuntime("disk batch", 1_440, () => {
+        for (let index = 0; index < 20; index += 1) {
+          setBatch(
+            benchmarkDiskItems.map((item, keyIndex) => ({
+              item,
+              value: `disk-${index}-${keyIndex}`,
+            })),
+            StorageScope.Disk,
+          );
+          getBatch(benchmarkDiskItems, StorageScope.Disk);
+          removeBatch(benchmarkDiskItems, StorageScope.Disk);
+        }
+      }),
+    );
+
+    memoryResults.push(
+      measureRuntime("secure batch", 72, () => {
+        for (let index = 0; index < 4; index += 1) {
+          setBatch(
+            benchmarkSecureItems.map((item, keyIndex) => ({
+              item,
+              value: `secure-${index}-${keyIndex}`,
+            })),
+            StorageScope.Secure,
+          );
+          getBatch(benchmarkSecureItems, StorageScope.Secure);
+          removeBatch(benchmarkSecureItems, StorageScope.Secure);
+        }
+      }),
+    );
+
+    const metrics = Object.values(storage.getMetricsSnapshot()).reduce(
+      (summary, metric) => ({
+        totalOperations: summary.totalOperations + metric.count,
+        totalDurationMs: summary.totalDurationMs + metric.totalDurationMs,
+      }),
+      { totalOperations: 0, totalDurationMs: 0 },
+    );
+    const averageMetricMs =
+      metrics.totalOperations > 0
+        ? metrics.totalDurationMs / metrics.totalOperations
+        : 0;
+    return [
+      ...memoryResults.map(formatRuntimeBenchmarkResult),
+      `native metrics: ${metrics.totalOperations} ops, avg ${averageMetricMs.toFixed(3)} ms`,
+    ].join("\n");
+  } finally {
+    memoryKeys.forEach((key) => {
+      storage.deleteString(key, StorageScope.Memory);
+    });
+    removeBatch(benchmarkDiskItems, StorageScope.Disk);
+    removeBatch(benchmarkSecureItems, StorageScope.Secure);
+  }
+}
+
+function RuntimeBenchmarkCard() {
+  const [runtimeBenchmarkResult, setRuntimeBenchmarkResult] =
+    useState("(not run)");
+
+  return (
+    <Card
+      title="Runtime Benchmark"
+      subtitle="Native memory, disk batch, and secure batch"
+      indicatorColor={Colors.primary}
+    >
+      <Button
+        testID="runtime-benchmark-run"
+        title="Run Benchmark"
+        onPress={() => {
+          setRuntimeBenchmarkResult(runRuntimeBenchmark());
+        }}
+      />
+      <CodeBlock testID="runtime-benchmark-result">
+        {runtimeBenchmarkResult}
+      </CodeBlock>
+    </Card>
+  );
+}
 
 export default function HomeScreen() {
   const [counter, setCounter] = useStorage(counterItem);
@@ -1251,6 +1400,8 @@ export default function HomeScreen() {
           size="sm"
         />
       </Card>
+
+      <RuntimeBenchmarkCard />
 
       <Card
         title="Web Backend Overrides"
