@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
+## 0.5.7 - 2026-06-10
+
+### Added
+
+- Add C++ sanitizer release gates for AddressSanitizer, ThreadSanitizer, and UndefinedBehaviorSanitizer so native storage regressions can be isolated before publishing.
+- Add C++ stress coverage for listener unsubscribe behavior, hydrated batch key indexes, and concurrent Memory scope access.
+- Add an example runtime benchmark card for Memory, Disk batch, Secure batch, and native metric summary checks.
+
+### Changed
+
+- Speed up iOS Secure batch operations by reusing the resolved Keychain access group and access-control level across each batch instead of re-reading configuration per key.
+- Refactor iOS Secure set/get/delete helpers so single-item and batch paths share Keychain status handling and cache updates.
+- Reduce unnecessary example smoke-test re-renders by rendering only completed/running rows, memoizing log rows, and deriving pass/fail/skipped counts with memoized reduction.
+- Align Expo SDK 56 example dependencies with the current Doctor-compatible patch set.
+- Strengthen TypeScript inference parity on web by exporting `StorageSetter` and preserving tuple value types from `getBatch()`.
+
+### Fixed
+
+- Keep native and web public TypeScript entrypoints aligned so IDEs infer storage setters and batch tuple results consistently across React Native and web imports.
+- Keep the README, issue template, package metadata, and release notes aligned with the current `0.5.7` package surface.
+
 ## 0.5.6 - 2026-05-22
 
 ### Added

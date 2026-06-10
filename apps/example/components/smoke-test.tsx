@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import {
   AccessControl,
@@ -945,13 +945,7 @@ export function SmokeTestRunner() {
     setRunning(true);
     const tests = buildTests();
     const results: LogEntry[] = [];
-    setLogs(
-      tests.map((t) => ({
-        label: t.label,
-        status: t.isSupported?.() === false ? "skipped" : "running",
-        detail: t.isSupported?.() === false ? t.unsupportedReason : undefined,
-      })),
-    );
+    setLogs([]);
 
     for (let i = 0; i < tests.length; i++) {
       const test = tests[i];
@@ -961,64 +955,46 @@ export function SmokeTestRunner() {
           status: "skipped",
           detail: test.unsupportedReason,
         });
-        setLogs([
-          ...results,
-          ...tests.slice(i + 1).map((t) => ({
-            label: t.label,
-            status:
-              t.isSupported?.() === false
-                ? ("skipped" as const)
-                : ("running" as const),
-            detail:
-              t.isSupported?.() === false ? t.unsupportedReason : undefined,
-          })),
-        ]);
+        setLogs([...results]);
         continue;
       }
 
-      results.push({ label: test.label, status: "running" });
-      setLogs([
-        ...results,
-        ...tests.slice(i + 1).map((t) => ({
-          label: t.label,
-          status:
-            t.isSupported?.() === false
-              ? ("skipped" as const)
-              : ("running" as const),
-          detail: t.isSupported?.() === false ? t.unsupportedReason : undefined,
-        })),
-      ]);
+      setLogs([...results, { label: test.label, status: "running" }]);
 
       await new Promise((r) => setTimeout(r, 16));
 
       try {
         await test.fn();
-        results[i] = { label: test.label, status: "pass" };
+        results.push({ label: test.label, status: "pass" });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        results[i] = { label: test.label, status: "fail", detail: msg };
+        results.push({ label: test.label, status: "fail", detail: msg });
       }
 
-      setLogs([
-        ...results,
-        ...tests.slice(i + 1).map((t) => ({
-          label: t.label,
-          status:
-            t.isSupported?.() === false
-              ? ("skipped" as const)
-              : ("running" as const),
-          detail: t.isSupported?.() === false ? t.unsupportedReason : undefined,
-        })),
-      ]);
+      setLogs([...results]);
     }
 
     setLogs([...results]);
     setRunning(false);
   }, []);
 
-  const passCount = logs.filter((l) => l.status === "pass").length;
-  const failCount = logs.filter((l) => l.status === "fail").length;
-  const skippedCount = logs.filter((l) => l.status === "skipped").length;
+  const { failCount, passCount, skippedCount } = useMemo(
+    () =>
+      logs.reduce(
+        (counts, entry) => {
+          if (entry.status === "pass") {
+            counts.passCount += 1;
+          } else if (entry.status === "fail") {
+            counts.failCount += 1;
+          } else if (entry.status === "skipped") {
+            counts.skippedCount += 1;
+          }
+          return counts;
+        },
+        { failCount: 0, passCount: 0, skippedCount: 0 },
+      ),
+    [logs],
+  );
   const total = logs.length;
 
   return (
@@ -1054,40 +1030,48 @@ export function SmokeTestRunner() {
             scrollRef.current?.scrollToEnd({ animated: true })
           }
         >
-          {logs.map((entry, idx) => (
-            <View key={idx} style={s.logRow}>
-              <Text style={s.logIcon}>
-                {entry.status === "pass"
-                  ? "✓"
-                  : entry.status === "fail"
-                    ? "✗"
-                    : entry.status === "skipped"
-                      ? "–"
-                      : "·"}
-              </Text>
-              <View style={s.logContent}>
-                <Text
-                  style={[
-                    s.logLabel,
-                    entry.status === "pass" && s.logPass,
-                    entry.status === "fail" && s.logFail,
-                    entry.status === "running" && s.logRunning,
-                    entry.status === "skipped" && s.logSkipped,
-                  ]}
-                >
-                  {entry.label}
-                </Text>
-                {entry.detail ? (
-                  <Text style={s.logDetail}>{entry.detail}</Text>
-                ) : null}
-              </View>
-            </View>
+          {logs.map((entry) => (
+            <SmokeTestLogRow key={entry.label} entry={entry} />
           ))}
         </ScrollView>
       ) : null}
     </View>
   );
 }
+
+const SmokeTestLogRow = memo(function SmokeTestLogRow({
+  entry,
+}: {
+  entry: LogEntry;
+}) {
+  return (
+    <View style={s.logRow}>
+      <Text style={s.logIcon}>
+        {entry.status === "pass"
+          ? "✓"
+          : entry.status === "fail"
+            ? "✗"
+            : entry.status === "skipped"
+              ? "–"
+              : "·"}
+      </Text>
+      <View style={s.logContent}>
+        <Text
+          style={[
+            s.logLabel,
+            entry.status === "pass" && s.logPass,
+            entry.status === "fail" && s.logFail,
+            entry.status === "running" && s.logRunning,
+            entry.status === "skipped" && s.logSkipped,
+          ]}
+        >
+          {entry.label}
+        </Text>
+        {entry.detail ? <Text style={s.logDetail}>{entry.detail}</Text> : null}
+      </View>
+    </View>
+  );
+});
 
 const s = StyleSheet.create({
   container: {

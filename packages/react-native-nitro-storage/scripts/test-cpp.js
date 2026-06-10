@@ -1,10 +1,31 @@
-const { execSync } = require("child_process");
+const { execFileSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 
 const coverageEnabled = process.argv.includes("--coverage");
+const sanitizerArg = process.argv.find((arg) => arg.startsWith("--sanitize="));
+const sanitizer = sanitizerArg?.split("=")[1];
+const supportedSanitizers = new Set(["address", "undefined", "thread"]);
+
+if (sanitizer !== undefined && !supportedSanitizers.has(sanitizer)) {
+  console.error(
+    "❌ Unsupported sanitizer. Use --sanitize=address, --sanitize=undefined, or --sanitize=thread.",
+  );
+  process.exit(1);
+}
+
+if (coverageEnabled && sanitizer !== undefined) {
+  console.error("❌ Coverage and sanitizer modes cannot run together.");
+  process.exit(1);
+}
+
 const cppDir = path.join(__dirname, "..", "cpp");
-const buildDir = path.join(cppDir, "build");
+const buildMode = coverageEnabled
+  ? "coverage"
+  : sanitizer === undefined
+    ? "default"
+    : sanitizer;
+const buildDir = path.join(cppDir, "build", buildMode);
 
 // Ensure build directory exists
 if (fs.existsSync(buildDir)) {
@@ -114,20 +135,69 @@ const hybridOutputFile = path.join(buildDir, "hybrid_storage_test");
 console.log("⚙️  Compiling...");
 
 const commonFlags = [
-  "clang++",
   "-std=c++17",
   "-g",
-  coverageEnabled ? "-fprofile-instr-generate" : "",
-  coverageEnabled ? "-fcoverage-mapping" : "",
-  process.platform === "darwin" ? "-stdlib=libc++" : "",
+  ...(sanitizer !== undefined ? [`-fsanitize=${sanitizer}`] : []),
+  ...(sanitizer !== undefined ? ["-fno-omit-frame-pointer"] : []),
+  ...(coverageEnabled
+    ? ["-fprofile-instr-generate", "-fcoverage-mapping"]
+    : []),
+  ...(process.platform === "darwin" ? ["-stdlib=libc++"] : []),
 ];
-const linkFlags = process.platform === "darwin" ? "" : "-lpthread";
+const linkFlags = [
+  ...(sanitizer !== undefined ? [`-fsanitize=${sanitizer}`] : []),
+  ...(process.platform === "darwin" ? [] : ["-lpthread"]),
+];
 
 function resolveLlvmTool(name) {
   if (process.platform !== "darwin") {
     return name;
   }
-  return `xcrun ${name}`;
+  return execFileSync("xcrun", ["--find", name], { encoding: "utf8" }).trim();
+}
+
+function runCommand(command, args, options = {}) {
+  execFileSync(command, args, {
+    stdio: "inherit",
+    ...options,
+  });
+}
+
+function signDarwinBinary(binaryPath) {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  execFileSync("codesign", ["--force", "--sign", "-", binaryPath], {
+    stdio: "ignore",
+  });
+}
+
+function sanitizerRuntimeEnv() {
+  if (sanitizer === "address") {
+    return {
+      ...process.env,
+      ASAN_OPTIONS: process.env.ASAN_OPTIONS ?? "strict_string_checks=1",
+    };
+  }
+
+  if (sanitizer === "undefined") {
+    return {
+      ...process.env,
+      UBSAN_OPTIONS:
+        process.env.UBSAN_OPTIONS ?? "halt_on_error=1:print_stacktrace=1",
+    };
+  }
+
+  if (sanitizer === "thread") {
+    return {
+      ...process.env,
+      TSAN_OPTIONS:
+        process.env.TSAN_OPTIONS ?? "halt_on_error=1:second_deadlock_stack=1",
+    };
+  }
+
+  return process.env;
 }
 
 function runCoverage(storageOutputFile, hybridOutputFile) {
@@ -143,29 +213,44 @@ function runCoverage(storageOutputFile, hybridOutputFile) {
     path.join(cppDir, "bindings", "HybridStorage.hpp"),
   ];
 
-  execSync(storageOutputFile, {
-    stdio: "inherit",
+  runCommand(storageOutputFile, [], {
     env: { ...process.env, LLVM_PROFILE_FILE: storageProfile },
   });
-  execSync(hybridOutputFile, {
-    stdio: "inherit",
+  runCommand(hybridOutputFile, [], {
     env: { ...process.env, LLVM_PROFILE_FILE: hybridProfile },
   });
 
-  execSync(
-    `${profdata} merge -sparse ${storageProfile} ${hybridProfile} -o ${mergedProfile}`,
-    { stdio: "inherit" },
-  );
+  runCommand(profdata, [
+    "merge",
+    "-sparse",
+    storageProfile,
+    hybridProfile,
+    "-o",
+    mergedProfile,
+  ]);
 
-  const sourceArgs = sourceFiles.map((file) => `"${file}"`).join(" ");
-  execSync(
-    `${cov} report "${storageOutputFile}" -object "${hybridOutputFile}" -instr-profile="${mergedProfile}" ${sourceArgs}`,
-    { stdio: "inherit" },
+  runCommand(cov, [
+    "report",
+    storageOutputFile,
+    "-object",
+    hybridOutputFile,
+    `-instr-profile=${mergedProfile}`,
+    ...sourceFiles,
+  ]);
+  const exportSummary = execFileSync(
+    cov,
+    [
+      "export",
+      storageOutputFile,
+      "-object",
+      hybridOutputFile,
+      `-instr-profile=${mergedProfile}`,
+      "-summary-only",
+      ...sourceFiles,
+    ],
+    { encoding: "utf8" },
   );
-  execSync(
-    `${cov} export "${storageOutputFile}" -object "${hybridOutputFile}" -instr-profile="${mergedProfile}" -summary-only ${sourceArgs} > "${exportFile}"`,
-    { stdio: "inherit", shell: true },
-  );
+  fs.writeFileSync(exportFile, exportSummary);
 
   const summary = JSON.parse(fs.readFileSync(exportFile, "utf8"));
   const totals = summary.data[0].totals;
@@ -200,16 +285,17 @@ function runCoverage(storageOutputFile, hybridOutputFile) {
 }
 
 try {
-  const compileStorageCmd = [
+  const compileStorageArgs = [
     ...commonFlags,
     `-I${path.join(cppDir, "core")}`,
     storageTestFile,
-    `-o ${storageOutputFile}`,
-    linkFlags,
-  ].join(" ");
-  execSync(compileStorageCmd, { stdio: "inherit" });
+    "-o",
+    storageOutputFile,
+    ...linkFlags,
+  ];
+  runCommand("clang++", compileStorageArgs);
 
-  const compileHybridCmd = [
+  const compileHybridArgs = [
     ...commonFlags,
     "-DNITRO_STORAGE_DISABLE_PLATFORM_ADAPTER",
     "-DNITRO_STORAGE_USE_ORDERED_MAP_FOR_TESTS",
@@ -220,10 +306,13 @@ try {
     hybridTestFile,
     hybridSourceFile,
     hybridSpecFile,
-    `-o ${hybridOutputFile}`,
-    linkFlags,
-  ].join(" ");
-  execSync(compileHybridCmd, { stdio: "inherit" });
+    "-o",
+    hybridOutputFile,
+    ...linkFlags,
+  ];
+  runCommand("clang++", compileHybridArgs);
+  signDarwinBinary(storageOutputFile);
+  signDarwinBinary(hybridOutputFile);
 
   console.log("✅ Compilation successful.");
   console.log("🚀 Running tests...");
@@ -231,8 +320,9 @@ try {
   if (coverageEnabled) {
     runCoverage(storageOutputFile, hybridOutputFile);
   } else {
-    execSync(storageOutputFile, { stdio: "inherit" });
-    execSync(hybridOutputFile, { stdio: "inherit" });
+    const sanitizerEnv = sanitizerRuntimeEnv();
+    runCommand(storageOutputFile, [], { env: sanitizerEnv });
+    runCommand(hybridOutputFile, [], { env: sanitizerEnv });
   }
   console.log("✅ C++ tests passed!");
 } catch (error) {

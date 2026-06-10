@@ -76,6 +76,20 @@ const values = getBatch([countItem], StorageScope.Memory);
 const firstValue: number = values[0];
 removeBatch([countItem], StorageScope.Memory);
 
+const themeItem = createStorageItem({
+  key: "theme",
+  scope: StorageScope.Memory,
+  defaultValue: "system" as "system" | "light" | "dark",
+});
+const batchTuple = getBatch(
+  [countItem, themeItem] as const,
+  StorageScope.Memory,
+);
+const typedCountFromBatch: number = batchTuple[0];
+const typedThemeFromBatch: "system" | "light" | "dark" = batchTuple[1];
+void typedCountFromBatch;
+void typedThemeFromBatch;
+
 const versionedSnapshot = countItem.getWithVersion();
 const versionToken: string = versionedSnapshot.version;
 const casResult: boolean = countItem.setIfVersion(versionToken, 6);

@@ -36,7 +36,16 @@
     "test:cpp": {
       "cache": false
     },
+    "test:cpp:asan": {
+      "cache": false
+    },
     "test:cpp:coverage": {
+      "cache": false
+    },
+    "test:cpp:tsan": {
+      "cache": false
+    },
+    "test:cpp:ubsan": {
       "cache": false
     }
   }
