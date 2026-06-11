@@ -92,9 +92,11 @@ Add the config plugin before prebuilding native iOS and Android projects:
 | `addBiometricPermissions` | `false`                  | Adds Android biometric and fingerprint permissions.            |
 | `configureAndroidBackup`  | `true`                   | Writes Android backup rules that exclude secure storage files. |
 
-The plugin also initializes the Android storage adapter in `MainApplication`.
-Set `configureAndroidBackup: false` only when your app maintains equivalent
-backup and device-transfer exclusions for Nitro Storage secure files.
+Android adapter initialization is owned by the package through an Android
+manifest initializer, so apps should not edit `MainApplication` to call
+`AndroidStorageAdapter.init(this)`. Set `configureAndroidBackup: false` only
+when your app maintains equivalent backup and device-transfer exclusions for
+Nitro Storage secure files.
 
 ## Quick Start
 
@@ -380,6 +382,8 @@ Secure scope is only as strong as the backend you configure.
 
 - **Expo Go error:** build a development client; Expo Go cannot load Nitro
   modules.
+- **Android not initialized:** rebuild the native app after installing or
+  upgrading the package so the Android manifest initializer is merged.
 - **Secure values fail after Android restore:** keep `configureAndroidBackup:
 true` or provide equivalent backup exclusions.
 - **Biometric prompt does not appear:** set `biometric: true` on the item and

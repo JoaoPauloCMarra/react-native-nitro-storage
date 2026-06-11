@@ -90,4 +90,30 @@ describe("Expo config plugin", () => {
       fs.rmSync(projectRoot, { recursive: true, force: true });
     }
   });
+
+  it("registers the package initializer provider in the Android manifest", () => {
+    const packageRoot = path.resolve(__dirname, "../..");
+    const manifest = fs.readFileSync(
+      path.join(packageRoot, "android/src/main/AndroidManifest.xml"),
+      "utf8",
+    );
+
+    expect(manifest).toContain("com.nitrostorage.NitroStorageInitializer");
+    expect(manifest).toContain("${applicationId}.nitrostorage-initializer");
+  });
+
+  it("initializes the Android adapter from application context", () => {
+    const packageRoot = path.resolve(__dirname, "../..");
+    const initializer = fs.readFileSync(
+      path.join(
+        packageRoot,
+        "android/src/main/java/com/nitrostorage/NitroStorageInitializer.kt",
+      ),
+      "utf8",
+    );
+
+    expect(initializer).toContain(
+      "context?.applicationContext?.let(AndroidStorageAdapter::init)",
+    );
+  });
 });

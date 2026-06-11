@@ -6,6 +6,7 @@ const repoRoot = path.resolve(packageRoot, "../..");
 
 const entries = [
   { source: "README.md", target: "README.md", type: "file" },
+  { source: "CHANGELOG.md", target: "CHANGELOG.md", type: "file" },
   { source: "LICENSE", target: "LICENSE", type: "file" },
   { source: "SECURITY.md", target: "SECURITY.md", type: "file" },
   { source: "docs", target: "docs", type: "directory" },
