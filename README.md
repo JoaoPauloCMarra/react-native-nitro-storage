@@ -7,6 +7,7 @@
 [![React Native](https://img.shields.io/badge/react--native-%3E%3D0.75-61dafb)](https://reactnative.dev/)
 [![Expo](https://img.shields.io/badge/expo-SDK%2056-000020)](https://docs.expo.dev/)
 [![Nitro Modules](https://img.shields.io/badge/nitro--modules-%3E%3D0.35.7-black)](https://nitro.margelo.com/)
+[![TypeScript](https://img.shields.io/badge/typescript-6.0-3178c6)](https://www.typescriptlang.org/)
 
 Synchronous Memory, Disk, and Secure storage for React Native, Expo development
 builds, and web. Nitro Storage is powered by
