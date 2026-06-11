@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
+## 0.5.9 - 2026-06-11
+
+### Fixed
+
+- Added a package-owned Android manifest initializer so storage setup no longer requires generated `MainApplication` edits in Expo or bare React Native apps.
+- Tied the Expo config plugin run-once metadata to the package version so updated package plugin behavior is reapplied correctly after package upgrades.
+
+### Changed
+
+- Included `CHANGELOG.md` in the packed package docs.
+
 ## 0.5.8 - 2026-06-11
 
 ### Changed

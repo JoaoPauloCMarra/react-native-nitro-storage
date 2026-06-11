@@ -1,12 +1,12 @@
 const {
   withInfoPlist,
   withAndroidManifest,
-  withMainApplication,
   withDangerousMod,
   createRunOncePlugin,
 } = require("@expo/config-plugins");
 const fs = require("fs");
 const path = require("path");
+const pkg = require("./package.json");
 
 const DATA_EXTRACTION_RULES_RESOURCE =
   "@xml/nitro_storage_data_extraction_rules";
@@ -152,57 +152,13 @@ const withNitroStorage = (config, props = {}) => {
     ]);
   }
 
-  config = withMainApplication(config, (config) => {
-    const { modResults } = config;
-    const { language, contents } = modResults;
-
-    if (language === "java") {
-      if (!contents.includes("AndroidStorageAdapter.init")) {
-        const importStatement =
-          "import com.nitrostorage.AndroidStorageAdapter;";
-        const initStatement = "    AndroidStorageAdapter.init(this);";
-
-        if (!contents.includes(importStatement)) {
-          modResults.contents = contents.replace(
-            /(package .*;\n)/,
-            `$1\n${importStatement}\n`,
-          );
-        }
-
-        modResults.contents = modResults.contents.replace(
-          /(super\.onCreate\(\);)/,
-          `$1\n${initStatement}`,
-        );
-      }
-    } else if (language === "kt") {
-      if (!contents.includes("AndroidStorageAdapter.init")) {
-        const importStatement = "import com.nitrostorage.AndroidStorageAdapter";
-        const initStatement = "    AndroidStorageAdapter.init(this)";
-
-        if (!contents.includes(importStatement)) {
-          modResults.contents = contents.replace(
-            /(package .*\n)/,
-            `$1\n${importStatement}\n`,
-          );
-        }
-
-        modResults.contents = modResults.contents.replace(
-          /(super\.onCreate\(\))/,
-          `$1\n${initStatement}`,
-        );
-      }
-    }
-
-    return config;
-  });
-
   return config;
 };
 
 module.exports = createRunOncePlugin(
   withNitroStorage,
-  "react-native-nitro-storage",
-  "1.0.0",
+  pkg.name,
+  pkg.version,
 );
 module.exports.withNitroStorage = withNitroStorage;
 module.exports._internal = {
