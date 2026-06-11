@@ -19,7 +19,6 @@ const packageDir = path.join(
   "packages/react-native-nitro-storage",
 );
 const packageJsonPath = path.join(packageDir, "package.json");
-const packageFilter = "react-native-nitro-storage";
 const packageDocsSyncScript = path.join(
   packageDir,
   "scripts/sync-package-docs.js",
@@ -392,43 +391,43 @@ Options:
 
   runCheck(
     "🧹 Running lint...",
-    `bun run lint:check -- --filter=${packageFilter}`,
+    `bun run lint:check`,
     { cwd: projectRoot },
   );
   runCheck(
     "🎨 Running format check...",
-    `bun run format:check -- --filter=${packageFilter}`,
+    `bun run format:check`,
     { cwd: projectRoot },
   );
   runCheck(
     "📝 Running typecheck...",
-    `bun run typecheck -- --filter=${packageFilter}`,
+    `bun run typecheck`,
     { cwd: projectRoot },
   );
   runCheck(
     "🔎 Running type-surface checks...",
-    `bun run test:types -- --filter=${packageFilter}`,
+    `bun run test:types`,
     { cwd: projectRoot },
   );
   runCheck(
     "🧪 Running unit tests...",
-    `bun run test -- --filter=${packageFilter}`,
+    `bun run test`,
     { cwd: projectRoot },
   );
   runCheck(
     "🧪 Running C++ tests...",
-    `bun run test:cpp -- --filter=${packageFilter}`,
+    `bun run test:cpp`,
     { cwd: projectRoot },
   );
   if (withCoverage) {
     runCheck(
       "📊 Running JS/TS coverage gate...",
-      `bun run test:coverage -- --filter=${packageFilter}`,
+      `bun run test:coverage`,
       { cwd: projectRoot },
     );
     runCheck(
       "📊 Running C++ coverage gate...",
-      `bun run test:cpp:coverage -- --filter=${packageFilter}`,
+      `bun run test:cpp:coverage`,
       { cwd: projectRoot },
     );
   }

@@ -1,4 +1,4 @@
-{
+module.exports = {
   "expo": {
     "name": "Nitro Storage",
     "slug": "nitro-storage-example",
@@ -41,4 +41,4 @@
       "typedRoutes": true
     }
   }
-}
+};

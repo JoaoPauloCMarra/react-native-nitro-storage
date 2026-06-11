@@ -4,20 +4,28 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
+## 0.5.8 - 2026-06-11
+
+### Changed
+
+- Refactor native and web entrypoints to share the same storage core for item, batch, transaction, migration, metrics, import/export, and event behavior.
+- Strengthen TypeScript checks with stricter compiler options so missing returns, switch fallthrough, and unchecked optional shapes are caught during package validation.
+
+### Fixed
+
+- Regenerate Nitrogen output and package build artifacts before pack-content audits so clean release and CI environments validate the actual published tarball.
+
 ## 0.5.7 - 2026-06-10
 
 ### Added
 
 - Add C++ sanitizer release gates for AddressSanitizer, ThreadSanitizer, and UndefinedBehaviorSanitizer so native storage regressions can be isolated before publishing.
 - Add C++ stress coverage for listener unsubscribe behavior, hydrated batch key indexes, and concurrent Memory scope access.
-- Add an example runtime benchmark card for Memory, Disk batch, Secure batch, and native metric summary checks.
 
 ### Changed
 
 - Speed up iOS Secure batch operations by reusing the resolved Keychain access group and access-control level across each batch instead of re-reading configuration per key.
 - Refactor iOS Secure set/get/delete helpers so single-item and batch paths share Keychain status handling and cache updates.
-- Reduce unnecessary example smoke-test re-renders by rendering only completed/running rows, memoizing log rows, and deriving pass/fail/skipped counts with memoized reduction.
-- Align Expo SDK 56 example dependencies with the current Doctor-compatible patch set.
 - Strengthen TypeScript inference parity on web by exporting `StorageSetter` and preserving tuple value types from `getBatch()`.
 
 ### Fixed
@@ -29,6 +37,7 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 
 ### Added
 
+- Update the package baseline to Expo SDK 56, React Native 0.85.3, React 19.2.3, TypeScript 6.0.3, and Nitro Modules 0.35.7.
 - Add secure export guardrails: `storage.export(StorageScope.Secure)` now requires an explicit `{ includeSecureValues: true }` opt-in, with `storage.exportSecureUnsafe()` available for short-lived secure migration flows.
 - Add secure event observer redaction options so `storage.setEventObserver()` redacts Secure values by default and requires explicit opt-in for raw Secure event values.
 - Add Expo plugin Android backup rules that exclude Nitro Storage secure preference files from cloud backup and device transfer.
@@ -39,32 +48,21 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 - Close replaced web storage backends so IndexedDB-backed `BroadcastChannel` and database handles do not leak after backend swaps.
 - Update README and package docs for the current secure export, event observer, Expo backup, web backend, and TypeScript usage surface.
 - Preserve tuple value types in `getBatch()` so IDEs infer each returned value from its matching `StorageItem`.
-- Align the workspace and example with Expo SDK 56, React Native 0.85.3, React 19.2.3, TypeScript 6.0.3, and Nitro Modules 0.35.7.
-- Enable Expo SDK 56 Android precompiled headers in the example app to reduce native C++ build time.
-- Update safe native/tooling dependencies, including Nitro `0.35.7`, AndroidX Security Crypto `1.1.0`, React Native 0.85 Babel preset, Expo SDK 56 packages, SWC, Node types, and Turbo.
-- Add example release gates for Expo Doctor, TypeScript, prebuild, Android assemble, and iOS simulator builds.
-- Run the iOS example build gate on the GitHub Actions macOS 26 image so SDK 56 uses an Xcode/Swift toolchain new enough for ExpoModulesJSI.
-- Extend the example app so web, Android, and iOS expose the same secure export guard, event observer redaction, and web backend override flows where each platform supports them.
 
 ### Fixed
 
 - Avoid Metro private `metro-config/src/defaults/exclusionList` imports and exclude generated Android `.cxx` directories from Metro and Watchman scans.
 - Remove package-owned Android native log spam for expected unavailable biometric storage paths.
-- Remove the stale example-only `fmt` compatibility config plugin now that the example runs on the SDK 56 / React Native 0.85 native project stack.
 - Modernize Android Gradle assignment syntax to avoid package-owned Gradle warnings.
 
 ## 0.5.4 - 2026-05-13
 
 ### Fixed
 
-- Fixed the Android example launcher icon by adding an adaptive icon foreground and dark brand background.
-- Align the Expo example with the current SDK 55 patch-level dependency recommendations.
 - Align web secure runtime validation with native for access-control and biometric levels.
 - Preserve secure biometric and access-control item semantics during transaction rollback.
 - Keep web raw batch writes from indexing keys whose values were not written.
 - Reject fractional C++ secure access-control and biometric levels before casting them for native adapters.
-- Align the Expo example with SDK 55 dependency validation for `expo` and `babel-preset-expo`.
-- Patch generated example native projects to avoid fixable iOS deployment-target and Android Gradle syntax warnings.
 - Publish GitHub Releases to npm through a Trusted Publishing/OIDC workflow.
 - Resolve the package build's TypeScript binary lookup warning during release checks.
 
@@ -85,7 +83,6 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 - Add `StorageItem#subscribeSelector()` for selector-based subscriptions with equality checks.
 - Add `storage.setEventObserver()` for devtools and storage event logging integrations.
 - Add enforced JS/TS and C++ coverage gates for the package release path.
-- Extend the example smoke runner to cover the full public API surface and show unsupported platform checks as skipped.
 
 ### Changed
 
@@ -93,7 +90,6 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 - Improve web key-index fast paths when the active backend exposes indexed key operations.
 - Emit batch change envelopes for raw import/export-adjacent workflows and batch writes/removes.
 - Document raw import/export workflows and warn that Secure exports expose secret values.
-- Align the Expo example and workspace dependency pins with Expo Doctor recommendations.
 - Refactor the publish script to validate release docs, report check timings, support coverage gates, and avoid redundant pack dry-runs.
 
 ## 0.5.0 - 2026-04-18
@@ -111,7 +107,6 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 - Tighten README decisioning with an at-a-glance API map, Expo plugin options, bare Android setup, migration paths, and a release checklist.
 - Split detailed usage material into focused docs for API reference, React hooks, secure storage, web backends, batch/transaction/migration workflows, recipes, MMKV migration, and benchmarks.
 - Expand npm package description and keywords around React Native secure storage, biometric storage, Keychain, Android Keystore, Nitro Modules, MMKV migration, Expo SecureStore, Zustand/Jotai, and IndexedDB.
-- Update release tooling patches for `@swc/core`, `@types/node`, and `turbo`.
 - Harden publish dry-runs, package docs syncing, and npm pack content validation.
 
 ## 0.4.5 - 2026-04-14
@@ -124,7 +119,6 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 - Expand regression coverage for web backend overrides, backend subscription-driven cache invalidation, backend flush hooks, IndexedDB broadcast sync, and IndexedDB error surfacing.
 - Add Disk write buffering APIs: `coalesceDiskWrites`, `storage.setDiskWritesAsync()`, `storage.flushDiskWrites()`, and `storage.getCapabilities()`.
 - Add structured storage error classification via `getStorageErrorCode()` while keeping `isKeychainLockedError()` as the convenience helper, and tag native bridge errors with stable `[nitro-error:<code>]` markers.
-- Extend the example app and smoke runner to cover runtime capabilities, structured error codes, and Disk write buffering flows.
 
 ### Changed
 
@@ -132,10 +126,7 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 - Migrate `nitro.json` to the current schema (`$schema`, `ignorePaths`, `gitAttributesGeneratedFlag`, and `autolinking.all.language = "c++"`).
 - Raise the published `react-native-nitro-modules` requirement to `>= 0.35.4` so package metadata matches the tested Nitro baseline.
 - Refresh root tooling to current patch releases for linting, testing, and workspace orchestration.
-- Align the example app to `react-native-nitro-modules 0.35.4`.
-- Add an example-only Expo config plugin that patches the generated iOS `fmt` pod during `pod install`, keeping clean prebuilds working on Xcode 26.4.
 - Switch web operation timing to `performance.now()` when available for tighter metrics on fast paths.
-- Keep the example smoke runner aligned with the expanded web backend API surface, including backend override and flush coverage on web.
 
 ## 0.4.2/0.4.3 - 2026-03-05
 
@@ -179,11 +170,7 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 
 - Upgrade to **Nitro Modules 0.35.0** — regenerate nitrogen specs with the new `registerAllNatives()` JNI entry point, fixing the Kotlin `HybridObject` `jni::global_ref` memory leak (Nitro #1238).
 - Update `cpp-adapter.cpp` to use `registerAllNatives()` instead of the deprecated `initialize(vm)` shim.
-- Upgrade example app to **Expo SDK 55** (`expo ~55.0.4`, `expo-router ~55.0.3`, `expo-status-bar ~55.0.4`, `expo-system-ui ~55.0.9`, `expo-build-properties ~55.0.9`, `expo-asset ~55.0.8`, `babel-preset-expo ~55.0.10`).
 - Bump to **React 19.2.0** and **React Native 0.83.2** across workspace and example.
-- Update `react-native-screens` to `~4.23.0` and `react-native-safe-area-context` to `~5.6.2` in the example app.
-- Remove `newArchEnabled` from example `app.json` — Expo SDK 55 dropped Legacy Architecture; new arch is always on.
-- Add iOS and Android example build CI jobs that run `expo prebuild` and verify native compilation under New Architecture.
 - Add `--provenance` flag to `npm publish` for npm supply-chain attestation.
 
 ## 0.4.0 - 2026-02-25
@@ -227,16 +214,9 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 - Improve iOS secure key union performance by deduplicating with an `unordered_set`.
 - Extract shared React hooks into `src/storage-hooks.ts` to reduce native/web entrypoint duplication.
 - Expand benchmark coverage to include Disk and Secure scope throughput checks and tighten regression thresholds.
-- Refresh the Expo example app UI with a cleaner shared design system and add an Android secure write mode demo control.
-- Configure Expo iOS example builds to use React Native source builds under New Architecture and silence expected deprecated RN host warnings in the Android template wrapper.
-- Extend CI with Android/iOS example build jobs under New Architecture.
 - Expand README coverage so every public feature has a concrete TypeScript use-case example, including secure write flush, biometric/access-control usage, batch bootstrap, and storage utility workflows.
 
 ## 0.3.1 - 2026-02-16
-
-### Added
-
-- Add package-level lint/format scripts and workspace `eslint-config-expo-magic` flat config wiring.
 
 ### Changed
 
@@ -259,13 +239,11 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 
 - Add `useStorageSelector(item, selector, isEqual?)` to reduce rerenders from unrelated object updates.
 - Add opt-in `coalesceSecureWrites` and per-item `readCache` controls in `createStorageItem` config.
-- Add benchmark regression gate (`benchmark` task/script) and wire it into CI and publish checks.
 
 ### Changed
 
 - Switch default serialization to a primitive fast path for primitives while preserving JSON compatibility for objects and legacy values.
 - Replace broad listener fan-out with key-indexed registries and automatic pruning for memory/native/web paths.
-- Rework Turbo task graph so `build` depends on `codegen`, `test`/`typecheck` run from source, and `codegen` can be cached.
 
 ### Fixed
 
@@ -292,7 +270,6 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 ### Changed
 
 - Raise `react` peer dependency floor to `>=18.2.0`.
-- Update CI workflow action versions and Bun runtime pin to latest stable releases.
 
 ## 0.2.0 - 2026-02-15
 
@@ -314,7 +291,6 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 ### Changed
 
 - Standardize internal package scripts and README contributor commands to Bun/Bunx.
-- Remove the Turbo `test` outputs config to avoid warnings on non-coverage test runs.
 - Expand README with complete API behavior/throws documentation.
 - Strengthen native and web test coverage for validation, TTL, migrations, and transactions.
 
