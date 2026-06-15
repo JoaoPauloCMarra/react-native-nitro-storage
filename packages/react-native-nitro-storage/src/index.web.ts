@@ -57,7 +57,7 @@ export type {
   StorageEventListener,
   StorageKeyChangeEvent,
 } from "./storage-events";
-export type { StorageSetter } from "./storage-hooks";
+export type { StorageActions, StorageSetter } from "./storage-hooks";
 export type {
   WebDiskStorageBackend,
   WebSecureStorageBackend,
@@ -66,9 +66,13 @@ export type {
   WebStorageScope,
 } from "./web-storage-backend";
 export type {
+  SetItemConfig,
+  SetStorageItem,
   StorageBatchSetItem,
+  StorageClearOptions,
   StorageItem,
   StorageItemConfig,
+  StorageKeyRef,
   TransactionContext,
 } from "./storage-core";
 
@@ -818,6 +822,10 @@ export const storage = {
 };
 
 export const createStorageItem = core.createStorageItem;
+export const memoryItem = core.memoryItem;
+export const diskItem = core.diskItem;
+export const secureItem = core.secureItem;
+export const createSetItem = core.createSetItem;
 export const getBatch = core.getBatch;
 export const setBatch = core.setBatch;
 export const removeBatch = core.removeBatch;
@@ -886,5 +894,11 @@ export async function flushWebStorageBackends(): Promise<void> {
   await Promise.all(flushes);
 }
 
-export { useStorage, useStorageSelector, useSetStorage } from "./storage-hooks";
+export {
+  useSetStorage,
+  useStorage,
+  useStorageActions,
+  useStorageSelector,
+  useStorageValue,
+} from "./storage-hooks";
 export { createIndexedDBBackend } from "./indexeddb-backend";

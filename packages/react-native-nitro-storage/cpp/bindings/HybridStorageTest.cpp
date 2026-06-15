@@ -666,6 +666,63 @@ void testConcurrentMemoryAccess() {
     assert(storage->getAllKeys(0.0).size() == 64);
 }
 
+void testListenerFastPathToggles() {
+    auto adapter = std::make_shared<MockAdapter>();
+    auto storage = std::make_shared<HybridStorage>(adapter);
+    int callCount = 0;
+
+    // No listeners registered: the write/notify path must take the lock-free
+    // fast path without firing anything (and without crashing).
+    storage->set("disk-key", "v0", 1.0);
+    assert(callCount == 0);
+
+    auto unsubscribe = storage->addOnChange(1.0, [&](const std::string&, const std::optional<std::string>&) {
+        callCount += 1;
+    });
+    storage->set("disk-key", "v1", 1.0);
+    assert(callCount == 1);
+
+    unsubscribe();
+    // After unsubscribe the scope count returns to zero -> fast path, no fire.
+    storage->set("disk-key", "v2", 1.0);
+    assert(callCount == 1);
+}
+
+void testConcurrentListenerChurn() {
+    auto adapter = std::make_shared<MockAdapter>();
+    auto storage = std::make_shared<HybridStorage>(adapter);
+    std::atomic<int> notifications{0};
+    std::vector<std::thread> threads;
+
+    // Memory scope keeps the write path inside HybridStorage's own mutexes
+    // (the test adapter is intentionally not thread-safe), isolating the
+    // listener-count atomics and listener vector under concurrent churn.
+    for (int threadIndex = 0; threadIndex < 4; threadIndex += 1) {
+        threads.emplace_back([storage, threadIndex, &notifications]() {
+            for (int iteration = 0; iteration < 100; iteration += 1) {
+                auto unsubscribe = storage->addOnChange(
+                    0.0,
+                    [&](const std::string&, const std::optional<std::string>&) {
+                        notifications.fetch_add(1, std::memory_order_relaxed);
+                    });
+                storage->set(
+                    "churn-" + std::to_string(threadIndex),
+                    std::to_string(iteration),
+                    0.0);
+                unsubscribe();
+            }
+        });
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    // Each set fires at least its own listener; the exact total is racy across
+    // threads, but it must be positive and the run must be data-race free.
+    assert(notifications.load(std::memory_order_relaxed) > 0);
+}
+
 void testUnknownNativeFailuresAreWrapped() {
     auto adapter = std::make_shared<UnknownThrowingAdapter>();
     HybridStorage storage(adapter);
@@ -714,6 +771,8 @@ int main() {
     testHydratedKeyIndexUpdates();
     testHydratedBatchKeyIndexUpdates();
     testConcurrentMemoryAccess();
+    testListenerFastPathToggles();
+    testConcurrentListenerChurn();
     testUnknownNativeFailuresAreWrapped();
 
     std::cout << "✅ HybridStorage C++ tests passed!" << std::endl;

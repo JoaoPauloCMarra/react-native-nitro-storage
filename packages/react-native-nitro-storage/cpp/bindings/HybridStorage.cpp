@@ -277,23 +277,32 @@ std::function<void()> HybridStorage::addOnChange(
         listenerId = nextListenerId_++;
         listeners_[intScope].push_back({listenerId, callback});
     }
-    
+    // Publish the count after the vector mutation so a zero count seen by the
+    // lock-free reader always means "vector has no listeners for this scope".
+    if (intScope >= 0 && intScope < 3) {
+        listenerScopeCounts_[static_cast<size_t>(intScope)].fetch_add(1, std::memory_order_release);
+    }
+
     std::weak_ptr<HybridStorage> weakSelf = std::dynamic_pointer_cast<HybridStorage>(shared_from_this());
     return [weakSelf, intScope, listenerId]() {
         auto self = weakSelf.lock();
         if (!self) return;  // HybridStorage was destroyed — safe no-op
-        std::lock_guard<std::mutex> lock(self->listenersMutex_);
-        auto& scopeListeners = self->listeners_[intScope];
         bool found = false;
-        for (auto it = scopeListeners.begin(); it != scopeListeners.end(); ++it) {
-            if (it->id == listenerId) {
-                scopeListeners.erase(it);
-                found = true;
-                break;
+        {
+            std::lock_guard<std::mutex> lock(self->listenersMutex_);
+            auto& scopeListeners = self->listeners_[intScope];
+            for (auto it = scopeListeners.begin(); it != scopeListeners.end(); ++it) {
+                if (it->id == listenerId) {
+                    scopeListeners.erase(it);
+                    found = true;
+                    break;
+                }
             }
         }
         // Silently ignore double-unsubscribe (listener already removed)
-        (void)found;
+        if (found && intScope >= 0 && intScope < 3) {
+            self->listenerScopeCounts_[static_cast<size_t>(intScope)].fetch_sub(1, std::memory_order_release);
+        }
     };
 }
 
@@ -608,6 +617,13 @@ void HybridStorage::clearSecureBiometric() {
 // --- Internal ---
 
 std::vector<HybridStorage::Listener> HybridStorage::copyListenersForScope(int scope) {
+    // Lock-free fast path: when no listeners are registered for this scope,
+    // avoid taking the mutex and copying the (empty) vector on every write.
+    if (scope >= 0 && scope < 3 &&
+        listenerScopeCounts_[static_cast<size_t>(scope)].load(std::memory_order_acquire) == 0) {
+        return {};
+    }
+
     std::vector<Listener> listenersCopy;
     {
         std::lock_guard<std::mutex> lock(listenersMutex_);

@@ -22,6 +22,7 @@ import {
   type WebDiskStorageBackend,
   type WebSecureStorageBackend,
 } from "react-native-nitro-storage";
+import { ErgonomicsDemo } from "../components/ergonomics-demo";
 import {
   Button,
   Card,
@@ -440,6 +441,8 @@ export default function HomeScreen() {
   return (
     <Page title="Nitro Storage" subtitle="Complete feature showcase">
       <SmokeTestRunner />
+
+      <ErgonomicsDemo />
 
       <Card
         title="Memory Scope"

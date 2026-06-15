@@ -4,6 +4,34 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
+## 0.6.0 - 2026-06-15
+
+### Added
+
+- Object-state ergonomics on `StorageItem<T>`: `item.merge(partial)` for shallow object updates, `item.reset()` to return to the default value, and `item.setOrDelete(value)` which deletes on `null`/`undefined` and sets otherwise.
+- Scoped item factories `memoryItem`, `diskItem`, and `secureItem` so call sites no longer repeat `scope: StorageScope.X`.
+- `createSetItem()` for set-membership state backed by storage, with `add`/`delete`/`has`/`toggle`/`values`/`size`/`clear`/`reset` and no-op-safe writes (no event/render churn when adding an existing member or deleting an absent one).
+- Lifecycle helpers: `storage.clear(scope, { except })` to wipe a scope while preserving listed keys/items, per-item `group` config plus `storage.clearGroup(group)` and `storage.getGroupItems(group)` (which compose for "clear all except a group").
+- Declarative legacy migration: `renameFrom` on items (and per-key on `createSecureAuthStorage`) copies a legacy key to the new key on first read and removes the legacy entry. `createSecureAuthStorage` also accepts `group` and `fallbackToCacheOnReadError`.
+- Secure read resilience: `fallbackToCacheOnReadError` returns the last cached value when a secure read throws a locked-keychain error, plus an `onReadError` hook.
+- Global expiration events: TTL expiry now emits a `"expire"` change event (memory and disk) routed through the event bus, with `storage.subscribeExpired(scope, listener)`.
+- Hook ergonomics: `useStorage` now returns a third, render-stable `actions` element (`set`/`merge`/`reset`/`remove`/`setOrDelete`); new `useStorageValue` (read-only) and `useStorageActions` hooks.
+- Dev introspection: `storage.findDuplicateKeys()` and `storage.getRegisteredKeys()` to audit accidental `(scope, key)` collisions at startup.
+- New `react-native-nitro-storage/testing` entrypoint: a faithful in-memory implementation of the full public surface plus `createNitroStorageMock()` and `resetNitroStorageMock()` for Jest/Storybook without native modules.
+
+### Changed
+
+- Faster writes when nothing is subscribed: the native write/notify path now takes a lock-free fast path (per-scope atomic listener counts) and skips locking and copying the listener vector when a scope has no listeners. Applies to both iOS and Android via the shared C++ `HybridStorage`, and is thread-safe (verified under the C++ AddressSanitizer, ThreadSanitizer, and UndefinedBehaviorSanitizer suites).
+
+### Breaking Changes
+
+All new APIs are additive — existing code keeps working. These behavior and
+type changes can affect advanced consumers:
+
+- TTL expiry now emits a `"expire"` change event instead of `"remove"`. Previously, a disk/secure value expiring on read emitted `operation: "remove"` and an expiring memory value emitted no event at all. If you subscribe to storage events and branch on `operation === "remove"` to detect expiry, also handle `"expire"` (or use the new `storage.subscribeExpired()`).
+- `StorageChangeOperation` gained the `"expire"` and `"clearGroup"` members. Exhaustive `switch` statements over a change event's `operation` need cases for the new members.
+- `useStorage()` now returns a three-element tuple `[value, setter, actions]` (was two). Array destructuring such as `const [value, setStore] = useStorage(item)` is unaffected; only code that annotated the result with an explicit two-element tuple type needs to widen the annotation.
+
 ## 0.5.9 - 2026-06-11
 
 ### Fixed
