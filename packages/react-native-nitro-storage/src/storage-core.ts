@@ -6,6 +6,7 @@ import {
   createKeyChange,
   defaultDeserialize,
   defaultSerialize,
+  isKeychainLockedError,
   isUpdater,
   notifyAllListeners,
   notifyKeyListeners,
@@ -87,6 +88,10 @@ export type StorageItemConfig<T> = {
   biometric?: boolean;
   biometricLevel?: BiometricLevel;
   accessControl?: AccessControl;
+  group?: string;
+  renameFrom?: string | readonly string[];
+  fallbackToCacheOnReadError?: boolean;
+  onReadError?: (error: unknown) => void;
 };
 
 export type StorageItem<T> = {
@@ -97,6 +102,9 @@ export type StorageItem<T> = {
     version: StorageVersion,
     value: T | ((prev: T) => T),
   ) => boolean;
+  merge: (partial: Partial<T>) => void;
+  reset: () => void;
+  setOrDelete: (value: T | null | undefined) => void;
   delete: () => void;
   has: () => boolean;
   subscribe: (callback: () => void) => () => void;
@@ -121,6 +129,7 @@ type StorageItemInternal<T> = StorageItem<T> & {
   _biometricLevel: BiometricLevel;
   _defaultValue: T;
   _secureAccessControl?: AccessControl;
+  _group?: string;
 };
 
 export type BatchReadItem<T> = Pick<
@@ -147,6 +156,35 @@ export type BatchValues<TItems extends readonly BatchReadItem<unknown>[]> = {
 export type StorageBatchSetItem<T> = {
   item: StorageItem<T>;
   value: T;
+};
+
+export type StorageKeyRef = string | { readonly key: string };
+
+export type StorageClearOptions = {
+  except?: readonly StorageKeyRef[];
+};
+
+export type SetItemConfig<TMember extends string = string> = Omit<
+  StorageItemConfig<Record<string, true>>,
+  "defaultValue" | "serialize" | "deserialize"
+> & {
+  defaultValue?: readonly TMember[];
+};
+
+export type SetStorageItem<TMember extends string = string> = {
+  get: () => Record<string, true>;
+  has: (id: TMember) => boolean;
+  add: (id: TMember) => void;
+  delete: (id: TMember) => void;
+  toggle: (id: TMember) => boolean;
+  values: () => TMember[];
+  size: () => number;
+  clear: () => void;
+  reset: () => void;
+  subscribe: (callback: () => void) => () => void;
+  scope: StorageScope;
+  key: string;
+  item: StorageItem<Record<string, true>>;
 };
 
 export type StorageCoreBackend = {
@@ -234,6 +272,8 @@ export type StorageCoreInternals = {
   setSecureDefaultAccessControl(level: AccessControl): void;
 };
 
+const EMPTY_KEYS: readonly string[] = Object.freeze([]);
+
 function asInternal<T>(item: StorageItem<T>): StorageItemInternal<T> {
   return item as StorageItemInternal<T>;
 }
@@ -242,6 +282,8 @@ export function createStorageCore(
   buildAdapter: (internals: StorageCoreInternals) => StorageCoreAdapter,
 ) {
   const registeredMigrations = new Map<number, Migration>();
+  const itemGroups = new Map<string, Set<StorageItemInternal<unknown>>>();
+  const registeredKeyCounts = new Map<string, number>();
   const memoryStore = new Map<string, unknown>();
   const memoryListeners: KeyListenerRegistry = new Map();
   const scopedListeners = new Map<NonMemoryScope, KeyListenerRegistry>([
@@ -723,6 +765,84 @@ export function createStorageCore(
 
   const adapter = buildAdapter(internals);
 
+  function resolveKeyRef(ref: StorageKeyRef): string {
+    return typeof ref === "string" ? ref : ref.key;
+  }
+
+  function clearScopeExcept(
+    scope: StorageScope,
+    exceptRefs: readonly StorageKeyRef[],
+  ): void {
+    measureOperation("storage:clearExcept", scope, () => {
+      assertValidScope(scope);
+      const keep = new Set(exceptRefs.map(resolveKeyRef));
+
+      if (scope === StorageScope.Memory) {
+        const removeKeys = Array.from(memoryStore.keys()).filter(
+          (key) => !keep.has(key),
+        );
+        if (removeKeys.length === 0) {
+          return;
+        }
+        const previousValues = shouldReadPreviousEventValues(scope)
+          ? removeKeys.map((key) => getEventRawValue(scope, key))
+          : [];
+        removeKeys.forEach((key) => memoryStore.delete(key));
+        removeKeys.forEach((key) => notifyKeyListeners(memoryListeners, key));
+        emitBatchChange(
+          scope,
+          "clear",
+          "memory",
+          removeKeys.map((key, index) =>
+            createKeyChange(
+              scope,
+              key,
+              previousValues[index],
+              undefined,
+              "clear",
+              "memory",
+            ),
+          ),
+        );
+        return;
+      }
+
+      if (scope === StorageScope.Disk) {
+        flushDiskWrites();
+      }
+      if (scope === StorageScope.Secure) {
+        flushSecureWrites();
+      }
+
+      const removeKeys = adapter.backend
+        .getAllKeys(scope)
+        .filter((key) => !keep.has(key));
+      if (removeKeys.length === 0) {
+        return;
+      }
+      const previousValues = shouldReadPreviousEventValues(scope)
+        ? adapter.backend.getBatch(removeKeys, scope)
+        : [];
+      adapter.backend.removeBatch(removeKeys, scope);
+      removeKeys.forEach((key) => cacheRawValue(scope, key, undefined));
+      emitBatchChange(
+        scope,
+        "clear",
+        adapter.changeSource,
+        removeKeys.map((key, index) =>
+          createKeyChange(
+            scope,
+            key,
+            previousValues[index],
+            undefined,
+            "clear",
+            adapter.changeSource,
+          ),
+        ),
+      );
+    });
+  }
+
   const storage = {
     subscribe: (
       scope: StorageScope,
@@ -796,7 +916,11 @@ export function createStorageCore(
       adapter.maybeCleanupScopeSubscription(StorageScope.Disk);
       adapter.maybeCleanupScopeSubscription(StorageScope.Secure);
     },
-    clear: (scope: StorageScope) => {
+    clear: (scope: StorageScope, options?: StorageClearOptions) => {
+      if (options?.except && options.except.length > 0) {
+        clearScopeExcept(scope, options.except);
+        return;
+      }
       measureOperation("storage:clear", scope, () => {
         const previousValues = shouldReadPreviousEventValues(scope)
           ? storage.getAll(scope)
@@ -862,6 +986,87 @@ export function createStorageCore(
         },
         3,
       );
+    },
+    clearGroup: (group: string) => {
+      const items = itemGroups.get(group);
+      if (!items || items.size === 0) {
+        return;
+      }
+      measureOperation(
+        "storage:clearGroup",
+        StorageScope.Memory,
+        () => {
+          const byScope = new Map<
+            StorageScope,
+            StorageItemInternal<unknown>[]
+          >();
+          for (const item of items) {
+            const scoped = byScope.get(item.scope);
+            if (scoped) {
+              scoped.push(item);
+            } else {
+              byScope.set(item.scope, [item]);
+            }
+          }
+          byScope.forEach((groupItems, scope) => {
+            removeBatch(groupItems, scope);
+          });
+        },
+        items.size,
+      );
+    },
+    getGroupItems: (group: string): StorageItem<unknown>[] => {
+      const items = itemGroups.get(group);
+      return items ? Array.from(items) : [];
+    },
+    subscribeExpired: (
+      scope: StorageScope,
+      listener: (event: StorageKeyChangeEvent) => void,
+    ): (() => void) => {
+      return storage.subscribe(scope, (event) => {
+        if (event.type === "key") {
+          if (event.operation === "expire") {
+            listener(event);
+          }
+          return;
+        }
+        event.changes.forEach((change) => {
+          if (change.operation === "expire") {
+            listener(change);
+          }
+        });
+      });
+    },
+    findDuplicateKeys: (): {
+      key: string;
+      scope: StorageScope;
+      count: number;
+    }[] => {
+      const duplicates: { key: string; scope: StorageScope; count: number }[] =
+        [];
+      registeredKeyCounts.forEach((count, registryKey) => {
+        if (count <= 1) {
+          return;
+        }
+        const separatorIndex = registryKey.indexOf(":");
+        duplicates.push({
+          scope: Number(registryKey.slice(0, separatorIndex)) as StorageScope,
+          key: registryKey.slice(separatorIndex + 1),
+          count,
+        });
+      });
+      return duplicates;
+    },
+    getRegisteredKeys: (): { key: string; scope: StorageScope }[] => {
+      const result: { key: string; scope: StorageScope }[] = [];
+      registeredKeyCounts.forEach((_count, registryKey) => {
+        const separatorIndex = registryKey.indexOf(":");
+        result.push({
+          scope: Number(registryKey.slice(0, separatorIndex)) as StorageScope,
+          key: registryKey.slice(separatorIndex + 1),
+        });
+      });
+      return result;
     },
     clearNamespace: (namespace: string, scope: StorageScope) => {
       measureOperation("storage:clearNamespace", scope, () => {
@@ -1269,6 +1474,16 @@ export function createStorageCore(
         : config.scope === StorageScope.Secure
           ? StorageScope.Secure
           : null;
+    const renameFromKeys: readonly string[] =
+      config.renameFrom === undefined
+        ? EMPTY_KEYS
+        : typeof config.renameFrom === "string"
+          ? [config.renameFrom]
+          : config.renameFrom;
+    const fallbackToCacheOnReadError =
+      config.fallbackToCacheOnReadError === true;
+    const onReadError = config.onReadError;
+    let renamesMigrated = isMemory || renameFromKeys.length === 0;
 
     if (expiration && expiration.ttlMs <= 0) {
       throw new Error("expiration.ttlMs must be greater than 0.");
@@ -1322,15 +1537,26 @@ export function createStorageCore(
         if (memoryExpiration) {
           const expiresAt = memoryExpiration.get(storageKey);
           if (expiresAt !== undefined && expiresAt <= Date.now()) {
+            const expiredRaw = memoryStore.get(storageKey);
             memoryExpiration.delete(storageKey);
             memoryStore.delete(storageKey);
             notifyKeyListeners(memoryListeners, storageKey);
+            emitKeyChange(
+              config.scope,
+              storageKey,
+              typeof expiredRaw === "string" ? expiredRaw : undefined,
+              undefined,
+              "expire",
+              "memory",
+            );
             onExpired?.(storageKey);
             return undefined;
           }
         }
         return memoryStore.get(storageKey);
       }
+
+      migrateRenamesIfNeeded();
 
       if (nonMemoryScope === StorageScope.Disk) {
         const pending = pendingDiskWrites.get(storageKey);
@@ -1355,12 +1581,34 @@ export function createStorageCore(
       }
 
       if (isBiometric) {
-        return adapter.backend.getSecureBiometric(storageKey);
+        return readBackendRaw(() =>
+          adapter.backend.getSecureBiometric(storageKey),
+        );
       }
 
-      const raw = adapter.backend.get(storageKey, config.scope);
+      const raw = readBackendRaw(() =>
+        adapter.backend.get(storageKey, config.scope),
+      );
       cacheRawValue(nonMemoryScope!, storageKey, raw);
       return raw;
+    };
+
+    const readBackendRaw = (
+      read: () => string | undefined,
+    ): string | undefined => {
+      try {
+        return read();
+      } catch (error) {
+        onReadError?.(error);
+        if (fallbackToCacheOnReadError) {
+          const cached = getScopeRawCache(nonMemoryScope!).get(storageKey);
+          if (cached !== undefined) {
+            return cached;
+          }
+          return typeof lastRaw === "string" ? lastRaw : undefined;
+        }
+        throw error;
+      }
     };
 
     const writeStoredRaw = (rawValue: string): void => {
@@ -1438,7 +1686,60 @@ export function createStorageCore(
       );
     };
 
-    const removeStoredRaw = (): void => {
+    const migrateRenamesIfNeeded = (): void => {
+      if (renamesMigrated) {
+        return;
+      }
+
+      try {
+        const hasCurrent = isBiometric
+          ? adapter.backend.hasSecureBiometric(storageKey)
+          : adapter.backend.has(storageKey, config.scope);
+
+        if (hasCurrent) {
+          for (const legacyKey of renameFromKeys) {
+            if (isBiometric) {
+              if (adapter.backend.hasSecureBiometric(legacyKey)) {
+                adapter.backend.deleteSecureBiometric(legacyKey);
+              }
+            } else if (adapter.backend.has(legacyKey, config.scope)) {
+              adapter.backend.remove(legacyKey, config.scope);
+            }
+          }
+          renamesMigrated = true;
+          return;
+        }
+
+        for (const legacyKey of renameFromKeys) {
+          const legacyRaw = isBiometric
+            ? adapter.backend.getSecureBiometric(legacyKey)
+            : adapter.backend.get(legacyKey, config.scope);
+          if (legacyRaw === undefined) {
+            continue;
+          }
+
+          writeStoredRaw(legacyRaw);
+          if (isBiometric) {
+            adapter.backend.deleteSecureBiometric(legacyKey);
+          } else {
+            adapter.backend.remove(legacyKey, config.scope);
+          }
+          break;
+        }
+
+        renamesMigrated = true;
+      } catch (error) {
+        if (isKeychainLockedError(error)) {
+          onReadError?.(error);
+          return;
+        }
+        throw error;
+      }
+    };
+
+    const removeStoredRaw = (
+      operation: StorageChangeOperation = "remove",
+    ): void => {
       const oldValue = getEventRawValue(config.scope, storageKey);
       if (isBiometric) {
         adapter.backend.deleteSecureBiometric(storageKey);
@@ -1447,7 +1748,7 @@ export function createStorageCore(
           storageKey,
           oldValue,
           undefined,
-          "remove",
+          operation,
           adapter.changeSource,
         );
         return;
@@ -1463,7 +1764,7 @@ export function createStorageCore(
             storageKey,
             oldValue,
             undefined,
-            "remove",
+            operation,
             adapter.changeSource,
           );
           return;
@@ -1483,7 +1784,7 @@ export function createStorageCore(
           storageKey,
           oldValue,
           undefined,
-          "remove",
+          operation,
           adapter.changeSource,
         );
         return;
@@ -1499,7 +1800,7 @@ export function createStorageCore(
         storageKey,
         oldValue,
         undefined,
-        "remove",
+        operation,
         adapter.changeSource,
       );
     };
@@ -1576,7 +1877,7 @@ export function createStorageCore(
             return lastValue as T;
           }
 
-          removeStoredRaw();
+          removeStoredRaw("expire");
           invalidateParsedCache();
           onExpired?.(storageKey);
           lastValue = ensureValidatedValue(defaultValue, false);
@@ -1618,7 +1919,7 @@ export function createStorageCore(
           if (isStoredEnvelope(parsed)) {
             envelopeExpiresAt = parsed.expiresAt;
             if (parsed.expiresAt <= Date.now()) {
-              removeStoredRaw();
+              removeStoredRaw("expire");
               invalidateParsedCache();
               onExpired?.(storageKey);
               lastValue = ensureValidatedValue(defaultValue, false);
@@ -1712,6 +2013,27 @@ export function createStorageCore(
       });
     };
 
+    const merge = (partial: Partial<T>): void => {
+      set((prev) => {
+        if (prev === null || typeof prev !== "object") {
+          return partial as T;
+        }
+        return { ...(prev as object), ...(partial as object) } as T;
+      });
+    };
+
+    const reset = (): void => {
+      deleteItem();
+    };
+
+    const setOrDelete = (value: T | null | undefined): void => {
+      if (value === null || value === undefined) {
+        deleteItem();
+        return;
+      }
+      set(value);
+    };
+
     const hasItem = (): boolean =>
       measureOperation("item:has", config.scope, () => {
         if (isMemory) return memoryStore.has(storageKey);
@@ -1775,6 +2097,9 @@ export function createStorageCore(
       getWithVersion,
       set,
       setIfVersion,
+      merge,
+      reset,
+      setOrDelete,
       delete: deleteItem,
       has: hasItem,
       subscribe,
@@ -1797,9 +2122,25 @@ export function createStorageCore(
       ...(secureAccessControl !== undefined
         ? { _secureAccessControl: secureAccessControl }
         : {}),
+      ...(config.group !== undefined ? { _group: config.group } : {}),
       scope: config.scope,
       key: storageKey,
     };
+
+    if (config.group !== undefined) {
+      let groupSet = itemGroups.get(config.group);
+      if (!groupSet) {
+        groupSet = new Set();
+        itemGroups.set(config.group, groupSet);
+      }
+      groupSet.add(storageItem as StorageItemInternal<unknown>);
+    }
+
+    const registryKey = `${config.scope}:${storageKey}`;
+    registeredKeyCounts.set(
+      registryKey,
+      (registeredKeyCounts.get(registryKey) ?? 0) + 1,
+    );
 
     return storageItem;
   }
@@ -2298,7 +2639,11 @@ export function createStorageCore(
 
   function createSecureAuthStorage<K extends string>(
     config: SecureAuthStorageConfig<K>,
-    options?: { namespace?: string },
+    options?: {
+      namespace?: string;
+      group?: string;
+      fallbackToCacheOnReadError?: boolean;
+    },
   ): Record<K, StorageItem<string>> {
     const ns = options?.namespace ?? "auth";
     const result: Partial<Record<K, StorageItem<string>>> = {};
@@ -2326,15 +2671,105 @@ export function createStorageCore(
         ...(expirationConfig !== undefined
           ? { expiration: expirationConfig }
           : {}),
+        ...(itemConfig.renameFrom !== undefined
+          ? { renameFrom: itemConfig.renameFrom }
+          : {}),
+        ...(options?.group !== undefined ? { group: options.group } : {}),
+        ...(options?.fallbackToCacheOnReadError !== undefined
+          ? { fallbackToCacheOnReadError: options.fallbackToCacheOnReadError }
+          : {}),
       });
     }
 
     return result as Record<K, StorageItem<string>>;
   }
 
+  function memoryItem<T = undefined>(
+    config: Omit<StorageItemConfig<T>, "scope">,
+  ): StorageItem<T> {
+    return createStorageItem<T>({ ...config, scope: StorageScope.Memory });
+  }
+
+  function diskItem<T = undefined>(
+    config: Omit<StorageItemConfig<T>, "scope">,
+  ): StorageItem<T> {
+    return createStorageItem<T>({ ...config, scope: StorageScope.Disk });
+  }
+
+  function secureItem<T = undefined>(
+    config: Omit<StorageItemConfig<T>, "scope">,
+  ): StorageItem<T> {
+    return createStorageItem<T>({ ...config, scope: StorageScope.Secure });
+  }
+
+  function createSetItem<TMember extends string = string>(
+    config: SetItemConfig<TMember>,
+  ): SetStorageItem<TMember> {
+    const { defaultValue, ...rest } = config;
+    const initial: Record<string, true> = {};
+    if (defaultValue) {
+      for (const id of defaultValue) {
+        initial[id] = true;
+      }
+    }
+
+    const item = createStorageItem<Record<string, true>>({
+      ...rest,
+      defaultValue: initial,
+    });
+
+    const has = (id: TMember): boolean => item.get()[id] === true;
+
+    const add = (id: TMember): void => {
+      if (item.get()[id] === true) {
+        return;
+      }
+      item.merge({ [id]: true });
+    };
+
+    const deleteId = (id: TMember): void => {
+      const current = item.get();
+      if (current[id] !== true) {
+        return;
+      }
+      const next = { ...current };
+      delete next[id];
+      item.set(next);
+    };
+
+    const toggle = (id: TMember): boolean => {
+      if (has(id)) {
+        deleteId(id);
+        return false;
+      }
+      add(id);
+      return true;
+    };
+
+    return {
+      get: item.get,
+      has,
+      add,
+      delete: deleteId,
+      toggle,
+      values: () => Object.keys(item.get()) as TMember[],
+      size: () => Object.keys(item.get()).length,
+      clear: () => item.set({}),
+      reset: item.reset,
+      subscribe: item.subscribe,
+      scope: item.scope,
+      key: item.key,
+      item,
+    };
+  }
+
   return {
     storage,
     createStorageItem,
+    memoryItem,
+    diskItem,
+    secureItem,
+    createSetItem,
     getBatch,
     setBatch,
     removeBatch,

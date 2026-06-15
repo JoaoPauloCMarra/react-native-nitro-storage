@@ -5,9 +5,11 @@ export type StorageChangeOperation =
   | "remove"
   | "clear"
   | "clearNamespace"
+  | "clearGroup"
   | "setBatch"
   | "removeBatch"
   | "import"
+  | "expire"
   | "external";
 
 export type StorageChangeSource = "memory" | "native" | "web" | "external";

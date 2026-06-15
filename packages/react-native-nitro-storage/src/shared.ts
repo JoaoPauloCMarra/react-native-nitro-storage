@@ -241,6 +241,7 @@ export type SecureAuthStorageConfig<K extends string = string> = Record<
     biometric?: boolean;
     biometricLevel?: BiometricLevel;
     accessControl?: AccessControl;
+    renameFrom?: string | readonly string[];
   }
 >;
 

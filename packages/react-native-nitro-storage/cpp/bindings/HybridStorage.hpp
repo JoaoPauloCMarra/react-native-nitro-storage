@@ -11,6 +11,8 @@
 #include <memory>
 #include <vector>
 #include <unordered_set>
+#include <atomic>
+#include <array>
 
 namespace margelo::nitro::NitroStorage {
 
@@ -74,6 +76,9 @@ private:
     HybridStorageMap<int, std::vector<Listener>> listeners_;
     std::mutex listenersMutex_;
     size_t nextListenerId_ = 0;
+    // Lock-free fast path: skip locking/copying the listener vector on the
+    // write/notify path when no listeners are registered for a scope.
+    std::array<std::atomic<size_t>, 3> listenerScopeCounts_{};
     HybridStorageMap<int, std::unordered_set<std::string>> keyIndex_;
     HybridStorageMap<int, bool> keyIndexHydrated_;
     std::mutex keyIndexMutex_;

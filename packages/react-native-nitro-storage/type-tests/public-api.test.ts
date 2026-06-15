@@ -13,16 +13,24 @@ import {
   type WebDiskStorageBackend,
   type WebSecureStorageBackend,
   createSecureAuthStorage,
+  createSetItem,
   createStorageItem,
+  diskItem,
   getWebSecureStorageBackend,
   getBatch,
+  memoryItem,
   removeBatch,
+  secureItem,
   setWebSecureStorageBackend,
   setBatch,
   storage,
   useSetStorage,
   useStorage,
+  useStorageActions,
+  useStorageValue,
   useStorageSelector,
+  type SetStorageItem,
+  type StorageActions,
 } from "../src";
 
 type Equals<A, B> =
@@ -180,3 +188,84 @@ createStorageItem({
   // @ts-expect-error invalid expiration config shape
   expiration: {},
 });
+
+// --- New ergonomics surface ---
+
+type Config = { theme: "light" | "dark"; compact: boolean };
+const configItem = memoryItem<Config>({
+  key: "config",
+  defaultValue: { theme: "light", compact: false },
+  group: "ui",
+});
+configItem.merge({ compact: true });
+configItem.reset();
+configItem.setOrDelete(null);
+
+const diskFlag = diskItem<boolean>({ key: "flag", defaultValue: false });
+const secureSecret = secureItem<string>({
+  key: "secret",
+  defaultValue: "",
+  renameFrom: ["legacy-secret"],
+  fallbackToCacheOnReadError: true,
+  onReadError: (error: unknown) => {
+    void error;
+  },
+});
+void diskFlag;
+void secureSecret;
+
+const seenIds: SetStorageItem = createSetItem({
+  key: "seen",
+  scope: StorageScope.Disk,
+  defaultValue: ["a"],
+});
+seenIds.add("b");
+const seenToggleResult: boolean = seenIds.toggle("c");
+const seenValues: string[] = seenIds.values();
+void seenToggleResult;
+void seenValues;
+
+// createSetItem is generic over its member type for typed-id sets.
+const colorSet = createSetItem<"red" | "blue">({
+  key: "colors",
+  scope: StorageScope.Disk,
+  defaultValue: ["red"],
+});
+colorSet.add("blue");
+const colorIsSet: boolean = colorSet.has("red");
+const colorValues: ("red" | "blue")[] = colorSet.values();
+// @ts-expect-error "green" is not a valid member of this set
+colorSet.add("green");
+void colorIsSet;
+void colorValues;
+
+storage.clear(StorageScope.Disk, { except: [diskFlag, "literal-key"] });
+storage.clearGroup("ui");
+const groupItems = storage.getGroupItems("ui");
+const duplicateKeys = storage.findDuplicateKeys();
+const registeredKeys = storage.getRegisteredKeys();
+const unsubscribeExpired = storage.subscribeExpired(
+  StorageScope.Memory,
+  (event) => {
+    const expiredKey: string = event.key;
+    void expiredKey;
+  },
+);
+unsubscribeExpired();
+void groupItems;
+void duplicateKeys;
+void registeredKeys;
+
+const [, , configActions] = useStorage(configItem);
+const typedActions: StorageActions<Config> = configActions;
+typedActions.merge({ compact: false });
+typedActions.reset();
+typedActions.remove();
+typedActions.setOrDelete({ theme: "dark", compact: true });
+
+const valueOnly: Config = useStorageValue(configItem);
+const actionsOnly = useStorageActions(configItem);
+actionsOnly.set({ theme: "dark", compact: false });
+void typedActions;
+void valueOnly;
+void actionsOnly;

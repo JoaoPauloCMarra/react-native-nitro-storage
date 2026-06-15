@@ -70,7 +70,7 @@
     "react-native": "0.85.3",
     "react-native-nitro-modules": "0.35.7",
     "@types/react": "~19.2.14",
-    "expo": "~56.0.11",
+    "expo": "~56.0.12",
     "react-native-screens": "4.25.2",
     "expo-constants": "~56.0.18",
     "expo-linking": "~56.0.14"

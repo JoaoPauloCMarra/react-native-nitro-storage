@@ -27,6 +27,10 @@ pagination, conflict resolution, or remote synchronization.
 - [Expo Config](#expo-config)
 - [Quick Start](#quick-start)
 - [Typed Storage Items](#typed-storage-items)
+- [Item Ergonomics](#item-ergonomics)
+- [Set Items](#set-items)
+- [Groups And Lifecycle](#groups-and-lifecycle)
+- [Legacy Key Migration And Secure Resilience](#legacy-key-migration-and-secure-resilience)
 - [React Hooks](#react-hooks)
 - [Storage Scopes](#storage-scopes)
 - [Secure Storage](#secure-storage)
@@ -34,10 +38,12 @@ pagination, conflict resolution, or remote synchronization.
 - [Events And Observability](#events-and-observability)
 - [Migrations And Transactions](#migrations-and-transactions)
 - [Web Backends](#web-backends)
+- [Testing](#testing)
 - [Platform Support](#platform-support)
 - [Documentation](#documentation)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
+- [License](#license)
 
 ## Install
 
@@ -153,9 +159,108 @@ const didWrite = preferencesItem.setIfVersion(snapshot.version, {
 });
 ```
 
-The package exports `StorageItem`, `StorageItemConfig`, `StorageSetter`,
-`VersionedValue`, `StorageBatchSetItem`, web backend types, event types, secure
-metadata types, and capability types for IDE-safe integrations.
+The package ships its own TypeScript types, so editors and AI tools catch
+mistakes before they reach the runtime. It exports `StorageItem`,
+`StorageItemConfig`, `StorageSetter`, `StorageActions`, `VersionedValue`,
+`StorageBatchSetItem`, `StorageClearOptions`, `StorageKeyRef`, `SetItemConfig`,
+`SetStorageItem`, plus web backend, event, secure-metadata, and capability types.
+
+## Item Ergonomics
+
+`merge`, `reset`, and `setOrDelete` cover the most common object-state edits
+without re-reading or hand-writing compare-and-swap loops. Scoped factories
+(`memoryItem`, `diskItem`, `secureItem`) drop the repeated `scope` field.
+
+```ts
+import { diskItem, memoryItem } from "react-native-nitro-storage";
+
+const config = diskItem<{ theme: "light" | "dark"; compact: boolean }>({
+  key: "config",
+  defaultValue: { theme: "light", compact: false },
+});
+
+config.merge({ compact: true }); // shallow object update
+config.reset(); // back to the default value
+const loginMethod = memoryItem<string | null>({
+  key: "loginMethod",
+  defaultValue: null,
+});
+loginMethod.setOrDelete(maybeMethod); // null/undefined deletes, value sets
+```
+
+## Set Items
+
+`createSetItem()` models set-membership state (seen ids, dismissed prompts)
+without hand-rolling `Record<string, true>` helpers. Adding an existing member
+or deleting an absent one is a no-op, so subscribers do not re-render.
+
+```ts
+import { createSetItem, StorageScope } from "react-native-nitro-storage";
+
+const dismissedTips = createSetItem({
+  key: "dismissedTips",
+  scope: StorageScope.Disk,
+});
+
+dismissedTips.add("welcome");
+dismissedTips.has("welcome"); // true
+dismissedTips.toggle("welcome"); // false (removed)
+dismissedTips.values(); // string[]
+```
+
+## Groups And Lifecycle
+
+Tag items with a `group` to clear related state in one call, or keep specific
+keys while wiping the rest of a scope. This replaces manual snapshot-and-restore
+logout flows.
+
+```ts
+import { secureItem, storage, StorageScope } from "react-native-nitro-storage";
+
+const accessToken = secureItem<string>({
+  key: "accessToken",
+  defaultValue: "",
+  group: "session",
+});
+
+// Wipe everything tied to the session.
+storage.clearGroup("session");
+
+// Wipe Disk but keep a few opt-in preferences.
+storage.clear(StorageScope.Disk, {
+  except: [apiEnvironmentItem, "onboardingComplete"],
+});
+```
+
+## Legacy Key Migration And Secure Resilience
+
+`renameFrom` migrates an old key to a new one on first read and deletes the
+legacy entry. Secure items can fall back to the last cached value when the
+keychain is locked instead of throwing.
+
+```ts
+import {
+  secureItem,
+  createSecureAuthStorage,
+} from "react-native-nitro-storage";
+
+const accessToken = secureItem<string>({
+  key: "accessToken",
+  namespace: "auth",
+  defaultValue: "",
+  renameFrom: "authToken", // copied + cleaned up on first read
+  fallbackToCacheOnReadError: true,
+  onReadError: (error) => reportSecureReadError(error),
+});
+
+const auth = createSecureAuthStorage(
+  {
+    accessToken: { renameFrom: "authToken" },
+    refreshToken: { renameFrom: "refreshToken" },
+  },
+  { namespace: "auth", group: "session", fallbackToCacheOnReadError: true },
+);
+```
 
 ## React Hooks
 
@@ -186,6 +291,24 @@ const [compactMode] = useStorageSelector(
   preferencesItem,
   (preferences) => preferences.compactMode,
 );
+```
+
+`useStorage` also returns a render-stable `actions` object as a third element,
+and `useStorageValue` / `useStorageActions` split read and write concerns.
+
+```tsx
+import {
+  useStorage,
+  useStorageActions,
+  useStorageValue,
+} from "react-native-nitro-storage";
+
+const [config, setConfig, actions] = useStorage(configItem);
+actions.merge({ compact: true });
+actions.reset();
+
+const theme = useStorageValue(themeItem); // read-only, no setter
+const tokenActions = useStorageActions(tokenItem); // { set, merge, reset, remove, setOrDelete }
 ```
 
 ## Storage Scopes
@@ -303,6 +426,21 @@ Secure event observer values are redacted by default. Pass
 `{ redactSecureValues: false }` only in trusted debug tooling where raw values
 are safe to inspect.
 
+TTL expiry emits a dedicated `"expire"` change event. Use
+`storage.subscribeExpired()` to react to keys that lapse on read.
+
+```ts
+const unsubscribeExpired = storage.subscribeExpired(
+  StorageScope.Disk,
+  (event) => {
+    console.log("expired", event.key);
+  },
+);
+```
+
+`storage.findDuplicateKeys()` and `storage.getRegisteredKeys()` help audit
+accidental `(scope, key)` collisions; call them once at startup in development.
+
 ## Migrations And Transactions
 
 ```ts
@@ -324,15 +462,16 @@ registerMigration(2, ({ getRaw, setRaw, removeRaw }) => {
 
 migrateToLatest(StorageScope.Disk);
 
-runTransaction(() => {
-  themeItem.set("dark");
-  localeItem.set("en-US");
+runTransaction(StorageScope.Disk, (tx) => {
+  tx.setItem(themeItem, "dark");
+  tx.setItem(localeItem, "en-US");
 });
 
 migrateFromMMKV(mmkvInstance, themeItem);
 ```
 
-Transactions roll back local writes if the callback throws.
+`runTransaction(scope, callback)` rolls back every write made through the `tx`
+context if the callback throws.
 
 ## Web Backends
 
@@ -354,6 +493,31 @@ setWebSecureStorageBackend(backend);
 
 Browser storage cannot provide iOS Keychain or Android Keystore guarantees. Web
 Secure scope is only as strong as the backend you configure.
+
+## Testing
+
+The `react-native-nitro-storage/testing` entrypoint is a faithful in-memory
+implementation of the full public surface, so unit tests and Storybook run
+without native modules. Mock the package with it, or use it directly.
+
+```ts
+import {
+  createNitroStorageMock,
+  resetNitroStorageMock,
+} from "react-native-nitro-storage/testing";
+
+// Jest: swap the real module for the in-memory implementation.
+jest.mock("react-native-nitro-storage", () =>
+  require("react-native-nitro-storage/testing"),
+);
+
+beforeEach(() => {
+  resetNitroStorageMock();
+});
+
+// Or build an isolated instance per test file.
+const { storage, memoryItem } = createNitroStorageMock();
+```
 
 ## Platform Support
 
