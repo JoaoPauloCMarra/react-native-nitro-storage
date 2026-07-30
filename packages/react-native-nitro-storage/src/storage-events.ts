@@ -33,8 +33,7 @@ export type StorageBatchChangeEvent = {
 };
 
 export type StorageChangeEvent =
-  | StorageKeyChangeEvent
-  | StorageBatchChangeEvent;
+  StorageKeyChangeEvent | StorageBatchChangeEvent;
 
 export type StorageEventListener = (event: StorageChangeEvent) => void;
 

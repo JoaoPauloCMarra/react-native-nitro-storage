@@ -47,6 +47,8 @@ export const recoveryCodeItem = createStorageItem<string>({
 
 `BiometricLevel.BiometryOnly` does not allow passcode fallback. Use `BiometricLevel.BiometryOrPasscode` when passcode fallback is acceptable.
 
+On Android 11 and newer, the two levels use separate Android Keystore keys with distinct allowed authenticators. Android 10 and older support `BiometryOrPasscode`; `BiometryOnly` reports `biometric_unavailable` because the older Keystore API cannot enforce that distinction safely for this storage backend. Android authorization remains valid for a 30-second window after successful authentication.
+
 ## Access Control
 
 `accessControl` maps to platform accessibility rules where available.
@@ -141,6 +143,8 @@ Android secure storage uses encrypted SharedPreferences. Restored encrypted pref
 
 - `NitroStorageSecure.xml`
 - `NitroStorageBiometric.xml`
+- `NitroStorageBiometricOrPasscode.xml`
+- `NitroStorageBiometricOnly.xml`
 
 If you disable `configureAndroidBackup` or maintain custom Android backup XML, add equivalent exclusions for both cloud backup and device transfer.
 

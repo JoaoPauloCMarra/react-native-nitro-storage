@@ -98,6 +98,24 @@ const typedThemeFromBatch: "system" | "light" | "dark" = batchTuple[1];
 void typedCountFromBatch;
 void typedThemeFromBatch;
 
+setBatch(
+  [
+    { item: countItem, value: 7 },
+    { item: themeItem, value: "dark" },
+  ],
+  StorageScope.Memory,
+);
+setBatch(
+  [
+    {
+      item: countItem,
+      // @ts-expect-error batch values must match their item value type
+      value: "seven",
+    },
+  ],
+  StorageScope.Memory,
+);
+
 const versionedSnapshot = countItem.getWithVersion();
 const versionToken: string = versionedSnapshot.version;
 const casResult: boolean = countItem.setIfVersion(versionToken, 6);

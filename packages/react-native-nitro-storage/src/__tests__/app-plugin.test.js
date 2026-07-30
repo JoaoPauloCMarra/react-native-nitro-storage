@@ -49,11 +49,23 @@ describe("Expo config plugin", () => {
     expect(_internal.dataExtractionRulesXml()).toContain(
       '<exclude domain="sharedpref" path="NitroStorageBiometric.xml" />',
     );
+    expect(_internal.dataExtractionRulesXml()).toContain(
+      '<exclude domain="sharedpref" path="NitroStorageBiometricOrPasscode.xml" />',
+    );
+    expect(_internal.dataExtractionRulesXml()).toContain(
+      '<exclude domain="sharedpref" path="NitroStorageBiometricOnly.xml" />',
+    );
     expect(_internal.fullBackupContentXml()).toContain(
       '<exclude domain="sharedpref" path="NitroStorageSecure.xml" />',
     );
     expect(_internal.fullBackupContentXml()).toContain(
       '<exclude domain="sharedpref" path="NitroStorageBiometric.xml" />',
+    );
+    expect(_internal.fullBackupContentXml()).toContain(
+      '<exclude domain="sharedpref" path="NitroStorageBiometricOrPasscode.xml" />',
+    );
+    expect(_internal.fullBackupContentXml()).toContain(
+      '<exclude domain="sharedpref" path="NitroStorageBiometricOnly.xml" />',
     );
   });
 

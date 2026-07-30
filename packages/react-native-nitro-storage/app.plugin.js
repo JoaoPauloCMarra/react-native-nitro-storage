@@ -15,6 +15,8 @@ const FULL_BACKUP_CONTENT_RESOURCE = "@xml/nitro_storage_full_backup_content";
 const secureSharedPrefs = [
   "NitroStorageSecure.xml",
   "NitroStorageBiometric.xml",
+  "NitroStorageBiometricOrPasscode.xml",
+  "NitroStorageBiometricOnly.xml",
 ];
 
 function sharedPrefsExcludes(indent = "    ") {

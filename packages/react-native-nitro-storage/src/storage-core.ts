@@ -158,6 +158,19 @@ export type StorageBatchSetItem<T> = {
   value: T;
 };
 
+type StorageBatchSetCandidate = {
+  get: () => unknown;
+};
+
+type StorageBatchSetEntries<
+  TItems extends readonly StorageBatchSetCandidate[],
+> = {
+  [Index in keyof TItems]: {
+    item: TItems[Index] & StorageItem<ReturnType<TItems[Index]["get"]>>;
+    value: ReturnType<TItems[Index]["get"]>;
+  };
+};
+
 export type StorageKeyRef = string | { readonly key: string };
 
 export type StorageClearOptions = {
@@ -1050,7 +1063,7 @@ export function createStorageCore(
         }
         const separatorIndex = registryKey.indexOf(":");
         duplicates.push({
-          scope: Number(registryKey.slice(0, separatorIndex)) as StorageScope,
+          scope: Number(registryKey.slice(0, separatorIndex)),
           key: registryKey.slice(separatorIndex + 1),
           count,
         });
@@ -1062,7 +1075,7 @@ export function createStorageCore(
       registeredKeyCounts.forEach((_count, registryKey) => {
         const separatorIndex = registryKey.indexOf(":");
         result.push({
-          scope: Number(registryKey.slice(0, separatorIndex)) as StorageScope,
+          scope: Number(registryKey.slice(0, separatorIndex)),
           key: registryKey.slice(separatorIndex + 1),
         });
       });
@@ -2227,6 +2240,10 @@ export function createStorageCore(
     ) as BatchValues<TItems>;
   }
 
+  function setBatch<const TItems extends readonly StorageBatchSetCandidate[]>(
+    items: StorageBatchSetEntries<TItems>,
+    scope: StorageScope,
+  ): void;
   function setBatch<T>(
     items: readonly StorageBatchSetItem<T>[],
     scope: StorageScope,

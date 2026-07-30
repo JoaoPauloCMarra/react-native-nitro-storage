@@ -40,6 +40,9 @@ public:
         for (const auto& [key, _] : disk_) {
             keys.push_back(key);
         }
+        if (diskSnapshotHook_) {
+            diskSnapshotHook_();
+        }
         return keys;
     }
 
@@ -204,6 +207,9 @@ public:
     int secureWritesAsyncCalls() const { return secureWritesAsyncCalls_; }
     const std::string& keychainGroup() const { return keychainGroup_; }
     int biometricLevel() const { return biometricLevel_; }
+    void setDiskSnapshotHook(std::function<void()> hook) {
+        diskSnapshotHook_ = std::move(hook);
+    }
 
 private:
     std::map<std::string, std::string> disk_;
@@ -214,6 +220,7 @@ private:
     int secureWritesAsyncCalls_ = 0;
     std::string keychainGroup_;
     int biometricLevel_ = -1;
+    std::function<void()> diskSnapshotHook_;
 };
 
 class ThrowingAdapter final : public ::NitroStorage::NativeStorageAdapter {
@@ -666,6 +673,37 @@ void testConcurrentMemoryAccess() {
     assert(storage->getAllKeys(0.0).size() == 64);
 }
 
+void testKeyMutationDuringHydrationRemainsIndexed() {
+    auto adapter = std::make_shared<MockAdapter>();
+    auto storage = std::make_shared<HybridStorage>(adapter);
+    std::atomic<bool> snapshotReady{false};
+    std::atomic<bool> releaseSnapshot{false};
+
+    adapter->setDiskSnapshotHook([&]() {
+        snapshotReady.store(true, std::memory_order_release);
+        while (!releaseSnapshot.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+    });
+
+    std::thread hydration([&]() {
+        storage->getAllKeys(1.0);
+    });
+    while (!snapshotReady.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+
+    std::thread writer([&]() {
+        storage->set("during-hydration", "value", 1.0);
+    });
+    releaseSnapshot.store(true, std::memory_order_release);
+    hydration.join();
+    writer.join();
+
+    const auto keys = storage->getAllKeys(1.0);
+    assert(std::find(keys.begin(), keys.end(), "during-hydration") != keys.end());
+}
+
 void testListenerFastPathToggles() {
     auto adapter = std::make_shared<MockAdapter>();
     auto storage = std::make_shared<HybridStorage>(adapter);
@@ -771,6 +809,7 @@ int main() {
     testHydratedKeyIndexUpdates();
     testHydratedBatchKeyIndexUpdates();
     testConcurrentMemoryAccess();
+    testKeyMutationDuringHydrationRemainsIndexed();
     testListenerFastPathToggles();
     testConcurrentListenerChurn();
     testUnknownNativeFailuresAreWrapped();

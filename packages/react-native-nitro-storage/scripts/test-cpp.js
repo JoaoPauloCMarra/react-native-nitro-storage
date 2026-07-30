@@ -43,8 +43,24 @@ const nitroDir = [
   path.join(packageRoot, "node_modules", "react-native-nitro-modules", "cpp"),
   path.join(workspaceRoot, "node_modules", "react-native-nitro-modules", "cpp"),
 ].find((candidate) => fs.existsSync(candidate));
+const reactNativeJsiDir = [
+  path.join(
+    packageRoot,
+    "node_modules",
+    "react-native",
+    "ReactCommon",
+    "jsi",
+  ),
+  path.join(
+    workspaceRoot,
+    "node_modules",
+    "react-native",
+    "ReactCommon",
+    "jsi",
+  ),
+].find((candidate) => fs.existsSync(candidate));
 
-if (!nitroDir) {
+if (!nitroDir || !reactNativeJsiDir) {
   console.error("❌ Dependencies not found. Run 'bun install' first.");
   process.exit(1);
 }
@@ -135,7 +151,7 @@ const hybridOutputFile = path.join(buildDir, "hybrid_storage_test");
 console.log("⚙️  Compiling...");
 
 const commonFlags = [
-  "-std=c++17",
+  "-std=c++20",
   "-g",
   ...(sanitizer !== undefined ? [`-fsanitize=${sanitizer}`] : []),
   ...(sanitizer !== undefined ? ["-fno-omit-frame-pointer"] : []),
@@ -302,6 +318,7 @@ try {
     `-I${path.join(cppDir, "core")}`,
     `-I${path.join(cppDir, "bindings")}`,
     `-I${includeRoot}`,
+    `-I${reactNativeJsiDir}`,
     `-I${path.join(__dirname, "..", "nitrogen", "generated", "shared", "c++")}`,
     hybridTestFile,
     hybridSourceFile,

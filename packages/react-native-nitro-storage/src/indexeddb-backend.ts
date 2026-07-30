@@ -110,8 +110,7 @@ export async function createIndexedDBBackend(
     }
 
     const data = event.data as
-      | (WebStorageChangeEvent & { sourceId?: string })
-      | undefined;
+      (WebStorageChangeEvent & { sourceId?: string }) | undefined;
     if (!data || data.sourceId === sourceId) {
       return;
     }
