@@ -99,7 +99,7 @@ export function serializeWithPrimitiveFastPath<T>(value: T): string {
       if (Number.isFinite(value)) {
         return PRIM_NUMBER_PREFIX + String(value);
       }
-      if (Number.isNaN(value as number)) {
+      if (Number.isNaN(value)) {
         return PRIM_NAN;
       }
       if (value === Infinity) {

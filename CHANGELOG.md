@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
+## 0.7.0 - 2026-07-30
+
+### Changes
+
+- **Breaking change:** Android secure key discovery, existence checks, and cleanup now surface locked, unavailable, or invalidated biometric-store errors instead of treating inaccessible protected values as absent. Catch storage errors around these operations and use `isKeychainLockedError()` when retrying after device authentication is appropriate.
+- Upgrade the validated package baseline to Expo SDK 57, React Native 0.86.2, and Nitro Modules/Nitrogen 0.36.4.
+- Preserve each item/value relationship in heterogeneous `setBatch()` calls so TypeScript rejects values assigned to the wrong storage item.
+- Serialize native key-index hydration with concurrent mutations so `has`, `size`, and key queries cannot remain stale after a racing write.
+- Enforce Android biometric policy levels with distinct Keystore keys, propagate locked or invalidated biometric failures, and keep secure preference files excluded from backup.
+- Preflight biometric store access before aggregate secure mutations and surface native commit or corruption-recovery failures.
+
 ## 0.6.0 - 2026-06-15
 
 ### Added

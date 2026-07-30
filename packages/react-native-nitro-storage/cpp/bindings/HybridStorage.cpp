@@ -672,12 +672,10 @@ void HybridStorage::ensureKeyIndexHydrated(int scope) {
         return;
     }
 
-    {
-        std::lock_guard<std::mutex> lock(keyIndexMutex_);
-        auto hydratedIt = keyIndexHydrated_.find(scope);
-        if (hydratedIt != keyIndexHydrated_.end() && hydratedIt->second) {
-            return;
-        }
+    std::lock_guard<std::mutex> lock(keyIndexMutex_);
+    auto hydratedIt = keyIndexHydrated_.find(scope);
+    if (hydratedIt != keyIndexHydrated_.end() && hydratedIt->second) {
+        return;
     }
 
     ensureAdapter();
@@ -694,12 +692,6 @@ void HybridStorage::ensureKeyIndexHydrated(int scope) {
         throw std::runtime_error("NitroStorage: Key index hydration failed (unknown error)");
     }
 
-    std::lock_guard<std::mutex> lock(keyIndexMutex_);
-    // Double-check: another thread may have hydrated while we fetched
-    auto hydratedIt = keyIndexHydrated_.find(scope);
-    if (hydratedIt != keyIndexHydrated_.end() && hydratedIt->second) {
-        return; // discard our results
-    }
     auto& index = keyIndex_[scope];
     index.clear();
     for (const auto& key : keys) {

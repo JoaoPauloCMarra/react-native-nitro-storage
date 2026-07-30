@@ -461,8 +461,7 @@ describe("createIndexedDBBackend", () => {
             result: db,
             error: null,
             onupgradeneeded: null as
-              | ((event: IDBVersionChangeEvent) => void)
-              | null,
+              ((event: IDBVersionChangeEvent) => void) | null,
             onsuccess: null as ((event: Event) => void) | null,
             onerror: null as ((event: Event) => void) | null,
           };

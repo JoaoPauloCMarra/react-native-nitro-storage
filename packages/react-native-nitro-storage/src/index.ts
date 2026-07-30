@@ -330,8 +330,7 @@ export function setWebSecureStorageBackend(
 }
 
 export function getWebSecureStorageBackend():
-  | WebSecureStorageBackend
-  | undefined {
+  WebSecureStorageBackend | undefined {
   return undefined;
 }
 

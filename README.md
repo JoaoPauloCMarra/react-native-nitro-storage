@@ -5,8 +5,8 @@
 [![CI](https://github.com/JoaoPauloCMarra/react-native-nitro-storage/actions/workflows/ci.yml/badge.svg)](https://github.com/JoaoPauloCMarra/react-native-nitro-storage/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/react-native-nitro-storage?color=007ec6)](https://github.com/JoaoPauloCMarra/react-native-nitro-storage/blob/main/LICENSE)
 [![React Native](https://img.shields.io/badge/react--native-%3E%3D0.75-61dafb)](https://reactnative.dev/)
-[![Expo](https://img.shields.io/badge/expo-SDK%2056-000020)](https://docs.expo.dev/)
-[![Nitro Modules](https://img.shields.io/badge/nitro--modules-%3E%3D0.35.7-black)](https://nitro.margelo.com/)
+[![Expo](https://img.shields.io/badge/expo-SDK%2057-000020)](https://docs.expo.dev/versions/latest/)
+[![Nitro Modules](https://img.shields.io/badge/nitro--modules-0.36.x-black)](https://nitro.margelo.com/)
 [![TypeScript](https://img.shields.io/badge/typescript-6.0-3178c6)](https://www.typescriptlang.org/)
 
 Synchronous Memory, Disk, and Secure storage for React Native, Expo development
@@ -53,13 +53,16 @@ bun add react-native-nitro-storage react-native-nitro-modules
 
 Peer dependencies:
 
-| Package                      | Version    |
-| ---------------------------- | ---------- |
-| `react`                      | `>=18.2.0` |
-| `react-native`               | `>=0.75.0` |
-| `react-native-nitro-modules` | `>=0.35.7` |
+| Package                      | Version            |
+| ---------------------------- | ------------------ |
+| `react`                      | `>=18.2.0`         |
+| `react-native`               | `>=0.75.0`         |
+| `react-native-nitro-modules` | `>=0.36.4 <0.37.0` |
 
-Nitro peer requirement: `react-native-nitro-modules >=0.35.7`.
+Nitro peer requirement: `react-native-nitro-modules >=0.36.4 <0.37.0`.
+
+Validated example baseline: Expo SDK 57, React Native 0.86.2, React 19.2.3,
+and Nitro Modules 0.36.4.
 
 For Expo development builds:
 
@@ -371,10 +374,20 @@ exporting secure values unless you are intentionally doing a short-lived
 in-memory migration. `storage.export(StorageScope.Secure)` throws unless you
 explicitly opt into `{ includeSecureValues: true }`.
 
+On Android 11 and newer, `BiometricLevel.BiometryOnly` and
+`BiometricLevel.BiometryOrPasscode` use separate Keystore policies. Android 10
+and older support `BiometryOrPasscode`; `BiometryOnly` throws
+`biometric_unavailable` because those releases cannot safely enforce the
+biometric-only distinction. Secure existence, discovery, and cleanup operations
+can also throw when a protected store is locked or its key is invalidated. Catch
+those failures and use `isKeychainLockedError()` when authentication-aware retry
+behavior is appropriate.
+
 ## Batch Operations
 
 `getBatch()` preserves tuple value types, so IDEs infer each result from the
-matching item.
+matching item. `setBatch()` validates every item/value pair independently,
+including heterogeneous batches.
 
 ```ts
 import { getBatch, removeBatch, setBatch } from "react-native-nitro-storage";
