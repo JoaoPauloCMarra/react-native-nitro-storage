@@ -1,3 +1,5 @@
+import { resolveWebWriteBuffering } from "./capabilities";
+import { unescapeCollidingRawValue } from "./internal";
 import {
   assertAccessControlLevel,
   assertBiometricLevel,
@@ -5,7 +7,17 @@ import {
   notifyKeyListeners,
   type NonMemoryScope,
 } from "./shared";
-import { StorageScope, AccessControl, BiometricLevel } from "./Storage.types";
+import {
+  createStorageCore,
+  type StorageCoreAdapter,
+  type StorageCoreInternals,
+} from "./storage-core";
+import type {
+  SecurityCapabilities,
+  StorageCapabilities,
+} from "./storage-runtime";
+import type { AccessControl } from "./Storage.types";
+import { StorageScope, BiometricLevel } from "./Storage.types";
 import {
   createLocalStorageWebBackend,
   type WebDiskStorageBackend,
@@ -13,15 +25,6 @@ import {
   type WebStorageBackend,
   type WebStorageChangeEvent,
 } from "./web-storage-backend";
-import type {
-  SecurityCapabilities,
-  StorageCapabilities,
-} from "./storage-runtime";
-import {
-  createStorageCore,
-  type StorageCoreAdapter,
-  type StorageCoreInternals,
-} from "./storage-core";
 export type {
   ExpirationConfig,
   Migration,
@@ -65,6 +68,11 @@ export type {
   WebStorageChangeEvent,
   WebStorageScope,
 } from "./web-storage-backend";
+export {
+  describeWebBackendCapabilities,
+  isIndexedDBWebBackend,
+  type WebBackendCapabilities,
+} from "./web-backend-contract";
 export type {
   SetItemConfig,
   SetStorageItem,
@@ -75,8 +83,9 @@ export type {
   StorageKeyRef,
   TransactionContext,
 } from "./storage-core";
+export type { PlatformScope, PlatformStorage } from "./storage-platform";
 
-export interface Storage {
+export type Storage = {
   name: string;
   equals: (other: unknown) => boolean;
   dispose: () => void;
@@ -105,19 +114,26 @@ export interface Storage {
   deleteSecureBiometric(key: string): void;
   hasSecureBiometric(key: string): boolean;
   clearSecureBiometric(): void;
-}
+};
 
-const webScopeKeyIndex = new Map<NonMemoryScope, Set<string>>([
-  [StorageScope.Disk, new Set()],
-  [StorageScope.Secure, new Set()],
-]);
+const webScopeKeyIndex: Record<NonMemoryScope, Set<string>> = {
+  [StorageScope.Disk]: new Set(),
+  [StorageScope.Secure]: new Set(),
+};
 const hydratedWebScopeKeyIndex = new Set<NonMemoryScope>();
 const SECURE_WEB_PREFIX = "__secure_";
 const BIOMETRIC_WEB_PREFIX = "__bio_";
 let hasWarnedAboutWebBiometricFallback = false;
 let hasWindowStorageEventSubscription = false;
 
-let internals!: StorageCoreInternals;
+let internals: StorageCoreInternals;
+
+function getInternals(): StorageCoreInternals {
+  if (internals === undefined) {
+    throw new Error("NitroStorage(web): storage core is not initialized.");
+  }
+  return internals;
+}
 
 function createDefaultDiskBackend(): WebDiskStorageBackend {
   return createLocalStorageWebBackend({
@@ -141,6 +157,7 @@ let webDiskStorageBackend: WebDiskStorageBackend | undefined =
 let webSecureStorageBackend: WebSecureStorageBackend | undefined =
   createDefaultSecureBackend();
 const externalSyncUnsubscribers = new Map<NonMemoryScope, () => void>();
+const retiredWebBackends = new Map<WebStorageBackend, NonMemoryScope>();
 
 function getBackendName(
   scope: NonMemoryScope,
@@ -216,7 +233,7 @@ function fromBiometricStorageKey(key: string): string {
 }
 
 function getWebScopeKeyIndex(scope: NonMemoryScope): Set<string> {
-  return webScopeKeyIndex.get(scope)!;
+  return webScopeKeyIndex[scope];
 }
 
 function hydrateWebScopeKeyIndex(scope: NonMemoryScope): void {
@@ -256,34 +273,34 @@ function applyExternalChangeEvent(
   newValue: string | null,
 ): void {
   if (key === null) {
-    internals.clearScopeRawCache(scope);
+    getInternals().clearScopeRawCache(scope);
     ensureWebScopeKeyIndex(scope).clear();
-    notifyAllListeners(internals.getScopedListeners(scope));
+    notifyAllListeners(getInternals().getScopedListeners(scope));
     return;
   }
 
   if (scope === StorageScope.Secure && key.startsWith(SECURE_WEB_PREFIX)) {
     const plainKey = fromSecureStorageKey(key);
-    const oldValue = internals.readCachedRawValue(
+    const oldValue = getInternals().readCachedRawValue(
       StorageScope.Secure,
       plainKey,
     );
     if (newValue === null) {
       ensureWebScopeKeyIndex(StorageScope.Secure).delete(plainKey);
-      internals.cacheRawValue(StorageScope.Secure, plainKey, undefined);
+      getInternals().cacheRawValue(StorageScope.Secure, plainKey, undefined);
     } else {
       ensureWebScopeKeyIndex(StorageScope.Secure).add(plainKey);
-      internals.cacheRawValue(StorageScope.Secure, plainKey, newValue);
+      getInternals().cacheRawValue(StorageScope.Secure, plainKey, newValue);
     }
     notifyKeyListeners(
-      internals.getScopedListeners(StorageScope.Secure),
+      getInternals().getScopedListeners(StorageScope.Secure),
       plainKey,
     );
-    internals.emitKeyChange(
+    getInternals().emitKeyChange(
       StorageScope.Secure,
       plainKey,
-      oldValue,
-      newValue ?? undefined,
+      oldValue === undefined ? undefined : unescapeCollidingRawValue(oldValue),
+      newValue === null ? undefined : unescapeCollidingRawValue(newValue),
       "external",
       "external",
     );
@@ -292,7 +309,7 @@ function applyExternalChangeEvent(
 
   if (scope === StorageScope.Secure && key.startsWith(BIOMETRIC_WEB_PREFIX)) {
     const plainKey = fromBiometricStorageKey(key);
-    const oldValue = internals.readCachedRawValue(
+    const oldValue = getInternals().readCachedRawValue(
       StorageScope.Secure,
       plainKey,
     );
@@ -306,40 +323,40 @@ function applyExternalChangeEvent(
       ) {
         ensureWebScopeKeyIndex(StorageScope.Secure).delete(plainKey);
       }
-      internals.cacheRawValue(StorageScope.Secure, plainKey, undefined);
+      getInternals().cacheRawValue(StorageScope.Secure, plainKey, undefined);
     } else {
       ensureWebScopeKeyIndex(StorageScope.Secure).add(plainKey);
-      internals.cacheRawValue(StorageScope.Secure, plainKey, newValue);
+      getInternals().cacheRawValue(StorageScope.Secure, plainKey, newValue);
     }
     notifyKeyListeners(
-      internals.getScopedListeners(StorageScope.Secure),
+      getInternals().getScopedListeners(StorageScope.Secure),
       plainKey,
     );
-    internals.emitKeyChange(
+    getInternals().emitKeyChange(
       StorageScope.Secure,
       plainKey,
-      oldValue,
-      newValue ?? undefined,
+      oldValue === undefined ? undefined : unescapeCollidingRawValue(oldValue),
+      newValue === null ? undefined : unescapeCollidingRawValue(newValue),
       "external",
       "external",
     );
     return;
   }
 
-  const oldValue = internals.readCachedRawValue(scope, key);
+  const oldValue = getInternals().readCachedRawValue(scope, key);
   if (newValue === null) {
     ensureWebScopeKeyIndex(scope).delete(key);
-    internals.cacheRawValue(scope, key, undefined);
+    getInternals().cacheRawValue(scope, key, undefined);
   } else {
     ensureWebScopeKeyIndex(scope).add(key);
-    internals.cacheRawValue(scope, key, newValue);
+    getInternals().cacheRawValue(scope, key, newValue);
   }
-  notifyKeyListeners(internals.getScopedListeners(scope), key);
-  internals.emitKeyChange(
+  notifyKeyListeners(getInternals().getScopedListeners(scope), key);
+  getInternals().emitKeyChange(
     scope,
     key,
-    oldValue,
-    newValue ?? undefined,
+    oldValue === undefined ? undefined : unescapeCollidingRawValue(oldValue),
+    newValue === null ? undefined : unescapeCollidingRawValue(newValue),
     "external",
     "external",
   );
@@ -400,6 +417,21 @@ function closeWebBackend(
   }
 }
 
+function retireWebBackend(
+  scope: NonMemoryScope,
+  previousBackend: WebStorageBackend | undefined,
+  nextBackend: WebStorageBackend | undefined,
+): void {
+  if (!previousBackend || previousBackend === nextBackend) {
+    return;
+  }
+  if (previousBackend.flush) {
+    retiredWebBackends.set(previousBackend, scope);
+    return;
+  }
+  closeWebBackend(scope, previousBackend);
+}
+
 function ensureExternalSyncSubscriptions(): void {
   if (
     !hasWindowStorageEventSubscription &&
@@ -428,7 +460,7 @@ const WebStorage: Storage = {
       backend.setItem(storageKey, value);
     });
     ensureWebScopeKeyIndex(scope).add(key);
-    notifyKeyListeners(internals.getScopedListeners(scope), key);
+    notifyKeyListeners(getInternals().getScopedListeners(scope), key);
   },
   get: (key: string, scope: number) => {
     if (scope !== StorageScope.Disk && scope !== StorageScope.Secure) {
@@ -463,7 +495,7 @@ const WebStorage: Storage = {
       });
     }
     ensureWebScopeKeyIndex(scope).delete(key);
-    notifyKeyListeners(internals.getScopedListeners(scope), key);
+    notifyKeyListeners(getInternals().getScopedListeners(scope), key);
   },
   clear: (scope: number) => {
     if (scope !== StorageScope.Disk && scope !== StorageScope.Secure) {
@@ -473,7 +505,7 @@ const WebStorage: Storage = {
       backend.clear();
     });
     ensureWebScopeKeyIndex(scope).clear();
-    notifyAllListeners(internals.getScopedListeners(scope));
+    notifyAllListeners(getInternals().getScopedListeners(scope));
   },
   setBatch: (keys: string[], values: string[], scope: number) => {
     if (scope !== StorageScope.Disk && scope !== StorageScope.Secure) {
@@ -513,8 +545,10 @@ const WebStorage: Storage = {
           : storageKey,
       ),
     );
-    const listeners = internals.getScopedListeners(scope);
-    keys.forEach((key) => notifyKeyListeners(listeners, key));
+    const listeners = getInternals().getScopedListeners(scope);
+    keys.forEach((key) => {
+      notifyKeyListeners(listeners, key);
+    });
   },
   getBatch: (keys: string[], scope: number) => {
     if (scope !== StorageScope.Disk && scope !== StorageScope.Secure) {
@@ -564,8 +598,10 @@ const WebStorage: Storage = {
 
     const keyIndex = ensureWebScopeKeyIndex(scope);
     keys.forEach((key) => keyIndex.delete(key));
-    const listeners = internals.getScopedListeners(scope);
-    keys.forEach((key) => notifyKeyListeners(listeners, key));
+    const listeners = getInternals().getScopedListeners(scope);
+    keys.forEach((key) => {
+      notifyKeyListeners(listeners, key);
+    });
   },
   removeByPrefix: (prefix: string, scope: number) => {
     if (scope !== StorageScope.Disk && scope !== StorageScope.Secure) {
@@ -633,7 +669,7 @@ const WebStorage: Storage = {
       });
       ensureWebScopeKeyIndex(StorageScope.Secure).add(key);
       notifyKeyListeners(
-        internals.getScopedListeners(StorageScope.Secure),
+        getInternals().getScopedListeners(StorageScope.Secure),
         key,
       );
       return;
@@ -651,10 +687,16 @@ const WebStorage: Storage = {
     withWebBackendOperation(
       StorageScope.Secure,
       "setSecureBiometric",
-      (backend) => backend.setItem(toBiometricStorageKey(key), value),
+      (backend) => {
+        backend.setItem(toBiometricStorageKey(key), value);
+        backend.removeItem(toSecureStorageKey(key));
+      },
     );
     ensureWebScopeKeyIndex(StorageScope.Secure).add(key);
-    notifyKeyListeners(internals.getScopedListeners(StorageScope.Secure), key);
+    notifyKeyListeners(
+      getInternals().getScopedListeners(StorageScope.Secure),
+      key,
+    );
   },
   getSecureBiometric: (key: string) => {
     const value = withWebBackendOperation(
@@ -668,7 +710,9 @@ const WebStorage: Storage = {
     withWebBackendOperation(
       StorageScope.Secure,
       "deleteSecureBiometric",
-      (backend) => backend.removeItem(toBiometricStorageKey(key)),
+      (backend) => {
+        backend.removeItem(toBiometricStorageKey(key));
+      },
     );
     if (
       withWebBackendOperation(
@@ -679,7 +723,10 @@ const WebStorage: Storage = {
     ) {
       ensureWebScopeKeyIndex(StorageScope.Secure).delete(key);
     }
-    notifyKeyListeners(internals.getScopedListeners(StorageScope.Secure), key);
+    notifyKeyListeners(
+      getInternals().getScopedListeners(StorageScope.Secure),
+      key,
+    );
   },
   hasSecureBiometric: (key: string) => {
     return (
@@ -730,8 +777,10 @@ const WebStorage: Storage = {
         keyIndex.delete(key);
       }
     });
-    const listeners = internals.getScopedListeners(StorageScope.Secure);
-    keysToNotify.forEach((key) => notifyKeyListeners(listeners, key));
+    const listeners = getInternals().getScopedListeners(StorageScope.Secure);
+    keysToNotify.forEach((key) => {
+      notifyKeyListeners(listeners, key);
+    });
   },
 };
 
@@ -743,7 +792,6 @@ function buildWebAdapter(
     backend: WebStorage,
     changeSource: "web",
     applyAccessControlOnSecureRawWrite: false,
-    flushDiskWritesOnImport: true,
     ensureScopeSubscription: () => {
       ensureExternalSyncSubscriptions();
     },
@@ -763,18 +811,22 @@ export const storage = {
   ...core.storage,
   setAccessControl: (level: AccessControl) => {
     assertAccessControlLevel(level);
-    internals.setSecureDefaultAccessControl(level);
-    internals.recordMetric("storage:setAccessControl", StorageScope.Secure, 0);
+    getInternals().setSecureDefaultAccessControl(level);
+    getInternals().recordMetric(
+      "storage:setAccessControl",
+      StorageScope.Secure,
+      0,
+    );
   },
   setSecureWritesAsync: (_enabled: boolean) => {
-    internals.recordMetric(
+    getInternals().recordMetric(
       "storage:setSecureWritesAsync",
       StorageScope.Secure,
       0,
     );
   },
   setKeychainAccessGroup: (_group: string) => {
-    internals.recordMetric(
+    getInternals().recordMetric(
       "storage:setKeychainAccessGroup",
       StorageScope.Secure,
       0,
@@ -786,10 +838,10 @@ export const storage = {
       disk: getBackendName(StorageScope.Disk, webDiskStorageBackend),
       secure: getBackendName(StorageScope.Secure, webSecureStorageBackend),
     },
-    writeBuffering: {
-      disk: true,
-      secure: true,
-    },
+    writeBuffering: resolveWebWriteBuffering(
+      webDiskStorageBackend?.name,
+      webSecureStorageBackend?.name,
+    ),
     errorClassification: true,
   }),
   getSecurityCapabilities: (): SecurityCapabilities => {
@@ -839,15 +891,13 @@ export function setWebSecureStorageBackend(
 ): void {
   const previousBackend = webSecureStorageBackend;
   const nextBackend = backend ?? createDefaultSecureBackend();
-  internals.clearAllPendingSecureWrites();
+  getInternals().flushSecureWrites();
   resetBackendChangeSubscription(StorageScope.Secure);
   webSecureStorageBackend = nextBackend;
   hydratedWebScopeKeyIndex.delete(StorageScope.Secure);
-  internals.clearScopeRawCache(StorageScope.Secure);
+  getInternals().clearScopeRawCache(StorageScope.Secure);
   ensureExternalSyncSubscriptions();
-  if (previousBackend !== nextBackend) {
-    closeWebBackend(StorageScope.Secure, previousBackend);
-  }
+  retireWebBackend(StorageScope.Secure, previousBackend, nextBackend);
 }
 
 export function getWebSecureStorageBackend():
@@ -860,15 +910,13 @@ export function setWebDiskStorageBackend(
 ): void {
   const previousBackend = webDiskStorageBackend;
   const nextBackend = backend ?? createDefaultDiskBackend();
-  internals.clearAllPendingDiskWrites();
+  getInternals().flushDiskWrites();
   resetBackendChangeSubscription(StorageScope.Disk);
   webDiskStorageBackend = nextBackend;
   hydratedWebScopeKeyIndex.delete(StorageScope.Disk);
-  internals.clearScopeRawCache(StorageScope.Disk);
+  getInternals().clearScopeRawCache(StorageScope.Disk);
   ensureExternalSyncSubscriptions();
-  if (previousBackend !== nextBackend) {
-    closeWebBackend(StorageScope.Disk, previousBackend);
-  }
+  retireWebBackend(StorageScope.Disk, previousBackend, nextBackend);
 }
 
 export function getWebDiskStorageBackend(): WebDiskStorageBackend | undefined {
@@ -876,21 +924,45 @@ export function getWebDiskStorageBackend(): WebDiskStorageBackend | undefined {
 }
 
 export async function flushWebStorageBackends(): Promise<void> {
-  internals.flushDiskWrites();
-  internals.flushSecureWrites();
+  getInternals().flushDiskWrites();
+  getInternals().flushSecureWrites();
 
-  const flushes: Promise<void>[] = [];
-  const diskFlush = webDiskStorageBackend?.flush;
-  const secureFlush = webSecureStorageBackend?.flush;
+  const backends = Array.from(
+    new Set([
+      webDiskStorageBackend,
+      webSecureStorageBackend,
+      ...retiredWebBackends.keys(),
+    ]),
+  ).filter((backend): backend is WebStorageBackend => backend !== undefined);
 
-  if (diskFlush) {
-    flushes.push(diskFlush());
+  const results = await Promise.allSettled(
+    backends.map(async (backend) => {
+      if (backend.flush) {
+        await backend.flush();
+      }
+      if (!retiredWebBackends.has(backend)) {
+        return;
+      }
+      if (
+        backend === webDiskStorageBackend ||
+        backend === webSecureStorageBackend
+      ) {
+        retiredWebBackends.delete(backend);
+        return;
+      }
+      const scope = retiredWebBackends.get(backend);
+      if (scope === undefined) {
+        return;
+      }
+      closeWebBackend(scope, backend);
+      retiredWebBackends.delete(backend);
+    }),
+  );
+
+  const failure = results.find((result) => result.status === "rejected");
+  if (failure) {
+    throw failure.reason;
   }
-  if (secureFlush) {
-    flushes.push(secureFlush());
-  }
-
-  await Promise.all(flushes);
 }
 
 export {

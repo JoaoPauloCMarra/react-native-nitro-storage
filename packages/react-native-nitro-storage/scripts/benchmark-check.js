@@ -34,6 +34,14 @@ const {
   storage,
 } = storageModule;
 
+console.log(
+  "Benchmark scope: web-only (lib/commonjs/index.web.js with the localStorage backend).",
+);
+console.log(
+  "Native Disk/Secure baselines require a device run and are not part of this gate.",
+);
+console.log("");
+
 function ensureLocalStorage() {
   if (typeof globalThis.localStorage !== "undefined") {
     return;
@@ -201,6 +209,7 @@ const metrics = [
   secureSetMetric,
   secureGetMetric,
 ];
+console.log("Web (localStorage) results:");
 metrics.forEach(printMetric);
 
 const failures = [];

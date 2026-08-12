@@ -1,4 +1,4 @@
-import { StorageScope } from "./Storage.types";
+import type { StorageScope } from "./Storage.types";
 
 export type WebStorageChangeEvent = {
   key: string | null;

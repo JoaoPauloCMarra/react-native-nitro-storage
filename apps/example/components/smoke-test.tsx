@@ -583,6 +583,10 @@ function buildTests(): SmokeTest[] {
     },
     {
       label: "Capabilities / error codes / disk buffering",
+      isSupported: () =>
+        Platform.OS !== "web" || storage.getCapabilities().writeBuffering.disk,
+      unsupportedReason:
+        "Default web backends persist synchronously; install the IndexedDB backend to test buffering",
       fn: () => {
         const capabilities = storage.getCapabilities();
         const securityCapabilities = storage.getSecurityCapabilities();

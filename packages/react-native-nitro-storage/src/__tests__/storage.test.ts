@@ -52,7 +52,10 @@ import {
   storage,
   isKeychainLockedError,
 } from "../index";
-import { serializeWithPrimitiveFastPath } from "../internal";
+import {
+  escapeCollidingRawValue,
+  serializeWithPrimitiveFastPath,
+} from "../internal";
 
 beforeEach(() => {
   storage.setDiskWritesAsync(false);
@@ -278,6 +281,45 @@ describe("createStorageItem", () => {
     );
   });
 
+  it("reports a pending disk delete as absent without falling through", () => {
+    storage.setDiskWritesAsync(true);
+    const item = createStorageItem({
+      key: "pending-delete",
+      scope: StorageScope.Disk,
+      defaultValue: "default",
+    });
+
+    item.set("value");
+    mockHybridObject.has.mockReturnValue(true);
+    expect(item.has()).toBe(true);
+
+    item.delete();
+    expect(item.has()).toBe(false);
+
+    storage.flushDiskWrites();
+    expect(mockHybridObject.removeBatch).toHaveBeenCalledWith(
+      ["pending-delete"],
+      StorageScope.Disk,
+    );
+  });
+
+  it("reports a pending secure delete as absent without falling through", () => {
+    storage.setSecureWritesAsync(true);
+    const item = createStorageItem({
+      key: "pending-secure-delete",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      coalesceSecureWrites: true,
+    });
+
+    item.set("value");
+    mockHybridObject.has.mockReturnValue(true);
+    expect(item.has()).toBe(true);
+
+    item.delete();
+    expect(item.has()).toBe(false);
+  });
+
   it("flushes pending secure writes on demand", () => {
     const item = createStorageItem({
       key: "flush-secure",
@@ -303,9 +345,22 @@ describe("createStorageItem", () => {
 
     expect(capabilities.platform).toBe("native");
     expect(capabilities.writeBuffering.disk).toBe(true);
-    expect(capabilities.writeBuffering.secure).toBe(true);
+    expect(capabilities.writeBuffering.secure).toBe(false);
     expect(capabilities.backend.disk).toBe("platform-preferences");
     expect(capabilities.backend.secure).toBe("platform-secure-storage");
+  });
+
+  it("reports secure write buffering per active mode", () => {
+    const { Platform } =
+      require("react-native") as typeof import("react-native");
+    const togglesSecureBuffering = Platform.OS === "android";
+    expect(storage.getCapabilities().writeBuffering.secure).toBe(false);
+    storage.setSecureWritesAsync(true);
+    expect(storage.getCapabilities().writeBuffering.secure).toBe(
+      togglesSecureBuffering,
+    );
+    storage.setSecureWritesAsync(false);
+    expect(storage.getCapabilities().writeBuffering.secure).toBe(false);
   });
 
   it("exposes native security capability metadata", () => {
@@ -957,11 +1012,13 @@ describe("useStorage", () => {
     storage.export(StorageScope.Disk);
 
     const snapshot = storage.getMetricsSnapshot();
+    const scopedSnapshot = storage.getScopedMetricsSnapshot();
     expect(metricsEvents.length).toBeGreaterThan(0);
     expect(snapshot["item:set"]).toBeDefined();
     expect(snapshot["item:get"]).toBeDefined();
     expect(snapshot["storage:getAllKeys"]).toBeDefined();
     expect(snapshot["storage:export"]).toBeDefined();
+    expect(scopedSnapshot["item:set:1"]).toBeDefined();
 
     storage.setMetricsObserver(undefined);
     storage.resetMetrics();
@@ -1521,6 +1578,65 @@ describe("Batch Operations", () => {
 
     const values = getBatch([sentinelItem], StorageScope.Disk);
     expect(values).toEqual(["default"]);
+  });
+
+  it("unescapes collision-prefixed values exactly once in getAll and getByPrefix", () => {
+    const colliding = "__nitro_storage_escaped__:raw-value";
+    const stored = escapeCollidingRawValue(colliding);
+
+    mockHybridObject.getAllKeys.mockReturnValue(["escaped-key", "prefix:key"]);
+    mockHybridObject.getBatch.mockReturnValue([stored, stored]);
+    expect(storage.getAll(StorageScope.Disk)).toEqual({
+      "escaped-key": colliding,
+      "prefix:key": colliding,
+    });
+
+    mockHybridObject.getKeysByPrefix.mockReturnValue(["prefix:key"]);
+    mockHybridObject.getBatch.mockReturnValue([stored]);
+    expect(storage.getByPrefix("prefix:", StorageScope.Disk)).toEqual({
+      "prefix:key": colliding,
+    });
+  });
+
+  it("unescapes collision-prefixed values exactly once in the raw batch path", () => {
+    const colliding = "__nitro_storage_escaped__:batch-value";
+    const stored = escapeCollidingRawValue(colliding);
+    const item = createStorageItem({
+      key: "escaped-batch",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+      readCache: true,
+    });
+
+    mockHybridObject.getBatch.mockReturnValue([stored]);
+    expect(getBatch([item], StorageScope.Disk)).toEqual([colliding]);
+    expect(item.get()).toBe(colliding);
+  });
+
+  it("emits single-unescaped old/new values for external native changes", () => {
+    const colliding = "__nitro_storage_escaped__:event-value";
+    const events: unknown[] = [];
+    storage.setString("evt-key", colliding, StorageScope.Disk);
+    storage.setEventObserver((event) => events.push(event));
+    storage.subscribeKey(StorageScope.Disk, "evt-key", () => {});
+
+    const onChangeCallback = mockHybridObject.addOnChange.mock.calls.find(
+      (call) => call[0] === StorageScope.Disk,
+    )?.[1] as ((key: string, value: string | undefined) => void) | undefined;
+    onChangeCallback?.("evt-key", escapeCollidingRawValue(colliding));
+
+    storage.setEventObserver(undefined);
+    expect(events).toHaveLength(1);
+    const event = events[0] as {
+      type: string;
+      scope?: number;
+      oldValue?: string;
+      newValue?: string;
+    };
+    expect(event.type).toBe("key");
+    expect(event.scope).toBe(StorageScope.Disk);
+    expect(event.oldValue).toBe(colliding);
+    expect(event.newValue).toBe(colliding);
   });
 });
 
@@ -2164,7 +2280,7 @@ describe("storage raw APIs", () => {
 });
 
 describe("isKeychainLockedError", () => {
-  it("classifies storage errors into stable codes", () => {
+  it("classifies storage errors into stable codes from tagged messages", () => {
     expect(
       getStorageErrorCode(
         new Error("[nitro-error:keychain_locked] NitroStorage: locked"),
@@ -2177,60 +2293,78 @@ describe("isKeychainLockedError", () => {
         ),
       ),
     ).toBe("authentication_required");
-    expect(getStorageErrorCode(new Error("errSecInteractionNotAllowed"))).toBe(
-      "keychain_locked",
-    );
-    expect(
-      getStorageErrorCode(new Error("UserNotAuthenticatedException")),
-    ).toBe("authentication_required");
-    expect(
-      getStorageErrorCode(new Error("KeyPermanentlyInvalidatedException")),
-    ).toBe("key_invalidated");
-    expect(getStorageErrorCode(new Error("AEADBadTagException"))).toBe(
-      "storage_corruption",
-    );
     expect(
       getStorageErrorCode(
-        new Error("Biometric storage is not available on this device"),
+        new Error("[nitro-error:key_invalidated] NitroStorage: invalidated"),
+      ),
+    ).toBe("key_invalidated");
+    expect(
+      getStorageErrorCode(
+        new Error("[nitro-error:storage_corruption] NitroStorage: corrupt"),
+      ),
+    ).toBe("storage_corruption");
+    expect(
+      getStorageErrorCode(
+        new Error(
+          "[nitro-error:biometric_unavailable] NitroStorage: biometric off",
+        ),
       ),
     ).toBe("biometric_unavailable");
+    expect(
+      getStorageErrorCode(new Error("[nitro-error:unsupported] web: nope")),
+    ).toBe("unsupported");
     expect(getStorageErrorCode(new Error("something else"))).toBe(undefined);
   });
 
-  it('returns true for "errSecInteractionNotAllowed"', () => {
+  it("does not classify errors from message text alone", () => {
     expect(
-      isKeychainLockedError(new Error("errSecInteractionNotAllowed")),
+      getStorageErrorCode(new Error("errSecInteractionNotAllowed")),
+    ).toBeUndefined();
+    expect(
+      getStorageErrorCode(new Error("UserNotAuthenticatedException")),
+    ).toBeUndefined();
+    expect(
+      getStorageErrorCode(new Error("KeyPermanentlyInvalidatedException")),
+    ).toBeUndefined();
+    expect(
+      getStorageErrorCode(new Error("Biometric storage is not available")),
+    ).toBeUndefined();
+  });
+
+  it('returns true for tagged "keychain_locked"', () => {
+    expect(
+      isKeychainLockedError(
+        new Error("[nitro-error:keychain_locked] NitroStorage: locked"),
+      ),
     ).toBe(true);
   });
 
-  it('returns true for "UserNotAuthenticatedException"', () => {
+  it('returns true for tagged "authentication_required"', () => {
     expect(
-      isKeychainLockedError(new Error("UserNotAuthenticatedException")),
+      isKeychainLockedError(
+        new Error(
+          "[nitro-error:authentication_required] NitroStorage: auth required",
+        ),
+      ),
     ).toBe(true);
   });
 
-  it('returns true for "KeyStoreException"', () => {
-    expect(isKeychainLockedError(new Error("KeyStoreException"))).toBe(true);
-  });
-
-  it('returns true for "KeyPermanentlyInvalidatedException"', () => {
+  it('returns true for tagged "key_invalidated"', () => {
     expect(
-      isKeychainLockedError(new Error("KeyPermanentlyInvalidatedException")),
+      isKeychainLockedError(
+        new Error("[nitro-error:key_invalidated] NitroStorage: invalidated"),
+      ),
     ).toBe(true);
-  });
-
-  it('returns true for "InvalidKeyException"', () => {
-    expect(isKeychainLockedError(new Error("InvalidKeyException"))).toBe(true);
-  });
-
-  it('returns true for "android.security.keystore"', () => {
-    expect(isKeychainLockedError(new Error("android.security.keystore"))).toBe(
-      true,
-    );
   });
 
   it("returns false for unrelated Error", () => {
     expect(isKeychainLockedError(new Error("something else"))).toBe(false);
+    expect(
+      isKeychainLockedError(new Error("errSecInteractionNotAllowed")),
+    ).toBe(false);
+    expect(
+      isKeychainLockedError(new Error("UserNotAuthenticatedException")),
+    ).toBe(false);
   });
 
   it("returns false for non-Error values (string, null, undefined, number)", () => {

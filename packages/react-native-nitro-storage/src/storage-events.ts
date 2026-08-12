@@ -1,4 +1,4 @@
-import { StorageScope } from "./Storage.types";
+import type { StorageScope } from "./Storage.types";
 
 export type StorageChangeOperation =
   | "set"
@@ -10,6 +10,7 @@ export type StorageChangeOperation =
   | "removeBatch"
   | "import"
   | "expire"
+  | "rollback"
   | "external";
 
 export type StorageChangeSource = "memory" | "native" | "web" | "external";

@@ -100,3 +100,24 @@ describe("createLocalStorageWebBackend", () => {
     expect(backend.getMany?.(["a", "b"])).toEqual([null, null]);
   });
 });
+
+import { runWebBackendConformanceSuite } from "./web-backend-conformance";
+
+describe("web backend conformance", () => {
+  let store: Storage;
+
+  beforeEach(() => {
+    store = createStorageMock();
+  });
+
+  runWebBackendConformanceSuite({
+    name: "localStorage",
+    create: () =>
+      createLocalStorageWebBackend({
+        resolveStorage: () => store,
+      }),
+    reset: () => {
+      store.clear();
+    },
+  });
+});

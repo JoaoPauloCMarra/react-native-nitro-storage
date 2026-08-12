@@ -10,6 +10,23 @@
  */
 
 import { createIndexedDBBackend } from "../indexeddb-backend";
+import {
+  flushWebStorageBackends,
+  setWebSecureStorageBackend,
+  storage,
+} from "../index.web";
+import { StorageScope } from "../Storage.types";
+
+function createPlainNextBackend() {
+  return {
+    name: "next-backend",
+    getItem: () => null,
+    setItem: () => {},
+    removeItem: () => {},
+    clear: () => {},
+    getAllKeys: () => [] as string[],
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Minimal in-memory IndexedDB polyfill for the test environment.
@@ -37,30 +54,39 @@ function makeFakeIDB(): {
     storeName: string,
     entries: IDBEntry[],
     mode: IDBTransactionMode,
+    journal: (() => void)[],
   ) {
     return {
       put(value: unknown, key: IDBValidKey) {
         if (mode === "readwrite") {
-          const existing = entries.findIndex((e) => e.key === key);
-          if (existing >= 0) {
-            entries[existing]!.value = value;
-          } else {
-            entries.push({ key, value });
-          }
+          journal.push(() => {
+            const existing = entries.findIndex((e) => e.key === key);
+            if (existing >= 0) {
+              entries[existing]!.value = value;
+            } else {
+              entries.push({ key, value });
+            }
+          });
         }
         const req = { result: null, onsuccess: null, onerror: null };
         return req;
       },
       delete(key: IDBValidKey) {
         if (mode === "readwrite") {
-          const idx = entries.findIndex((e) => e.key === key);
-          if (idx >= 0) entries.splice(idx, 1);
+          journal.push(() => {
+            const idx = entries.findIndex((e) => e.key === key);
+            if (idx >= 0) entries.splice(idx, 1);
+          });
         }
         const req = { result: null, onsuccess: null, onerror: null };
         return req;
       },
       clear() {
-        if (mode === "readwrite") entries.length = 0;
+        if (mode === "readwrite") {
+          journal.push(() => {
+            entries.length = 0;
+          });
+        }
         const req = { result: null, onsuccess: null, onerror: null };
         return req;
       },
@@ -100,24 +126,31 @@ function makeFakeIDB(): {
   }
 
   function makeTransaction(
+    dbState: { closed: boolean },
     entries: IDBEntry[],
     storeName: string,
     mode: IDBTransactionMode,
   ) {
+    const journal: (() => void)[] = [];
     let onCompleteCallback: (() => void) | null = null;
-    let onErrorCallback: ((e: Event) => void) | null = null;
+    let onAbortCallback: ((e: Event) => void) | null = null;
     const tx = {
       objectStore(_name: string) {
-        return makeObjectStore(storeName, entries, mode);
+        return makeObjectStore(storeName, entries, mode, journal);
       },
       set oncomplete(cb: (() => void) | null) {
         onCompleteCallback = cb;
-        // Fire async so callers can set onsuccess/onerror first
-        queueMicrotask(() => onCompleteCallback?.());
+        queueMicrotask(() => {
+          if (mode === "readwrite" && dbState.closed) {
+            onAbortCallback?.(new Event("abort"));
+            return;
+          }
+          journal.forEach((apply) => apply());
+          onCompleteCallback?.();
+        });
       },
-      set onerror(cb: ((e: Event) => void) | null) {
-        onErrorCallback = cb;
-        void onErrorCallback; // suppress unused warning
+      set onabort(cb: ((e: Event) => void) | null) {
+        onAbortCallback = cb;
       },
     };
     return tx;
@@ -128,6 +161,7 @@ function makeFakeIDB(): {
       databases.set(dbName, []);
     }
     const entries = databases.get(dbName)!;
+    const dbState = { closed: false };
 
     const db = {
       objectStoreNames: {
@@ -137,9 +171,11 @@ function makeFakeIDB(): {
         return {};
       },
       transaction(storeName: string, mode: IDBTransactionMode = "readonly") {
-        return makeTransaction(entries, storeName, mode);
+        return makeTransaction(dbState, entries, storeName, mode);
       },
-      close() {},
+      close() {
+        dbState.closed = true;
+      },
     };
 
     const req: {
@@ -483,5 +519,219 @@ describe("createIndexedDBBackend", () => {
       'Failed to queue IndexedDB write for "key".',
     );
     await expect(backend.flush?.()).resolves.toBeUndefined();
+  });
+});
+
+import { runWebBackendConformanceSuite } from "./web-backend-conformance";
+
+describe("web backend conformance", () => {
+  runWebBackendConformanceSuite({
+    name: "indexeddb",
+    create: () => createIndexedDBBackend(),
+  });
+});
+
+describe("indexeddb persistence lifecycle", () => {
+  it("flush reports every failed key", async () => {
+    Object.defineProperty(globalThis, "indexedDB", {
+      value: {
+        open() {
+          const db = {
+            objectStoreNames: { contains: () => true },
+            createObjectStore() {
+              return {};
+            },
+            close() {},
+            transaction(_storeName: string, mode: IDBTransactionMode) {
+              if (mode === "readwrite") {
+                throw new Error("write failed");
+              }
+              return {
+                objectStore() {
+                  return {
+                    openCursor() {
+                      const request = {
+                        result: null,
+                        onsuccess: null as ((event: Event) => void) | null,
+                      };
+                      queueMicrotask(() => request.onsuccess?.({} as Event));
+                      return request;
+                    },
+                  };
+                },
+                set oncomplete(callback: (() => void) | null) {
+                  queueMicrotask(() => callback?.());
+                },
+                set onerror(_callback: ((event: Event) => void) | null) {},
+              };
+            },
+          };
+          const request = {
+            result: db,
+            error: null,
+            onupgradeneeded: null as
+              ((event: IDBVersionChangeEvent) => void) | null,
+            onsuccess: null as ((event: Event) => void) | null,
+            onerror: null as ((event: Event) => void) | null,
+          };
+          queueMicrotask(() => request.onsuccess?.({} as Event));
+          return request;
+        },
+      },
+      writable: true,
+      configurable: true,
+    });
+
+    const backend = await createIndexedDBBackend("fail-keys-db", "kv");
+    backend.setItem("key-a", "1");
+    backend.setItem("key-b", "2");
+
+    await expect(backend.flush?.()).rejects.toThrow(
+      "Affected keys: key-a, key-b.",
+    );
+    await expect(backend.flush?.()).resolves.toBeUndefined();
+  });
+
+  it("flushes pending writes on pagehide", async () => {
+    const listeners = new Map<string, Set<(event: Event) => void>>();
+    const originalAddEventListener = globalThis.addEventListener;
+    const originalRemoveEventListener = globalThis.removeEventListener;
+    Object.defineProperty(globalThis, "addEventListener", {
+      value: (type: string, listener: (event: Event) => void) => {
+        const typeListeners =
+          listeners.get(type) ?? new Set<(event: Event) => void>();
+        typeListeners.add(listener);
+        listeners.set(type, typeListeners);
+      },
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "removeEventListener", {
+      value: (type: string, listener: (event: Event) => void) => {
+        listeners.get(type)?.delete(listener);
+      },
+      writable: true,
+      configurable: true,
+    });
+    const dispatch = (type: string) => {
+      listeners.get(type)?.forEach((listener) => listener(new Event(type)));
+    };
+
+    const backend = await createIndexedDBBackend();
+    backend.setItem("lifecycle-key", "persisted");
+
+    dispatch("pagehide");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const reopened = await createIndexedDBBackend();
+    expect(reopened.getItem("lifecycle-key")).toBe("persisted");
+    reopened.close();
+
+    Object.defineProperty(globalThis, "addEventListener", {
+      value: originalAddEventListener,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "removeEventListener", {
+      value: originalRemoveEventListener,
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  it("close removes lifecycle listeners and rejects later writes", async () => {
+    const backend = await createIndexedDBBackend();
+    backend.setItem("k", "v");
+    backend.close();
+    expect(() => backend.setItem("k2", "v2")).toThrow(/is closed/);
+  });
+
+  it("close aborts queued transactions like a real browser", async () => {
+    const backend = await createIndexedDBBackend("close-abort-db", "kv");
+    backend.setItem("doomed", "value");
+    backend.close();
+
+    await expect(backend.flush()).rejects.toThrow(/aborted/);
+
+    const fresh = await createIndexedDBBackend("close-abort-db", "kv");
+    expect(fresh.getItem("doomed")).toBeNull();
+    fresh.close();
+  });
+
+  it("does not drop in-flight writes when the backend is swapped out", async () => {
+    const oldBackend = await createIndexedDBBackend("swap-flush-db", "kv");
+    setWebSecureStorageBackend(oldBackend);
+    storage.setString("swap-idb", "persisted", StorageScope.Secure);
+    setWebSecureStorageBackend(createPlainNextBackend());
+
+    await flushWebStorageBackends();
+
+    const fresh = await createIndexedDBBackend("swap-flush-db", "kv");
+    expect(fresh.getItem("__secure_swap-idb")).toBe("persisted");
+    fresh.close();
+  });
+
+  it("surfaces in-flight failures of a swapped-out backend through flushWebStorageBackends", async () => {
+    Object.defineProperty(globalThis, "indexedDB", {
+      value: {
+        open() {
+          const db = {
+            objectStoreNames: {
+              contains: () => true,
+            },
+            createObjectStore() {
+              return {};
+            },
+            close() {},
+            transaction(_storeName: string, mode: IDBTransactionMode) {
+              if (mode === "readwrite") {
+                throw new Error("write failed");
+              }
+              return {
+                objectStore() {
+                  return {
+                    openCursor() {
+                      const request = {
+                        result: null,
+                        onsuccess: null as ((event: Event) => void) | null,
+                      };
+                      queueMicrotask(() => request.onsuccess?.({} as Event));
+                      return request;
+                    },
+                  };
+                },
+                set oncomplete(callback: (() => void) | null) {
+                  queueMicrotask(() => callback?.());
+                },
+                set onerror(_callback: ((event: Event) => void) | null) {},
+              };
+            },
+          };
+
+          const request = {
+            result: db,
+            error: null,
+            onupgradeneeded: null as
+              ((event: IDBVersionChangeEvent) => void) | null,
+            onsuccess: null as ((event: Event) => void) | null,
+            onerror: null as ((event: Event) => void) | null,
+          };
+          queueMicrotask(() => request.onsuccess?.({} as Event));
+          return request;
+        },
+      },
+      writable: true,
+      configurable: true,
+    });
+
+    const oldBackend = await createIndexedDBBackend("fail-swap-db", "kv");
+    setWebSecureStorageBackend(oldBackend);
+    storage.setString("swap-failing", "1", StorageScope.Secure);
+    setWebSecureStorageBackend(createPlainNextBackend());
+
+    await expect(flushWebStorageBackends()).rejects.toThrow(
+      /IndexedDB persistence failed/,
+    );
   });
 });

@@ -328,18 +328,63 @@ try {
     ...linkFlags,
   ];
   runCommand("clang++", compileHybridArgs);
+
+  let iosAdapterOutputFile = null;
+  if (process.platform === "darwin") {
+    const iosAdapterTestFile = path.join(
+      __dirname,
+      "..",
+      "ios",
+      "IOSStorageAdapterTest.mm",
+    );
+    const iosAdapterSourceFile = path.join(
+      __dirname,
+      "..",
+      "ios",
+      "IOSStorageAdapterCpp.mm",
+    );
+    iosAdapterOutputFile = path.join(buildDir, "ios_adapter_test");
+    const compileIosAdapterArgs = [
+      ...commonFlags,
+      "-fobjc-arc",
+      `-I${path.join(cppDir, "core")}`,
+      `-I${path.join(__dirname, "..", "ios")}`,
+      iosAdapterTestFile,
+      iosAdapterSourceFile,
+      "-framework",
+      "Foundation",
+      "-framework",
+      "Security",
+      "-framework",
+      "LocalAuthentication",
+      "-o",
+      iosAdapterOutputFile,
+      ...linkFlags,
+    ];
+    runCommand("clang++", compileIosAdapterArgs);
+  }
+
   signDarwinBinary(storageOutputFile);
   signDarwinBinary(hybridOutputFile);
+  if (iosAdapterOutputFile) {
+    signDarwinBinary(iosAdapterOutputFile);
+  }
 
   console.log("✅ Compilation successful.");
   console.log("🚀 Running tests...");
 
   if (coverageEnabled) {
     runCoverage(storageOutputFile, hybridOutputFile);
+    if (iosAdapterOutputFile) {
+      runCommand(iosAdapterOutputFile, [], { env: sanitizerRuntimeEnv() });
+    }
   } else {
     const sanitizerEnv = sanitizerRuntimeEnv();
     runCommand(storageOutputFile, [], { env: sanitizerEnv });
     runCommand(hybridOutputFile, [], { env: sanitizerEnv });
+    if (iosAdapterOutputFile) {
+      runCommand(iosAdapterOutputFile, [], { env: sanitizerEnv });
+    }
   }
   console.log("✅ C++ tests passed!");
 } catch (error) {

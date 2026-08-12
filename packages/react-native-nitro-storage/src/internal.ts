@@ -16,6 +16,36 @@ const PRIM_NAN = "__nitro_storage_primitive__:n:NaN";
 const NAMESPACE_SEPARATOR = ":";
 const VERSION_TOKEN_PREFIX = "__nitro_storage_version__:";
 
+export const ESCAPE_PREFIX = "__nitro_storage_escaped__:";
+
+const RESERVED_RAW_TOKENS = new Set<string>([
+  PRIM_NULL,
+  PRIM_UNDEFINED,
+  PRIM_TRUE,
+  PRIM_FALSE,
+  PRIM_INFINITY,
+  PRIM_NEG_INFINITY,
+  PRIM_NAN,
+  NATIVE_BATCH_MISSING_SENTINEL,
+]);
+
+export function escapeCollidingRawValue(value: string): string {
+  if (
+    RESERVED_RAW_TOKENS.has(value) ||
+    value.startsWith(PRIMITIVE_FAST_PATH_PREFIX) ||
+    value.startsWith(ESCAPE_PREFIX)
+  ) {
+    return `${ESCAPE_PREFIX}${value}`;
+  }
+  return value;
+}
+
+export function unescapeCollidingRawValue(value: string): string {
+  return value.startsWith(ESCAPE_PREFIX)
+    ? value.slice(ESCAPE_PREFIX.length)
+    : value;
+}
+
 export type StoredEnvelope = {
   __nitroStorageEnvelope: true;
   expiresAt: number;
@@ -71,7 +101,7 @@ export function assertBatchScope(
 export function decodeNativeBatchValue(
   value: string | undefined,
 ): string | undefined {
-  if (value === NATIVE_BATCH_MISSING_SENTINEL) {
+  if (value === undefined || value === NATIVE_BATCH_MISSING_SENTINEL) {
     return undefined;
   }
 
@@ -93,8 +123,17 @@ export function serializeWithPrimitiveFastPath<T>(value: T): string {
   }
 
   switch (typeof value) {
-    case "string":
-      return PRIM_STRING_PREFIX + (value as string);
+    case "string": {
+      const stringValue = value as string;
+      if (
+        stringValue === NATIVE_BATCH_MISSING_SENTINEL ||
+        stringValue.startsWith(PRIMITIVE_FAST_PATH_PREFIX) ||
+        stringValue.startsWith(ESCAPE_PREFIX)
+      ) {
+        return `${PRIM_STRING_PREFIX}${ESCAPE_PREFIX}${stringValue}`;
+      }
+      return PRIM_STRING_PREFIX + stringValue;
+    }
     case "number":
       if (Number.isFinite(value)) {
         return PRIM_NUMBER_PREFIX + String(value);
@@ -134,6 +173,10 @@ const CHAR_B = 98; // 'b'
 const CHAR_N = 110; // 'n'
 
 export function deserializeWithPrimitiveFastPath<T>(value: string): T {
+  if (value.startsWith(ESCAPE_PREFIX)) {
+    return value.slice(ESCAPE_PREFIX.length) as T;
+  }
+
   if (value.startsWith(PRIMITIVE_FAST_PATH_PREFIX)) {
     const prefixLen = PRIMITIVE_FAST_PATH_PREFIX.length;
     const tagChar = value.charCodeAt(prefixLen);
@@ -149,7 +192,10 @@ export function deserializeWithPrimitiveFastPath<T>(value: string): T {
     const payload = value.slice(prefixLen + 2);
 
     if (tagChar === CHAR_S) {
-      return payload as T;
+      const unescapedPayload = payload.startsWith(ESCAPE_PREFIX)
+        ? payload.slice(ESCAPE_PREFIX.length)
+        : payload;
+      return unescapedPayload as T;
     }
     if (tagChar === CHAR_B) {
       return (payload === "1") as T;

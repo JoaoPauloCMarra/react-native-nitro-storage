@@ -152,7 +152,7 @@ storage.setEventObserver((event) => {
 
 `setEventObserver()` redacts Secure `oldValue` and `newValue` fields by default. Pass `{ redactSecureValues: false }` only for in-memory debugging paths that never persist logs. Raw `subscribe*()` APIs preserve values for state integrations.
 
-Local batch APIs emit one `type: "batch"` envelope to scope and prefix/namespace listeners. Key subscribers receive the matching per-key change so direct key integrations do not need to unpack batch envelopes. Secure events can include raw secret values; do not log Secure event payloads in production.
+Local batch APIs emit one `type: "batch"` envelope to scope and prefix/namespace listeners. Key subscribers receive the matching per-key change so direct key integrations do not need to unpack batch envelopes. Failed transactions emit one batch envelope with `operation: "rollback"` whose changes carry the pre-rollback and restored raw values. Secure events can include raw secret values; do not log Secure event payloads in production.
 
 ## Batch Operations
 
@@ -280,5 +280,15 @@ Common public types:
 - `WebSecureStorageBackend`
 - `WebStorageChangeEvent`
 - `WebStorageScope`
+- `PlatformStorage`
+- `PlatformScope`
+- `WebBackendCapabilities`
+
+`getCapabilities().writeBuffering` describes real per-mode durability:
+
+- Native: Disk writes are buffered by the platform (`SharedPreferences.apply()` on Android, `NSUserDefaults` on iOS). Secure writes are buffered only when `setSecureWritesAsync(true)` is active on Android; iOS Keychain writes are synchronous.
+- Web: buffering follows the configured backend; IndexedDB backends are buffered, localStorage backends are synchronous.
+
+`describeWebBackendCapabilities(backend)` reports a backend's `buffered`, `flushable`, `closable`, and `subscribable` capabilities from the same typed contract used by the built-in backends.
 
 The IndexedDB subpath exports `createIndexedDBBackend()` and `IndexedDBBackendOptions`.

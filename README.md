@@ -4,9 +4,9 @@
 [![npm downloads](https://img.shields.io/npm/dm/react-native-nitro-storage?color=22c55e&label=downloads)](https://www.npmjs.com/package/react-native-nitro-storage)
 [![CI](https://github.com/JoaoPauloCMarra/react-native-nitro-storage/actions/workflows/ci.yml/badge.svg)](https://github.com/JoaoPauloCMarra/react-native-nitro-storage/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/react-native-nitro-storage?color=007ec6)](https://github.com/JoaoPauloCMarra/react-native-nitro-storage/blob/main/LICENSE)
-[![React Native](https://img.shields.io/badge/react--native-%3E%3D0.75-61dafb)](https://reactnative.dev/)
-[![Expo](https://img.shields.io/badge/expo-SDK%2057-000020)](https://docs.expo.dev/versions/latest/)
-[![Nitro Modules](https://img.shields.io/badge/nitro--modules-0.36.x-black)](https://nitro.margelo.com/)
+[![React Native](https://img.shields.io/badge/react--native-%3E%3D0.75-61dafb)](https://reactnative.dev/docs/0.86/getting-started-without-a-framework)
+[![Expo](https://img.shields.io/badge/expo-SDK%2057-000020)](https://docs.expo.dev/versions/v57.0.0/)
+[![Nitro Modules](https://img.shields.io/badge/nitro--modules-%3E%3D0.36.5%20%3C0.37.0-black)](https://nitro.margelo.com/)
 [![TypeScript](https://img.shields.io/badge/typescript-6.0-3178c6)](https://www.typescriptlang.org/)
 
 Synchronous Memory, Disk, and Secure storage for React Native, Expo development
@@ -57,12 +57,12 @@ Peer dependencies:
 | ---------------------------- | ------------------ |
 | `react`                      | `>=18.2.0`         |
 | `react-native`               | `>=0.75.0`         |
-| `react-native-nitro-modules` | `>=0.36.4 <0.37.0` |
+| `react-native-nitro-modules` | `>=0.36.5 <0.37.0` |
 
-Nitro peer requirement: `react-native-nitro-modules >=0.36.4 <0.37.0`.
+Nitro peer requirement: `react-native-nitro-modules >=0.36.5 <0.37.0`.
 
 Validated example baseline: Expo SDK 57, React Native 0.86.2, React 19.2.3,
-and Nitro Modules 0.36.4.
+and Nitro Modules 0.36.5.
 
 For Expo development builds:
 
@@ -183,7 +183,7 @@ const config = diskItem<{ theme: "light" | "dark"; compact: boolean }>({
 });
 
 config.merge({ compact: true }); // shallow object update
-config.reset(); // back to the default value
+config.reset(); // deletes the stored key; the next read returns the default value
 const loginMethod = memoryItem<string | null>({
   key: "loginMethod",
   defaultValue: null,
@@ -378,7 +378,9 @@ On Android 11 and newer, `BiometricLevel.BiometryOnly` and
 `BiometricLevel.BiometryOrPasscode` use separate Keystore policies. Android 10
 and older support `BiometryOrPasscode`; `BiometryOnly` throws
 `biometric_unavailable` because those releases cannot safely enforce the
-biometric-only distinction. Secure existence, discovery, and cleanup operations
+biometric-only distinction. Promoting a value to biometric storage removes the
+plain secure copy on every platform, so plain reads cannot return a stale
+value. Secure existence, discovery, and cleanup operations
 can also throw when a protected store is locked or its key is invalidated. Catch
 those failures and use `isKeychainLockedError()` when authentication-aware retry
 behavior is appropriate.
@@ -431,9 +433,14 @@ storage.setMetricsObserver((event) => {
 });
 
 const metrics = storage.getMetricsSnapshot();
+const scopedMetrics = storage.getScopedMetricsSnapshot();
 storage.resetMetrics();
 unsubscribe();
 ```
+
+`getMetricsSnapshot()` aggregates each operation across scopes for backward
+compatibility. `getScopedMetricsSnapshot()` adds the numeric scope suffix for
+per-scope analysis, for example `item:set:1`.
 
 Secure event observer values are redacted by default. Pass
 `{ redactSecureValues: false }` only in trusted debug tooling where raw values
@@ -484,7 +491,11 @@ migrateFromMMKV(mmkvInstance, themeItem);
 ```
 
 `runTransaction(scope, callback)` rolls back every write made through the `tx`
-context if the callback throws.
+context if the callback throws, then emits one typed `rollback` batch event.
+
+Each migration step runs in its own transaction with its version marker, so a
+failed step leaves the scope on the last completed version and rerunning
+`migrateToLatest()` retries deterministically.
 
 ## Web Backends
 

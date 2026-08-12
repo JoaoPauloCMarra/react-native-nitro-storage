@@ -1,27 +1,30 @@
+import { Platform } from "react-native";
+import { NitroModules } from "react-native-nitro-modules";
+import { resolveNativeWriteBuffering } from "./capabilities";
+import { decodeNativeBatchValue, unescapeCollidingRawValue } from "./internal";
 import {
   assertAccessControlLevel,
   notifyAllListeners,
   notifyKeyListeners,
   type NonMemoryScope,
 } from "./shared";
-import { NitroModules } from "react-native-nitro-modules";
-import type { Storage } from "./Storage.nitro";
-import { StorageScope, AccessControl } from "./Storage.types";
-import { decodeNativeBatchValue } from "./internal";
-import type {
-  WebDiskStorageBackend,
-  WebSecureStorageBackend,
-} from "./web-storage-backend";
-import type {
-  SecurityCapabilities,
-  StorageCapabilities,
-} from "./storage-runtime";
 import {
   createStorageCore,
   type StorageCoreAdapter,
   type StorageCoreBackend,
   type StorageCoreInternals,
 } from "./storage-core";
+import type {
+  SecurityCapabilities,
+  StorageCapabilities,
+} from "./storage-runtime";
+import type { Storage } from "./Storage.nitro";
+import type { AccessControl } from "./Storage.types";
+import { StorageScope } from "./Storage.types";
+import type {
+  WebDiskStorageBackend,
+  WebSecureStorageBackend,
+} from "./web-storage-backend";
 export type {
   ExpirationConfig,
   Migration,
@@ -76,6 +79,7 @@ export type {
   StorageKeyRef,
   TransactionContext,
 } from "./storage-core";
+export type { PlatformScope, PlatformStorage } from "./storage-platform";
 
 let _storageModule: Storage | null = null;
 
@@ -90,44 +94,60 @@ const nativeSecureBackend = "platform-secure-storage";
 
 const nativeBackend: StorageCoreBackend = {
   get: (key, scope) => getStorageModule().get(key, scope),
-  set: (key, value, scope) => getStorageModule().set(key, value, scope),
-  remove: (key, scope) => getStorageModule().remove(key, scope),
-  clear: (scope) => getStorageModule().clear(scope),
+  set: (key, value, scope) => {
+    getStorageModule().set(key, value, scope);
+  },
+  remove: (key, scope) => {
+    getStorageModule().remove(key, scope);
+  },
+  clear: (scope) => {
+    getStorageModule().clear(scope);
+  },
   has: (key, scope) => getStorageModule().has(key, scope),
   getAllKeys: (scope) => getStorageModule().getAllKeys(scope) ?? [],
   getKeysByPrefix: (prefix, scope) =>
     getStorageModule().getKeysByPrefix(prefix, scope) ?? [],
   size: (scope) => getStorageModule().size(scope),
-  setBatch: (keys, values, scope) =>
-    getStorageModule().setBatch(keys, values, scope),
+  setBatch: (keys, values, scope) => {
+    getStorageModule().setBatch(keys, values, scope);
+  },
   getBatch: (keys, scope) =>
     (getStorageModule().getBatch(keys, scope) ?? []).map((value) =>
       decodeNativeBatchValue(value),
     ),
-  removeBatch: (keys, scope) => getStorageModule().removeBatch(keys, scope),
-  removeByPrefix: (prefix, scope) =>
-    getStorageModule().removeByPrefix(prefix, scope),
-  setSecureAccessControl: (level) =>
-    getStorageModule().setSecureAccessControl(level),
+  removeBatch: (keys, scope) => {
+    getStorageModule().removeBatch(keys, scope);
+  },
+  removeByPrefix: (prefix, scope) => {
+    getStorageModule().removeByPrefix(prefix, scope);
+  },
+  setSecureAccessControl: (level) => {
+    getStorageModule().setSecureAccessControl(level);
+  },
   getSecureBiometric: (key) => getStorageModule().getSecureBiometric(key),
-  setSecureBiometricWithLevel: (key, value, level) =>
-    getStorageModule().setSecureBiometricWithLevel(key, value, level),
-  deleteSecureBiometric: (key) => getStorageModule().deleteSecureBiometric(key),
+  setSecureBiometricWithLevel: (key, value, level) => {
+    getStorageModule().setSecureBiometricWithLevel(key, value, level);
+  },
+  deleteSecureBiometric: (key) => {
+    getStorageModule().deleteSecureBiometric(key);
+  },
   hasSecureBiometric: (key) => getStorageModule().hasSecureBiometric(key),
-  clearSecureBiometric: () => getStorageModule().clearSecureBiometric(),
+  clearSecureBiometric: () => {
+    getStorageModule().clearSecureBiometric();
+  },
 };
 
 function buildNativeAdapter(
   internals: StorageCoreInternals,
 ): StorageCoreAdapter {
   const scopedUnsubscribers = new Map<NonMemoryScope, () => void>();
-  const suppressedNativeEvents = new Map<NonMemoryScope, Map<string, number>>([
-    [StorageScope.Disk, new Map()],
-    [StorageScope.Secure, new Map()],
-  ]);
+  const suppressedNativeEvents: Record<NonMemoryScope, Map<string, number>> = {
+    [StorageScope.Disk]: new Map(),
+    [StorageScope.Secure]: new Map(),
+  };
 
   function suppressNativeEvent(scope: NonMemoryScope, key: string): void {
-    const suppressedEvents = suppressedNativeEvents.get(scope)!;
+    const suppressedEvents = suppressedNativeEvents[scope];
     suppressedEvents.set(key, (suppressedEvents.get(key) ?? 0) + 1);
   }
 
@@ -135,7 +155,7 @@ function buildNativeAdapter(
     scope: NonMemoryScope,
     key: string,
   ): boolean {
-    const suppressedEvents = suppressedNativeEvents.get(scope)!;
+    const suppressedEvents = suppressedNativeEvents[scope];
     const count = suppressedEvents.get(key);
     if (count === undefined) {
       return false;
@@ -185,8 +205,10 @@ function buildNativeAdapter(
       internals.emitKeyChange(
         scope,
         key,
-        oldValue,
-        value,
+        oldValue === undefined
+          ? undefined
+          : unescapeCollidingRawValue(oldValue),
+        value === undefined ? undefined : unescapeCollidingRawValue(value),
         "external",
         "native",
       );
@@ -220,7 +242,6 @@ function buildNativeAdapter(
     backend: nativeBackend,
     changeSource: "native",
     applyAccessControlOnSecureRawWrite: true,
-    flushDiskWritesOnImport: false,
     ensureScopeSubscription: ensureNativeScopeSubscription,
     maybeCleanupScopeSubscription: maybeCleanupNativeScopeSubscription,
     onWillEmitChanges: (scope, keys, operation, source) => {
@@ -230,7 +251,9 @@ function buildNativeAdapter(
         scope !== StorageScope.Memory &&
         scopedUnsubscribers.has(scope)
       ) {
-        keys.forEach((key) => suppressNativeEvent(scope, key));
+        keys.forEach((key) => {
+          suppressNativeEvent(scope, key);
+        });
       }
     },
     getSecureMetadataProfile: () => ({
@@ -243,6 +266,8 @@ function buildNativeAdapter(
 
 const core = createStorageCore(buildNativeAdapter);
 const { internals } = core;
+
+let secureWritesBuffered = false;
 
 export const storage = {
   ...core.storage,
@@ -262,6 +287,7 @@ export const storage = {
       "storage:setSecureWritesAsync",
       StorageScope.Secure,
       () => {
+        secureWritesBuffered = enabled;
         getStorageModule().setSecureWritesAsync(enabled);
       },
     );
@@ -281,10 +307,10 @@ export const storage = {
       disk: "platform-preferences",
       secure: nativeSecureBackend,
     },
-    writeBuffering: {
-      disk: true,
-      secure: true,
-    },
+    writeBuffering: resolveNativeWriteBuffering(
+      Platform.OS === "android" ? "android" : "ios",
+      secureWritesBuffered,
+    ),
     errorClassification: true,
   }),
   getSecurityCapabilities: (): SecurityCapabilities => ({
