@@ -38,7 +38,7 @@ Optional methods improve performance and observability:
 
 `subscribe(listener)` should report `{ key, newValue }` changes. Use `key: null` when the whole backend is cleared.
 
-`close()` should release backend-owned resources such as database handles or broadcast channels. Nitro Storage calls it when a configured Disk or Secure backend is replaced.
+`close()` should release backend-owned resources such as database handles or broadcast channels. A replaced backend is retired instead of closed on the spot: `flushWebStorageBackends()` flushes it and then closes it, so queued async writes can commit before the connection goes away. Backends without `flush()` are closed immediately on replacement, and a retired backend whose flush fails stays retired for a later explicit retry.
 
 ## Disk Backend
 
@@ -99,6 +99,23 @@ setWebSecureStorageBackend(backend);
 Reads are synchronous because they are served from memory after initial load. Writes update memory first and persist to IndexedDB in the background.
 
 The IndexedDB backend exposes `close()` and rejects later synchronous operations after it is closed.
+
+### Persistence Lifecycle
+
+IndexedDB transactions cannot block a page unload, so in-flight writes may be aborted when the page closes. The backend mitigates this by starting a flush on `pagehide` and on `visibilitychange` (hidden), and `flush()` awaits every pending transaction. When persistence fails, `flush()` throws an error that names the affected keys, and `onError` receives each individual failure.
+
+```ts
+const backend = await createIndexedDBBackend("app-secure", "keyvalue", {
+  onError: (error) => {
+    console.error("IndexedDB secure storage failed", error);
+  },
+});
+
+// Before assertions, navigation, or lifecycle boundaries:
+await flushWebStorageBackends();
+```
+
+Treat IndexedDB persistence as best-effort under abrupt termination: keep a durable copy of critical values elsewhere if they must survive an immediate page close.
 
 ## Cross-tab Updates
 

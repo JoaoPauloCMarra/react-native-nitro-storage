@@ -19,7 +19,11 @@ export type IndexedDBBackendOptions = {
 function openDB(dbName: string, storeName: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     if (typeof indexedDB === "undefined") {
-      reject(new Error("IndexedDB is not available in this environment."));
+      reject(
+        new Error(
+          "[nitro-error:unsupported] IndexedDB is not available in this environment.",
+        ),
+      );
       return;
     }
 
@@ -32,9 +36,12 @@ function openDB(dbName: string, storeName: string): Promise<IDBDatabase> {
       }
     };
 
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () =>
+    request.onsuccess = () => {
+      resolve(request.result);
+    };
+    request.onerror = () => {
       reject(request.error ?? new Error("Failed to open IndexedDB database."));
+    };
   });
 }
 
@@ -72,7 +79,7 @@ export async function createIndexedDBBackend(
   const db = await openDB(dbName, storeName);
   const cache = new Map<string, string>();
   const pendingWrites = new Set<Promise<void>>();
-  const pendingErrors: Error[] = [];
+  const pendingErrors: { keys: string[] | null; error: Error }[] = [];
   const subscribers = new Set<(event: WebStorageChangeEvent) => void>();
   let closed = false;
   const sourceId = `nitro-storage-${Math.random().toString(36).slice(2)}`;
@@ -95,14 +102,50 @@ export async function createIndexedDBBackend(
     });
   }
 
-  function handleAsyncError(error: unknown): void {
+  function handleAsyncError(keys: string[] | null, error: unknown): void {
     const normalized =
       error instanceof Error
         ? error
         : new Error(String(error ?? "Unknown IndexedDB error"));
-    pendingErrors.push(normalized);
+    pendingErrors.push({ keys, error: normalized });
     options.onError?.(normalized);
   }
+
+  function handleLifecycleFlush(): void {
+    if (closed || pendingWrites.size === 0) {
+      return;
+    }
+    void Promise.all(Array.from(pendingWrites)).catch(() => {
+      // Errors are surfaced through flush() and onError; the page may be
+      // hidden, so the flush result is intentionally not awaited here.
+    });
+  }
+
+  function installLifecycleFlush(): () => void {
+    if (typeof globalThis === "undefined" || !globalThis.addEventListener) {
+      return () => {};
+    }
+
+    const onPageHide = () => {
+      handleLifecycleFlush();
+    };
+    const onVisibilityChange = () => {
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState === "hidden"
+      ) {
+        handleLifecycleFlush();
+      }
+    };
+    globalThis.addEventListener("pagehide", onPageHide);
+    globalThis.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      globalThis.removeEventListener("pagehide", onPageHide);
+      globalThis.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }
+
+  const removeLifecycleFlush = installLifecycleFlush();
 
   channel?.addEventListener("message", (event: MessageEvent) => {
     if (closed) {
@@ -153,22 +196,29 @@ export async function createIndexedDBBackend(
       }
     };
 
-    tx.oncomplete = () => resolve();
-    tx.onerror = () =>
+    tx.oncomplete = () => {
+      resolve();
+    };
+    tx.onerror = () => {
       reject(tx.error ?? new Error("Failed to load IndexedDB entries."));
+    };
   });
 
-  function trackWrite(tx: IDBTransaction): void {
+  function trackWrite(tx: IDBTransaction, keys: string[] | null): void {
     const pending = new Promise<void>((resolve) => {
-      tx.oncomplete = () => resolve();
+      tx.oncomplete = () => {
+        resolve();
+      };
       tx.onerror = () => {
         handleAsyncError(
+          keys,
           tx.error ?? new Error("Failed to persist IndexedDB transaction."),
         );
         resolve();
       };
       tx.onabort = () => {
         handleAsyncError(
+          keys,
           tx.error ?? new Error("IndexedDB transaction was aborted."),
         );
         resolve();
@@ -186,9 +236,10 @@ export async function createIndexedDBBackend(
     try {
       const tx = db.transaction(storeName, "readwrite");
       tx.objectStore(storeName).put(value, key);
-      trackWrite(tx);
+      trackWrite(tx, [key]);
     } catch {
       handleAsyncError(
+        [key],
         new Error(`Failed to queue IndexedDB write for "${key}".`),
       );
     }
@@ -198,9 +249,10 @@ export async function createIndexedDBBackend(
     try {
       const tx = db.transaction(storeName, "readwrite");
       tx.objectStore(storeName).delete(key);
-      trackWrite(tx);
+      trackWrite(tx, [key]);
     } catch {
       handleAsyncError(
+        [key],
         new Error(`Failed to queue IndexedDB delete for "${key}".`),
       );
     }
@@ -210,9 +262,9 @@ export async function createIndexedDBBackend(
     try {
       const tx = db.transaction(storeName, "readwrite");
       tx.objectStore(storeName).clear();
-      trackWrite(tx);
+      trackWrite(tx, null);
     } catch {
-      handleAsyncError(new Error("Failed to queue IndexedDB clear."));
+      handleAsyncError(null, new Error("Failed to queue IndexedDB clear."));
     }
   }
 
@@ -254,8 +306,10 @@ export async function createIndexedDBBackend(
     },
     setMany(entries): void {
       assertOpen();
+      const keys: string[] = [];
       entries.forEach(([key, value]) => {
         cache.set(key, value);
+        keys.push(key);
       });
       try {
         const tx = db.transaction(storeName, "readwrite");
@@ -264,9 +318,12 @@ export async function createIndexedDBBackend(
           store.put(value, key);
           publish({ key, newValue: value });
         });
-        trackWrite(tx);
+        trackWrite(tx, keys);
       } catch {
-        handleAsyncError(new Error("Failed to queue IndexedDB batch write."));
+        handleAsyncError(
+          null,
+          new Error("Failed to queue IndexedDB batch write."),
+        );
       }
     },
     removeMany(keys: string[]): void {
@@ -281,9 +338,12 @@ export async function createIndexedDBBackend(
           store.delete(key);
           publish({ key, newValue: null });
         });
-        trackWrite(tx);
+        trackWrite(tx, keys);
       } catch {
-        handleAsyncError(new Error("Failed to queue IndexedDB batch delete."));
+        handleAsyncError(
+          null,
+          new Error("Failed to queue IndexedDB batch delete."),
+        );
       }
     },
     size(): number {
@@ -303,14 +363,25 @@ export async function createIndexedDBBackend(
         return;
       }
 
-      const [error] = pendingErrors.splice(0);
-      throw error;
+      const failures = pendingErrors.splice(0);
+      const failedKeys = failures
+        .flatMap(({ keys }) => keys ?? [])
+        .filter((key, index, all) => all.indexOf(key) === index);
+      const keyDetail =
+        failedKeys.length > 0
+          ? ` Affected keys: ${failedKeys.join(", ")}.`
+          : "";
+      const [first] = failures;
+      throw new Error(
+        `NitroStorage: IndexedDB persistence failed for ${failures.length} write(s).${keyDetail} ${first?.error.message ?? ""}`,
+      );
     },
     close(): void {
       if (closed) {
         return;
       }
       closed = true;
+      removeLifecycleFlush();
       subscribers.clear();
       channel?.close();
       db.close();

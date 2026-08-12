@@ -1,17 +1,18 @@
-import { StorageScope, AccessControl, BiometricLevel } from "./Storage.types";
 import {
   serializeWithPrimitiveFastPath,
   deserializeWithPrimitiveFastPath,
 } from "./internal";
-import {
-  getStorageErrorCode,
-  isLockedStorageErrorCode,
-} from "./storage-runtime";
 import type {
   StorageChangeOperation,
   StorageChangeSource,
   StorageKeyChangeEvent,
 } from "./storage-events";
+import {
+  getStorageErrorCode,
+  isLockedStorageErrorCode,
+} from "./storage-runtime";
+import { StorageScope } from "./Storage.types";
+import type { AccessControl, BiometricLevel } from "./Storage.types";
 
 export type Validator<T> = (value: unknown) => value is T;
 
@@ -144,7 +145,7 @@ export const runMicrotask =
   typeof queueMicrotask === "function"
     ? queueMicrotask
     : (task: () => void) => {
-        Promise.resolve().then(task);
+        void Promise.resolve().then(task);
       };
 
 export const now =

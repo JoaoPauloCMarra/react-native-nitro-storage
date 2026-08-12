@@ -151,6 +151,51 @@ function isPackageVersionPublished(packageName, version) {
   );
 }
 
+function verifyPublishedPackage(packageName, version, expectedGitHead) {
+  const metadata = execCommandWithOutput(
+    `npm view ${shellQuote(`${packageName}@${version}`)} version gitHead --json 2>/dev/null`,
+  );
+  if (!metadata) {
+    log(
+      `✗ ${packageName}@${version} was not found on the registry after publish`,
+      "red",
+    );
+    process.exit(1);
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(metadata);
+  } catch (_error) {
+    log(`✗ Registry verification returned invalid metadata`, "red");
+    process.exit(1);
+  }
+
+  const publishedVersion = parsed.version ?? parsed["version"];
+  const publishedGitHead = parsed.gitHead ?? parsed["gitHead"];
+  if (publishedVersion !== version) {
+    log(
+      `✗ Registry version ${publishedVersion} does not match published version ${version}`,
+      "red",
+    );
+    process.exit(1);
+  }
+
+  if (expectedGitHead && publishedGitHead && publishedGitHead !== expectedGitHead) {
+    log(
+      `✗ Registry gitHead ${publishedGitHead} does not match local commit ${expectedGitHead}`,
+      "red",
+    );
+    process.exit(1);
+  }
+
+  log(
+    `  ✓ Registry verified: ${packageName}@${publishedVersion}${
+      publishedGitHead ? ` (gitHead ${publishedGitHead})` : ""
+    }`,
+  );
+}
+
 function isNpmTrustedPublishingCI() {
   return (
     process.env.GITHUB_ACTIONS === "true" &&
@@ -265,7 +310,8 @@ function getPackSummary() {
 
   try {
     const parsed = JSON.parse(output);
-    return Array.isArray(parsed) ? parsed[0] : parsed;
+    const metadata = Array.isArray(parsed) ? parsed[0] : parsed;
+    return metadata.files ? metadata : metadata[getPackageName()] ?? null;
   } catch (_error) {
     return null;
   }
@@ -514,6 +560,10 @@ Options:
       "green",
     );
     log(`   https://www.npmjs.com/package/react-native-nitro-storage`, "cyan");
+    const gitHead =
+      execCommandWithOutput("git rev-parse HEAD", { cwd: projectRoot }) ??
+      undefined;
+    verifyPublishedPackage(packageName, version, gitHead);
   }
 
   console.log("");

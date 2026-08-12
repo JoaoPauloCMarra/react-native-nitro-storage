@@ -294,7 +294,13 @@ function RuntimeBenchmarkCard() {
         testID="runtime-benchmark-run"
         title="Run Benchmark"
         onPress={() => {
-          setRuntimeBenchmarkResult(runRuntimeBenchmark());
+          try {
+            setRuntimeBenchmarkResult(runRuntimeBenchmark());
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
+            setRuntimeBenchmarkResult(`Benchmark failed: ${message}`);
+          }
         }}
       />
       <CodeBlock testID="runtime-benchmark-result">

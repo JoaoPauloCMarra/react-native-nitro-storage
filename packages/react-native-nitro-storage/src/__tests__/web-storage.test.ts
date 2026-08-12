@@ -299,10 +299,79 @@ describe("Web Storage", () => {
     const capabilities = storage.getCapabilities();
 
     expect(capabilities.platform).toBe("web");
-    expect(capabilities.writeBuffering.disk).toBe(true);
-    expect(capabilities.writeBuffering.secure).toBe(true);
+    expect(capabilities.writeBuffering.disk).toBe(false);
+    expect(capabilities.writeBuffering.secure).toBe(false);
     expect(capabilities.backend.disk).toContain("disk");
     expect(capabilities.backend.secure).toContain("secure");
+  });
+
+  it("reports buffered writes for IndexedDB backends", async () => {
+    const { createIndexedDBBackend } = await import("../indexeddb-backend");
+    const fakeTx = () => {
+      const tx = {
+        oncomplete: null as (() => void) | null,
+        onerror: null as (() => void) | null,
+        onabort: null as (() => void) | null,
+        objectStore: () => ({
+          openCursor: () => {
+            const cursorRequest = {
+              result: null,
+              onsuccess: null as (() => void) | null,
+            };
+            setTimeout(() => {
+              cursorRequest.onsuccess?.();
+              tx.oncomplete?.();
+            }, 0);
+            return cursorRequest;
+          },
+          put: () => {},
+          delete: () => {},
+          clear: () => {},
+        }),
+      };
+      return tx;
+    };
+    const fakeDB = {
+      transaction: fakeTx,
+      close: () => {},
+      objectStoreNames: { contains: () => true },
+    };
+    const originalIndexedDB = globalThis.indexedDB;
+    Object.defineProperty(globalThis, "indexedDB", {
+      value: {
+        open: () => {
+          const request = {
+            onupgradeneeded: null as (() => void) | null,
+            onsuccess: null as (() => void) | null,
+            onerror: null as (() => void) | null,
+            result: fakeDB,
+            error: null,
+          };
+          setTimeout(() => {
+            request.onsuccess?.();
+          }, 0);
+          return request;
+        },
+      },
+      configurable: true,
+      writable: true,
+    });
+    try {
+      const backend = await createIndexedDBBackend();
+      setWebDiskStorageBackend(backend);
+      setWebSecureStorageBackend(backend);
+      const capabilities = storage.getCapabilities();
+      expect(capabilities.writeBuffering.disk).toBe(true);
+      expect(capabilities.writeBuffering.secure).toBe(true);
+    } finally {
+      Object.defineProperty(globalThis, "indexedDB", {
+        value: originalIndexedDB,
+        configurable: true,
+        writable: true,
+      });
+      setWebDiskStorageBackend(undefined);
+      setWebSecureStorageBackend(undefined);
+    }
   });
 
   it("exposes web security capability metadata", () => {
@@ -357,7 +426,7 @@ describe("Web Storage", () => {
     );
   });
 
-  it("classifies storage errors into stable codes", () => {
+  it("classifies storage errors into stable codes from tagged messages", () => {
     expect(
       getStorageErrorCode(
         new Error("[nitro-error:keychain_locked] NitroStorage: locked"),
@@ -370,18 +439,24 @@ describe("Web Storage", () => {
         ),
       ),
     ).toBe("authentication_required");
+    expect(
+      getStorageErrorCode(
+        new Error("[nitro-error:storage_corruption] NitroStorage: corrupt"),
+      ),
+    ).toBe("storage_corruption");
+    expect(
+      getStorageErrorCode(
+        new Error(
+          "[nitro-error:biometric_unavailable] NitroStorage: biometric off",
+        ),
+      ),
+    ).toBe("biometric_unavailable");
     expect(getStorageErrorCode(new Error("errSecInteractionNotAllowed"))).toBe(
-      "keychain_locked",
+      undefined,
     );
     expect(
       getStorageErrorCode(new Error("UserNotAuthenticatedException")),
-    ).toBe("authentication_required");
-    expect(getStorageErrorCode(new Error("AEADBadTagException"))).toBe(
-      "storage_corruption",
-    );
-    expect(
-      getStorageErrorCode(new Error("Biometric storage unavailable")),
-    ).toBe("biometric_unavailable");
+    ).toBeUndefined();
     expect(getStorageErrorCode(new Error("something else"))).toBe(undefined);
   });
 
@@ -1925,10 +2000,10 @@ describe("Web Storage", () => {
 
     const snapshot = storage.getMetricsSnapshot();
     expect(events.length).toBeGreaterThan(0);
-    expect(snapshot["item:set"]).toBeDefined();
-    expect(snapshot["item:get"]).toBeDefined();
-    expect(snapshot["storage:getAllKeys"]).toBeDefined();
-    expect(snapshot["storage:export"]).toBeDefined();
+    expect(snapshot["item:set:1"]).toBeDefined();
+    expect(snapshot["item:get:1"]).toBeDefined();
+    expect(snapshot["storage:getAllKeys:1"]).toBeDefined();
+    expect(snapshot["storage:export:1"]).toBeDefined();
   });
 
   // --- clearNamespace ---
@@ -2614,7 +2689,7 @@ describe("web backend switching", () => {
     jest.restoreAllMocks();
   });
 
-  it("getWebSecureStorageBackend returns default backend when reset to undefined", () => {
+  it("getWebSecureStorageBackend returns default backend when reset to undefined", async () => {
     const custom = createWebBackendMock();
     setWebSecureStorageBackend(custom);
     expect(getWebSecureStorageBackend()).toBe(custom);
@@ -2624,10 +2699,13 @@ describe("web backend switching", () => {
     const backend = getWebSecureStorageBackend();
     expect(backend).toBeDefined();
     expect(backend).not.toBe(custom);
+    expect(custom.close).not.toHaveBeenCalled();
+
+    await flushWebStorageBackends();
     expect(custom.close).toHaveBeenCalledTimes(1);
   });
 
-  it("closes replaced web storage backends", () => {
+  it("closes replaced web storage backends only after flush", async () => {
     const firstSecure = createWebBackendMock("first-secure");
     const nextSecure = createWebBackendMock("next-secure");
     const firstDisk = createWebBackendMock("first-disk");
@@ -2638,10 +2716,81 @@ describe("web backend switching", () => {
     setWebDiskStorageBackend(firstDisk);
     setWebDiskStorageBackend(nextDisk);
 
+    expect(firstSecure.close).not.toHaveBeenCalled();
+    expect(firstDisk.close).not.toHaveBeenCalled();
+
+    await flushWebStorageBackends();
+
     expect(firstSecure.close).toHaveBeenCalledTimes(1);
     expect(nextSecure.close).not.toHaveBeenCalled();
     expect(firstDisk.close).toHaveBeenCalledTimes(1);
     expect(nextDisk.close).not.toHaveBeenCalled();
+  });
+
+  it("flushes pending writes to the replaced backend before closing it", async () => {
+    const oldBackend = createWebBackendMock("old-secure");
+    const nextBackend = createWebBackendMock("next-secure");
+    setWebSecureStorageBackend(oldBackend);
+
+    const item = createStorageItem({
+      key: "swap-pending",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      coalesceSecureWrites: true,
+    });
+    item.set("queued");
+    expect(oldBackend.setMany).not.toHaveBeenCalled();
+
+    setWebSecureStorageBackend(nextBackend);
+
+    expect(oldBackend.setMany).toHaveBeenCalledWith([
+      ["__secure_swap-pending", serializeWithPrimitiveFastPath("queued")],
+    ]);
+    expect(oldBackend.close).not.toHaveBeenCalled();
+
+    await flushWebStorageBackends();
+
+    expect(oldBackend.flush.mock.invocationCallOrder[0]).toBeLessThan(
+      oldBackend.close.mock.invocationCallOrder[0],
+    );
+    expect(oldBackend.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("flushes pending disk writes to the replaced disk backend before closing it", async () => {
+    const oldBackend = createWebBackendMock("old-disk");
+    const nextBackend = createWebBackendMock("next-disk");
+    setWebDiskStorageBackend(oldBackend);
+
+    storage.setDiskWritesAsync(true);
+    storage.setString("swap-disk-pending", "queued", StorageScope.Disk);
+    expect(oldBackend.setMany).not.toHaveBeenCalled();
+
+    setWebDiskStorageBackend(nextBackend);
+
+    expect(oldBackend.setMany).toHaveBeenCalledWith([
+      ["swap-disk-pending", "queued"],
+    ]);
+    expect(oldBackend.close).not.toHaveBeenCalled();
+
+    await flushWebStorageBackends();
+
+    expect(oldBackend.flush.mock.invocationCallOrder[0]).toBeLessThan(
+      oldBackend.close.mock.invocationCallOrder[0],
+    );
+    expect(oldBackend.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("flushWebStorageBackends awaits retired backends after a swap", async () => {
+    const firstSecure = createWebBackendMock("retired-secure");
+    const nextSecure = createWebBackendMock("next-secure");
+    setWebSecureStorageBackend(firstSecure);
+    firstSecure.setItem("written-before-swap", "value");
+    setWebSecureStorageBackend(nextSecure);
+
+    await flushWebStorageBackends();
+
+    expect(firstSecure.flush).toHaveBeenCalled();
+    expect(nextSecure.flush).toHaveBeenCalled();
   });
 
   it("getWebDiskStorageBackend returns default backend when reset to undefined", () => {
@@ -2805,6 +2954,102 @@ describe("web backend switching", () => {
     });
 
     expect(item.get()).toBe("default");
+  });
+
+  it("closes each retired backend exactly once across repeated swaps", async () => {
+    const first = createWebBackendMock("swap-1");
+    const second = createWebBackendMock("swap-2");
+    const third = createWebBackendMock("swap-3");
+    setWebSecureStorageBackend(first);
+    setWebSecureStorageBackend(second);
+    setWebSecureStorageBackend(third);
+
+    await flushWebStorageBackends();
+
+    expect(first.close).toHaveBeenCalledTimes(1);
+    expect(second.close).toHaveBeenCalledTimes(1);
+    expect(third.close).not.toHaveBeenCalled();
+  });
+
+  it("does not close or retire a backend when it is set again", async () => {
+    const backend = createWebBackendMock("same-secure");
+    setWebSecureStorageBackend(backend);
+    setWebSecureStorageBackend(backend);
+
+    await flushWebStorageBackends();
+
+    expect(backend.flush).toHaveBeenCalledTimes(1);
+    expect(backend.close).not.toHaveBeenCalled();
+  });
+
+  it("closes a no-flush backend immediately when it is replaced", () => {
+    const noFlushBackend = {
+      name: "no-flush",
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {},
+      clear: () => {},
+      getAllKeys: () => [] as string[],
+      close: jest.fn(),
+    };
+    setWebSecureStorageBackend(noFlushBackend);
+    setWebSecureStorageBackend(createWebBackendMock("next-secure"));
+
+    expect(noFlushBackend.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a retired backend whose flush failed for a later retry", async () => {
+    const failingBackend = createWebBackendMock("retry-secure");
+    failingBackend.flush
+      .mockRejectedValueOnce(new Error("persist failed"))
+      .mockResolvedValueOnce(undefined);
+    setWebSecureStorageBackend(failingBackend);
+    setWebSecureStorageBackend(createWebBackendMock("next-secure"));
+
+    await expect(flushWebStorageBackends()).rejects.toThrow("persist failed");
+    expect(failingBackend.close).not.toHaveBeenCalled();
+
+    await expect(flushWebStorageBackends()).resolves.toBeUndefined();
+    expect(failingBackend.flush).toHaveBeenCalledTimes(2);
+    expect(failingBackend.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a retired backend whose close throws for a later retry", async () => {
+    const closeThrowingBackend = createWebBackendMock("close-fail");
+    closeThrowingBackend.close
+      .mockImplementationOnce(() => {
+        throw new Error("close failed");
+      })
+      .mockImplementationOnce(() => {});
+
+    setWebSecureStorageBackend(closeThrowingBackend);
+    setWebSecureStorageBackend(createWebBackendMock("next-secure"));
+
+    await expect(flushWebStorageBackends()).rejects.toThrow(
+      /NitroStorage\(web\): close failed for close-fail/,
+    );
+    expect(closeThrowingBackend.close).toHaveBeenCalledTimes(1);
+
+    await expect(flushWebStorageBackends()).resolves.toBeUndefined();
+    expect(closeThrowingBackend.flush).toHaveBeenCalledTimes(2);
+    expect(closeThrowingBackend.close).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not close a retired backend that becomes active again", async () => {
+    const backendA = createWebBackendMock("dup-secure");
+    const backendB = createWebBackendMock("other-secure");
+    setWebSecureStorageBackend(backendA);
+    setWebSecureStorageBackend(backendB);
+    setWebSecureStorageBackend(backendA);
+
+    await flushWebStorageBackends();
+
+    expect(backendA.close).not.toHaveBeenCalled();
+    expect(backendB.close).toHaveBeenCalledTimes(1);
+    expect(getWebSecureStorageBackend()).toBe(backendA);
+
+    backendA.setItem("still-active", "works");
+    expect(backendA.getItem("still-active")).toBe("works");
   });
 });
 

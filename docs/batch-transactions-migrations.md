@@ -80,7 +80,7 @@ const snapshot = storage.export(StorageScope.Disk);
 storage.import(snapshot, StorageScope.Disk);
 ```
 
-For Memory scope, import is atomic: all keys are written before listeners fire. For Disk and Secure, import delegates to native or web batch paths.
+For Memory scope, import is atomic: all keys are written before listeners fire. Disk and Secure imports flush pending coalesced writes first, so the imported snapshot cannot be overwritten by an earlier pending flush, then delegate to native or web batch paths.
 
 Secure exports contain raw secret values. `storage.export(StorageScope.Secure)` requires `{ includeSecureValues: true }`; `storage.exportSecureUnsafe()` is the explicit equivalent. Do not log Secure exports or include them in diagnostics, analytics, crash reports, or support bundles.
 
@@ -124,7 +124,9 @@ Transaction context methods:
 - `setItem(item, value)`
 - `removeItem(item)`
 
-If the callback throws, Nitro Storage restores the keys it changed during that transaction.
+If the callback throws, Nitro Storage restores the keys it changed during that transaction and emits exactly one typed `rollback` batch event so observers and the global event observer can react to the rollback.
+
+Memory-scope batch removes are atomic: all keys are deleted before listeners fire, and scope, key, and prefix subscribers receive a single `removeBatch` event.
 
 ## Migrations
 
@@ -156,6 +158,8 @@ migrateToLatest(StorageScope.Disk);
 ```
 
 Migration context methods work with raw strings. Use item serializers manually when migrating structured data.
+
+Each migration step runs inside its own transaction together with the version marker write. A step that throws rolls back both its data changes and the version marker, so the scope stays on the last completed version and rerunning `migrateToLatest()` retries deterministically.
 
 ```ts
 registerMigration(3, (ctx) => {
@@ -198,3 +202,5 @@ const didWrite = themeItem.setIfVersion(
 ```
 
 `setIfVersion()` returns `false` if another write changed the item after `getWithVersion()`.
+
+Compare-and-set is optimistic: the version is read, compared, and written without backend-level atomicity. Two writers on different runtimes can both pass the check between their reads and writes, so use it for single-runtime coordination or last-writer-wins-tolerant flows. There is no native compare-and-swap primitive.

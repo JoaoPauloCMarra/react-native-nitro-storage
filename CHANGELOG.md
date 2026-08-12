@@ -4,6 +4,37 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
+## 0.8.0 - 2026-08-12
+
+### Breaking changes
+
+- Metrics keys now include the storage scope, for example `item:set:1`. Update
+  dashboards and metric-key comparisons that used the previous unscoped key
+  format.
+
+### Added
+
+- Exported `PlatformStorage` and `PlatformScope` types from the native, web,
+  and testing entrypoints so shared consumer code can verify platform parity
+  without duplicating the package contract.
+
+### Fixed
+
+- **Data-loss prevention:** `storage.import()` now flushes pending coalesced Disk and Secure writes before writing, so a later scheduled flush can never overwrite imported values.
+- **Biometric parity:** promoting a value to biometric storage removes the plain secure copy on iOS and web, matching Android; plain reads can no longer return stale values after promotion.
+- **iOS legacy disk data:** Disk enumeration, size, prefix queries, and clear now cover both the suite domain and legacy `standardUserDefaults` values, so deleted legacy values cannot reappear.
+- **Failure-atomic migrations:** each migration step runs in its own transaction with its version marker; a failed step rolls back its data and marker, and rerunning `migrateToLatest()` retries from the last completed version.
+- **Transaction events:** failed transactions emit exactly one typed `rollback` batch event with pre-rollback and restored raw values.
+- **Atomic memory batch removes:** `removeBatch()` in Memory scope mutates all keys first and emits a single `removeBatch` event.
+- **Stable error classification:** storage error codes now come only from `[nitro-error:<code>]` tags produced by the native and web adapters; message-text scraping was removed and every public code has a producer.
+- **Encoding collisions:** reserved primitive tokens and the native batch missing sentinel are escaped in the stored encoding; legacy reads are preserved and raw API round-trips are unchanged.
+
+### Changed
+
+- `getCapabilities().writeBuffering` now reports real per-mode durability: native Secure writes report buffering only while `setSecureWritesAsync(true)` is active on Android, and web backends report buffering only for IndexedDB-based backends.
+- The IndexedDB backend reports affected keys when `flush()` fails and starts a best-effort flush on `pagehide` and hidden visibility changes.
+- `setIfVersion()` is documented as optimistic (no backend-level atomicity); CAS guarantees are covered by race tests.
+
 ## 0.7.0 - 2026-07-30
 
 ### Changes

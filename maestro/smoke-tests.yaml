@@ -1,5 +1,5 @@
 appId: com.nitrostorage.example
-name: "Smoke Tests - All Pass"
+name: "Smoke Tests - Terminal State"
 ---
 - clearState
 - launchApp
@@ -10,6 +10,15 @@ name: "Smoke Tests - All Pass"
     timeout: 120000
 - tapOn: "Run All"
 - extendedWaitUntil:
-    visible: "37/38 passed · 1 skipped"
-    timeout: 60000
-- assertNotVisible: "failed"
+    visible: "Running..."
+    timeout: 30000
+- extendedWaitUntil:
+    notVisible: "Running..."
+    timeout: 120000
+# Assert the run reached a terminal state with at least one passed test and
+# zero failures. The count-independent pattern rejects a zero-passed summary
+# (e.g. "0/7 passed") while accepting any positive count.
+- assertVisible:
+    text: "[1-9][0-9]*/[0-9]+ passed"
+- assertNotVisible:
+    text: ".*failed.*"

@@ -56,6 +56,15 @@ export type SecureStorageMetadata = {
 
 const STORAGE_ERROR_TAG_PATTERN = /\[nitro-error:([a-z_]+)\]/;
 
+const STORAGE_ERROR_CODES = new Set<StorageErrorCode>([
+  "keychain_locked",
+  "authentication_required",
+  "key_invalidated",
+  "storage_corruption",
+  "biometric_unavailable",
+  "unsupported",
+]);
+
 export function getStorageErrorCode(
   err: unknown,
 ): StorageErrorCode | undefined {
@@ -63,56 +72,13 @@ export function getStorageErrorCode(
     return undefined;
   }
 
-  const message = err.message;
-  const taggedCode = message.match(STORAGE_ERROR_TAG_PATTERN)?.[1];
+  const taggedCode = err.message.match(STORAGE_ERROR_TAG_PATTERN)?.[1];
 
   if (
-    taggedCode === "keychain_locked" ||
-    taggedCode === "authentication_required" ||
-    taggedCode === "key_invalidated" ||
-    taggedCode === "storage_corruption" ||
-    taggedCode === "biometric_unavailable" ||
-    taggedCode === "unsupported"
+    taggedCode !== undefined &&
+    STORAGE_ERROR_CODES.has(taggedCode as StorageErrorCode)
   ) {
-    return taggedCode;
-  }
-
-  if (message.includes("errSecInteractionNotAllowed")) {
-    return "keychain_locked";
-  }
-
-  if (
-    message.includes("UserNotAuthenticatedException") ||
-    message.includes("KeyStoreException") ||
-    message.includes("android.security.keystore")
-  ) {
-    return "authentication_required";
-  }
-
-  if (
-    message.includes("KeyPermanentlyInvalidatedException") ||
-    message.includes("InvalidKeyException")
-  ) {
-    return "key_invalidated";
-  }
-
-  if (
-    message.includes("AEADBadTagException") ||
-    message.toLowerCase().includes("storage corruption") ||
-    message.toLowerCase().includes("corrupted storage")
-  ) {
-    return "storage_corruption";
-  }
-
-  if (
-    message.toLowerCase().includes("biometric storage unavailable") ||
-    message.toLowerCase().includes("biometric storage is not available")
-  ) {
-    return "biometric_unavailable";
-  }
-
-  if (message.toLowerCase().includes("unsupported")) {
-    return "unsupported";
+    return taggedCode as StorageErrorCode;
   }
 
   return undefined;

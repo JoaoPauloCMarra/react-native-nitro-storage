@@ -1,22 +1,27 @@
-import { StorageScope, AccessControl } from "./Storage.types";
 import { assertAccessControlLevel } from "./shared";
 import type { NonMemoryScope } from "./shared";
-import type {
-  SecurityCapabilities,
-  StorageCapabilities,
-} from "./storage-runtime";
 import {
   createStorageCore,
   type StorageCoreAdapter,
   type StorageCoreBackend,
   type StorageCoreInternals,
 } from "./storage-core";
+import type {
+  SecurityCapabilities,
+  StorageCapabilities,
+} from "./storage-runtime";
+import { StorageScope, AccessControl } from "./Storage.types";
 
 export { StorageScope, AccessControl, BiometricLevel } from "./Storage.types";
 export { isKeychainLockedError } from "./shared";
 export { migrateFromMMKV } from "./migration";
 export { getStorageErrorCode } from "./storage-runtime";
 export { createIndexedDBBackend } from "./indexeddb-backend";
+export {
+  describeWebBackendCapabilities,
+  isIndexedDBWebBackend,
+  type WebBackendCapabilities,
+} from "./web-backend-contract";
 export {
   useSetStorage,
   useStorage,
@@ -66,6 +71,7 @@ export type {
   StorageKeyRef,
   TransactionContext,
 } from "./storage-core";
+export type { PlatformScope, PlatformStorage } from "./storage-platform";
 
 const TEST_SECURE_BACKEND = "in-memory-test";
 
@@ -144,7 +150,9 @@ function createInMemoryBackend(): InMemoryBackend {
       biometricStore.clear();
     },
     resetState: () => {
-      stores.forEach((store) => store.clear());
+      stores.forEach((store) => {
+        store.clear();
+      });
       biometricStore.clear();
     },
   };
@@ -159,7 +167,6 @@ function buildTestingModule() {
     backend,
     changeSource: "native",
     applyAccessControlOnSecureRawWrite: true,
-    flushDiskWritesOnImport: false,
     ensureScopeSubscription: (_scope: NonMemoryScope) => {},
     maybeCleanupScopeSubscription: (_scope: NonMemoryScope) => {},
     onWillEmitChanges: () => {},
