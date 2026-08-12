@@ -433,9 +433,14 @@ storage.setMetricsObserver((event) => {
 });
 
 const metrics = storage.getMetricsSnapshot();
+const scopedMetrics = storage.getScopedMetricsSnapshot();
 storage.resetMetrics();
 unsubscribe();
 ```
+
+`getMetricsSnapshot()` aggregates each operation across scopes for backward
+compatibility. `getScopedMetricsSnapshot()` adds the numeric scope suffix for
+per-scope analysis, for example `item:set:1`.
 
 Secure event observer values are redacted by default. Pass
 `{ redactSecureValues: false }` only in trusted debug tooling where raw values

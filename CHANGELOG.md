@@ -8,15 +8,16 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 
 ### Breaking changes
 
-- Metrics keys now include the storage scope, for example `item:set:1`. Update
-  dashboards and metric-key comparisons that used the previous unscoped key
-  format.
+- None. `getMetricsSnapshot()` keeps its unscoped, cross-scope aggregate keys.
+  Use the new `getScopedMetricsSnapshot()` when per-scope counters are needed.
 
 ### Added
 
 - Exported `PlatformStorage` and `PlatformScope` types from the native, web,
   and testing entrypoints so shared consumer code can verify platform parity
   without duplicating the package contract.
+- Added `getScopedMetricsSnapshot()` with keys such as `item:set:1`, without
+  changing established dashboards that consume `getMetricsSnapshot()`.
 
 ### Fixed
 

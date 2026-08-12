@@ -1999,11 +1999,13 @@ describe("Web Storage", () => {
     storage.export(StorageScope.Disk);
 
     const snapshot = storage.getMetricsSnapshot();
+    const scopedSnapshot = storage.getScopedMetricsSnapshot();
     expect(events.length).toBeGreaterThan(0);
-    expect(snapshot["item:set:1"]).toBeDefined();
-    expect(snapshot["item:get:1"]).toBeDefined();
-    expect(snapshot["storage:getAllKeys:1"]).toBeDefined();
-    expect(snapshot["storage:export:1"]).toBeDefined();
+    expect(snapshot["item:set"]).toBeDefined();
+    expect(snapshot["item:get"]).toBeDefined();
+    expect(snapshot["storage:getAllKeys"]).toBeDefined();
+    expect(snapshot["storage:export"]).toBeDefined();
+    expect(scopedSnapshot["item:set:1"]).toBeDefined();
   });
 
   // --- clearNamespace ---

@@ -1280,6 +1280,9 @@ export function createStorageCore(
     getMetricsSnapshot: (): Record<string, StorageMetricSummary> => {
       return metrics.getSnapshot();
     },
+    getScopedMetricsSnapshot: (): Record<string, StorageMetricSummary> => {
+      return metrics.getScopedSnapshot();
+    },
     resetMetrics: () => {
       metrics.reset();
     },

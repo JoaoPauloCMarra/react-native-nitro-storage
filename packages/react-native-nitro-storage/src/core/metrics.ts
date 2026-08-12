@@ -17,6 +17,7 @@ export type MetricsRegistry = {
     keysCount?: number,
   ): T;
   getSnapshot(): Record<string, StorageMetricSummary>;
+  getScopedSnapshot(): Record<string, StorageMetricSummary>;
   reset(): void;
 };
 
@@ -72,6 +73,20 @@ export function createMetricsRegistry(): MetricsRegistry {
     }
   }
 
+  function toSummary(value: {
+    count: number;
+    totalDurationMs: number;
+    maxDurationMs: number;
+  }): StorageMetricSummary {
+    return {
+      count: value.count,
+      totalDurationMs: value.totalDurationMs,
+      avgDurationMs:
+        value.count === 0 ? 0 : value.totalDurationMs / value.count,
+      maxDurationMs: value.maxDurationMs,
+    };
+  }
+
   return {
     setObserver(next) {
       observer = next;
@@ -79,15 +94,35 @@ export function createMetricsRegistry(): MetricsRegistry {
     record,
     measure,
     getSnapshot(): Record<string, StorageMetricSummary> {
+      const aggregated = new Map<
+        string,
+        { count: number; totalDurationMs: number; maxDurationMs: number }
+      >();
+      counters.forEach((value, key) => {
+        const separator = key.lastIndexOf(":");
+        const operation = separator === -1 ? key : key.slice(0, separator);
+        const existing = aggregated.get(operation);
+        if (!existing) {
+          aggregated.set(operation, { ...value });
+          return;
+        }
+        existing.count += value.count;
+        existing.totalDurationMs += value.totalDurationMs;
+        existing.maxDurationMs = Math.max(
+          existing.maxDurationMs,
+          value.maxDurationMs,
+        );
+      });
+      const snapshot: Record<string, StorageMetricSummary> = {};
+      aggregated.forEach((value, operation) => {
+        snapshot[operation] = toSummary(value);
+      });
+      return snapshot;
+    },
+    getScopedSnapshot(): Record<string, StorageMetricSummary> {
       const snapshot: Record<string, StorageMetricSummary> = {};
       counters.forEach((value, key) => {
-        snapshot[key] = {
-          count: value.count,
-          totalDurationMs: value.totalDurationMs,
-          avgDurationMs:
-            value.count === 0 ? 0 : value.totalDurationMs / value.count,
-          maxDurationMs: value.maxDurationMs,
-        };
+        snapshot[key] = toSummary(value);
       });
       return snapshot;
     },

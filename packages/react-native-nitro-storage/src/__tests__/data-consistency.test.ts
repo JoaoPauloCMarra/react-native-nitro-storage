@@ -480,11 +480,15 @@ describe("item 12: metrics split by scope", () => {
     mock.storage.setMetricsObserver(undefined);
 
     const snapshot = mock.storage.getMetricsSnapshot();
-    expect(snapshot["item:set:1"]).toBeDefined();
-    expect(snapshot["item:get:1"]).toBeDefined();
-    expect(snapshot["item:set:2"]).toBeDefined();
-    expect(snapshot["item:get:2"]).toBeDefined();
-    for (const summary of Object.values(snapshot)) {
+    expect(snapshot["item:set"]?.count).toBe(2);
+    expect(snapshot["item:get"]?.count).toBe(2);
+
+    const scopedSnapshot = mock.storage.getScopedMetricsSnapshot();
+    expect(scopedSnapshot["item:set:1"]).toBeDefined();
+    expect(scopedSnapshot["item:get:1"]).toBeDefined();
+    expect(scopedSnapshot["item:set:2"]).toBeDefined();
+    expect(scopedSnapshot["item:get:2"]).toBeDefined();
+    for (const summary of Object.values(scopedSnapshot)) {
       expect(summary.count).toBeGreaterThan(0);
       expect(typeof summary.totalDurationMs).toBe("number");
       expect(typeof summary.avgDurationMs).toBe("number");
