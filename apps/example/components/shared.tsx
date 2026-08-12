@@ -79,6 +79,9 @@ export const Button = ({
 }: ButtonProps) => (
   <Pressable
     testID={testID}
+    accessibilityRole="button"
+    accessibilityLabel={title}
+    accessibilityState={{ disabled }}
     hitSlop={6}
     style={({ pressed }) => [
       styles.button,
@@ -305,6 +308,7 @@ export const Page = ({
             { paddingTop: contentPaddingTop },
           ]}
           bounces={false}
+          keyboardShouldPersistTaps="handled"
           style={styles.pageBody}
         >
           <Header title={title} subtitle={subtitle} />
