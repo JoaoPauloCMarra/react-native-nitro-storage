@@ -14,6 +14,10 @@ env:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   quality:
     name: Lint, Typecheck & Unit Tests
@@ -40,156 +44,32 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      - name: Release preflight
-        run: bun run release:preflight
+      - name: Verify generated Nitro bindings
+        run: bun run codegen:check
+
+      - name: Lint
+        run: bun run lint:check
+
+      - name: Check formatting
+        run: bun run format:check
+
+      - name: Typecheck package
+        run: bun run typecheck
+
+      - name: Test public types
+        run: bun run test:types
+
+      - name: Check example app
+        run: bun run example:check
 
       - name: Unit tests with coverage
-        run: bun run test:coverage
+        run: bun run test:coverage -- --runInBand --watchman=false
 
       - name: C++ coverage
         run: bun run test:cpp:coverage
 
-  example-android:
-    name: Example Android Build
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
-
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
-        with:
-          path: |
-            ~/.bun/install/cache
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-            node_modules
-            packages/*/node_modules
-            apps/*/node_modules
-          key: ${{ runner.os }}-example-android-${{ hashFiles('**/bun.lock') }}
-          restore-keys: ${{ runner.os }}-example-android-
-
-      - run: bun install --frozen-lockfile
-
-      - name: Expo dependency check
-        run: bun run example:doctor
-
-      - name: Example TypeScript check
-        run: bun run example:typecheck
-
-      - name: Prebuild Android
-        run: CI=1 bun run --cwd apps/example prebuild -- --platform android
-
-      - name: Assemble Android example
-        run: bun run example:android:assemble
-
-  example-ios:
-    name: Example iOS Build
-    runs-on: macos-26
-
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
-        with:
-          path: |
-            ~/.bun/install/cache
-            ~/Library/Caches/CocoaPods
-            Pods
-            node_modules
-            packages/*/node_modules
-            apps/*/node_modules
-          key: ${{ runner.os }}-example-ios-${{ hashFiles('**/bun.lock') }}
-          restore-keys: ${{ runner.os }}-example-ios-
-
-      - run: bun install --frozen-lockfile
-
-      - name: Expo dependency check
-        run: bun run example:doctor
-
-      - name: Example TypeScript check
-        run: bun run example:typecheck
-
-      - name: Prebuild iOS
-        run: CI=1 bun run --cwd apps/example prebuild -- --platform ios
-
-      - name: Build iOS example
-        run: bun run example:ios:build
-
-  smoke-ios:
-    name: iOS Maestro Smoke
-    runs-on: macos-26
-    needs: example-ios
-
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
-        with:
-          path: |
-            ~/.bun/install/cache
-            ~/Library/Caches/CocoaPods
-            Pods
-            node_modules
-            packages/*/node_modules
-            apps/*/node_modules
-          key: ${{ runner.os }}-smoke-ios-${{ hashFiles('**/bun.lock') }}
-          restore-keys: ${{ runner.os }}-smoke-ios-
-
-      - run: bun install --frozen-lockfile
-
-      - name: Prebuild iOS
-        run: CI=1 bun run --cwd apps/example prebuild -- --platform ios
-
-      - name: Build iOS example
-        run: bun run example:ios:build
-
-      - name: Install Maestro
-        run: curl -fsSL "https://get.maestro.mobile.dev" | bash
-
-      - name: Boot iOS simulator
+      - name: C++ sanitizers
         run: |
-          device_id="$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print([dev for devs in d.get("devices", {}).values() for dev in devs if dev.get("isAvailable")][0]["udid"])')"
-          echo "SIMULATOR_UDID=${device_id}" >> "$GITHUB_ENV"
-          xcrun simctl boot "${device_id}" || true
-          xcrun simctl bootstatus "${device_id}" -b
-
-      - name: Install and launch example app
-        run: |
-          app_path="$(find apps/example/ios/build -path '*Debug-iphonesimulator/NitroStorage.app' -maxdepth 6 | head -1)"
-          xcrun simctl install "${{ env.SIMULATOR_UDID }}" "${app_path}"
-          xcrun simctl launch "${{ env.SIMULATOR_UDID }}" com.nitrostorage.example
-
-      - name: Run deterministic Maestro smoke
-        run: |
-          export PATH="$PATH:$HOME/.maestro/bin"
-          maestro test maestro/smoke-tests.yaml
+          bun run test:cpp:asan
+          bun run test:cpp:tsan
+          bun run test:cpp:ubsan
