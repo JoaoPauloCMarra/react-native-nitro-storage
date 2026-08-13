@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
+## 0.8.1 - 2026-08-13
+
+### Breaking changes
+
+- None.
+
+### Changed
+
+- README now leads with `createSecureAuthStorage` and `renameFrom` as the
+  auth-token recipe. `getString` / `setString` stay the raw API.
+
 ## 0.8.0 - 2026-08-12
 
 ### Breaking changes
