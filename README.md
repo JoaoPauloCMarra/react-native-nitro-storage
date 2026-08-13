@@ -26,6 +26,7 @@ pagination, conflict resolution, or remote synchronization.
 - [Install](#install)
 - [Expo Config](#expo-config)
 - [Quick Start](#quick-start)
+- [Auth Tokens](#auth-tokens)
 - [Typed Storage Items](#typed-storage-items)
 - [Item Ergonomics](#item-ergonomics)
 - [Set Items](#set-items)
@@ -128,6 +129,35 @@ themeItem.set("dark");
 const theme = themeItem.get();
 const raw = storage.getString("settings:theme", StorageScope.Disk);
 ```
+
+`storage.getString` / `setString` remain the raw API. Prefer typed items for
+application state.
+
+## Auth Tokens
+
+Use `createSecureAuthStorage` for access and refresh tokens. `renameFrom`
+copies a legacy key on first read and deletes it, so you do not need a custom
+migration helper.
+
+```ts
+import { createSecureAuthStorage } from "react-native-nitro-storage";
+
+const auth = createSecureAuthStorage(
+  {
+    accessToken: { renameFrom: "authToken" },
+    refreshToken: { renameFrom: "refreshToken" },
+  },
+  { namespace: "auth", fallbackToCacheOnReadError: true },
+);
+
+auth.accessToken.set("access-token");
+const current = auth.accessToken.get();
+auth.accessToken.subscribe(() => {});
+```
+
+Keep `getString` facades only when the app owns a storage architecture
+boundary. `createSecureAuthStorage` already namespaces keys, notifies
+subscribers, and migrates legacy keys.
 
 ## Typed Storage Items
 
