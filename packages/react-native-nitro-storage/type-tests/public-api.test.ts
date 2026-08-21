@@ -252,10 +252,15 @@ const colorSet = createSetItem<"red" | "blue">({
 colorSet.add("blue");
 const colorIsSet: boolean = colorSet.has("red");
 const colorValues: ("red" | "blue")[] = colorSet.values();
+const colorMembership: Partial<Record<"red" | "blue", true>> = colorSet.get();
+// @ts-expect-error a set member may be absent from the returned map
+const definitelyRed: true = colorMembership.red;
 // @ts-expect-error "green" is not a valid member of this set
 colorSet.add("green");
 void colorIsSet;
 void colorValues;
+void colorMembership;
+void definitelyRed;
 
 storage.clear(StorageScope.Disk, { except: [diskFlag, "literal-key"] });
 storage.clearGroup("ui");

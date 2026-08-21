@@ -178,14 +178,14 @@ export type StorageClearOptions = {
 };
 
 export type SetItemConfig<TMember extends string = string> = Omit<
-  StorageItemConfig<Record<string, true>>,
+  StorageItemConfig<Partial<Record<TMember, true>>>,
   "defaultValue" | "serialize" | "deserialize"
 > & {
   defaultValue?: readonly TMember[];
 };
 
 export type SetStorageItem<TMember extends string = string> = {
-  get: () => Record<string, true>;
+  get: () => Partial<Record<TMember, true>>;
   has: (id: TMember) => boolean;
   add: (id: TMember) => void;
   delete: (id: TMember) => void;
@@ -197,7 +197,7 @@ export type SetStorageItem<TMember extends string = string> = {
   subscribe: (callback: () => void) => () => void;
   scope: StorageScope;
   key: string;
-  item: StorageItem<Record<string, true>>;
+  item: StorageItem<Partial<Record<TMember, true>>>;
 };
 
 export type StorageCoreBackend = {
@@ -2753,14 +2753,14 @@ export function createStorageCore(
     config: SetItemConfig<TMember>,
   ): SetStorageItem<TMember> {
     const { defaultValue, ...rest } = config;
-    const initial: Record<string, true> = {};
+    const initial: Partial<Record<TMember, true>> = {};
     if (defaultValue) {
       for (const id of defaultValue) {
         initial[id] = true;
       }
     }
 
-    const item = createStorageItem<Record<string, true>>({
+    const item = createStorageItem<Partial<Record<TMember, true>>>({
       ...rest,
       defaultValue: initial,
     });
@@ -2768,10 +2768,13 @@ export function createStorageCore(
     const has = (id: TMember): boolean => item.get()[id] === true;
 
     const add = (id: TMember): void => {
-      if (item.get()[id] === true) {
+      const current = item.get();
+      if (current[id] === true) {
         return;
       }
-      item.merge({ [id]: true });
+      const next = { ...current };
+      next[id] = true;
+      item.set(next);
     };
 
     const deleteId = (id: TMember): void => {

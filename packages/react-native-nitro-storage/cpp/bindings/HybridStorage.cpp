@@ -14,7 +14,6 @@
 namespace margelo::nitro::NitroStorage {
 
 namespace {
-constexpr auto kBatchMissingSentinel = "__nitro_storage_batch_missing__::v1";
 constexpr int kDefaultBiometricLevel = 2;
 } // namespace
 
@@ -388,8 +387,8 @@ void HybridStorage::setBatch(const std::vector<std::string>& keys, const std::ve
     }
 }
 
-std::vector<std::string> HybridStorage::getBatch(const std::vector<std::string>& keys, double scope) {
-    std::vector<std::string> results;
+std::vector<std::optional<std::string>> HybridStorage::getBatch(const std::vector<std::string>& keys, double scope) {
+    std::vector<std::optional<std::string>> results;
     results.reserve(keys.size());
 
     Scope s = toScope(scope);
@@ -402,7 +401,7 @@ std::vector<std::string> HybridStorage::getBatch(const std::vector<std::string>&
                 if (it != memoryStore_.end()) {
                     results.push_back(it->second);
                 } else {
-                    results.push_back(kBatchMissingSentinel);
+                    results.push_back(std::nullopt);
                 }
             }
             return results;
@@ -418,10 +417,7 @@ std::vector<std::string> HybridStorage::getBatch(const std::vector<std::string>&
                 throw std::runtime_error("NitroStorage: Disk getBatch failed (unknown error)");
             }
 
-            for (const auto& value : values) {
-                results.push_back(value.has_value() ? *value : std::string(kBatchMissingSentinel));
-            }
-            return results;
+            return values;
         }
         case Scope::Secure: {
             ensureAdapter();
@@ -434,10 +430,7 @@ std::vector<std::string> HybridStorage::getBatch(const std::vector<std::string>&
                 throw std::runtime_error("NitroStorage: Secure getBatch failed (unknown error)");
             }
 
-            for (const auto& value : values) {
-                results.push_back(value.has_value() ? *value : std::string(kBatchMissingSentinel));
-            }
-            return results;
+            return values;
         }
     }
 

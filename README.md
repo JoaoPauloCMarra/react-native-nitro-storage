@@ -4,9 +4,9 @@
 [![npm downloads](https://img.shields.io/npm/dm/react-native-nitro-storage?color=22c55e&label=downloads)](https://www.npmjs.com/package/react-native-nitro-storage)
 [![CI](https://github.com/JoaoPauloCMarra/react-native-nitro-storage/actions/workflows/ci.yml/badge.svg)](https://github.com/JoaoPauloCMarra/react-native-nitro-storage/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/react-native-nitro-storage?color=007ec6)](https://github.com/JoaoPauloCMarra/react-native-nitro-storage/blob/main/LICENSE)
-[![React Native](https://img.shields.io/badge/react--native-%3E%3D0.75-61dafb)](https://reactnative.dev/docs/0.86/getting-started-without-a-framework)
-[![Expo](https://img.shields.io/badge/expo-SDK%2057-000020)](https://docs.expo.dev/versions/v57.0.0/)
-[![Nitro Modules](https://img.shields.io/badge/nitro--modules-%3E%3D0.36.5%20%3C0.37.0-black)](https://nitro.margelo.com/)
+[![React Native](https://img.shields.io/badge/react--native-0.87.0-61dafb)](https://reactnative.dev/docs/0.87/getting-started-without-a-framework)
+[![Expo](https://img.shields.io/badge/expo-SDK%2057%20%28RN%200.86.2%29-000020)](https://docs.expo.dev/versions/v57.0.0/)
+[![Nitro Modules](https://img.shields.io/badge/nitro--modules-%3E%3D0.37.0%20%3C0.38.0-black)](https://nitro.margelo.com/)
 [![TypeScript](https://img.shields.io/badge/typescript-6.0-3178c6)](https://www.typescriptlang.org/)
 
 Synchronous Memory, Disk, and Secure storage for React Native, Expo development
@@ -58,12 +58,31 @@ Peer dependencies:
 | ---------------------------- | ------------------ |
 | `react`                      | `>=18.2.0`         |
 | `react-native`               | `>=0.75.0`         |
-| `react-native-nitro-modules` | `>=0.36.5 <0.37.0` |
+| `react-native-nitro-modules` | `>=0.37.0 <0.38.0` |
 
-Nitro peer requirement: `react-native-nitro-modules >=0.36.5 <0.37.0`.
+Nitro peer requirement: `react-native-nitro-modules >=0.37.0 <0.38.0`.
 
-Validated example baseline: Expo SDK 57, React Native 0.86.2, React 19.2.3,
-and Nitro Modules 0.36.5.
+The standalone package gate uses React Native `0.87.0` and the Strict
+TypeScript API. The Expo example uses Expo SDK `57.0.15`, React Native
+`0.86.2`, React `19.2.3`, and Nitro Modules `0.37.0`, which is the React Native
+version supported by that Expo SDK. Do not override Expo's React Native version.
+
+When upgrading from 0.8.x, upgrade Nitro Modules to the 0.37.x range before
+installing this package, then rebuild the native app so the generated Nitro
+bindings and native runtime use the same major-minor version:
+
+```sh
+bun add react-native-nitro-modules@0.37.0 react-native-nitro-storage@0.9.0
+bunx expo prebuild
+```
+
+`SetStorageItem.get()` now returns a partial membership map because a member can
+be absent. Use `set.has(member)` for membership checks, or handle an indexed
+value as `true | undefined`; code that assigned the result to
+`Record<string, true>` must update its type.
+
+Nitro Storage requires an Expo development build or a bare React Native app;
+Expo Go and native Windows, macOS, and tvOS targets are not supported.
 
 For Expo development builds:
 
@@ -132,6 +151,11 @@ const raw = storage.getString("settings:theme", StorageScope.Disk);
 
 `storage.getString` / `setString` remain the raw API. Prefer typed items for
 application state.
+
+Native storage calls are synchronous JSI operations. Keep values and batches
+small enough for the JavaScript event loop; native and configured web-backend
+failures throw errors. Secure cache fallback is opt-in through
+`fallbackToCacheOnReadError`.
 
 ## Auth Tokens
 
@@ -224,8 +248,9 @@ loginMethod.setOrDelete(maybeMethod); // null/undefined deletes, value sets
 ## Set Items
 
 `createSetItem()` models set-membership state (seen ids, dismissed prompts)
-without hand-rolling `Record<string, true>` helpers. Adding an existing member
-or deleting an absent one is a no-op, so subscribers do not re-render.
+without hand-rolling membership helpers. Its `get()` result is a partial map,
+because absent members are not stored. Adding an existing member or deleting an
+absent one is a no-op, so subscribers do not re-render.
 
 ```ts
 import { createSetItem, StorageScope } from "react-native-nitro-storage";
@@ -420,6 +445,8 @@ behavior is appropriate.
 `getBatch()` preserves tuple value types, so IDEs infer each result from the
 matching item. `setBatch()` validates every item/value pair independently,
 including heterogeneous batches.
+Missing keys use each item's `defaultValue`; the native bridge preserves missing
+entries as `undefined` while reading the batch.
 
 ```ts
 import { getBatch, removeBatch, setBatch } from "react-native-nitro-storage";
@@ -536,10 +563,7 @@ import {
 } from "react-native-nitro-storage";
 import { createIndexedDBBackend } from "react-native-nitro-storage/indexeddb-backend";
 
-const backend = await createIndexedDBBackend({
-  dbName: "app-storage",
-  storeName: "kv",
-});
+const backend = await createIndexedDBBackend("app-storage", "kv");
 
 setWebDiskStorageBackend(backend);
 setWebSecureStorageBackend(backend);
@@ -575,12 +599,14 @@ const { storage, memoryItem } = createNitroStorageMock();
 
 ## Platform Support
 
-| Platform | Status                                             |
-| -------- | -------------------------------------------------- |
-| iOS      | Memory, Disk, and Keychain-backed Secure storage.  |
-| Android  | Memory, Disk, and Keystore-backed Secure storage.  |
-| Web      | Memory plus configurable Disk and Secure backends. |
-| Expo     | Development builds with the config plugin.         |
+| Platform               | Status                                             |
+| ---------------------- | -------------------------------------------------- |
+| iOS                    | Memory, Disk, and Keychain-backed Secure storage.  |
+| Android                | Memory, Disk, and Keystore-backed Secure storage.  |
+| Web                    | Memory plus configurable Disk and Secure backends. |
+| Expo development build | Supported with the config plugin.                  |
+| Expo Go                | Not supported for Nitro native modules.            |
+| Windows, macOS, tvOS   | Not supported by this package.                     |
 
 ## Documentation
 

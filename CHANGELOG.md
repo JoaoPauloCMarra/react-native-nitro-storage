@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file.
 
 The format follows Keep a Changelog and the project adheres to SemVer.
 
+## 0.9.0 - 2026-08-20
+
+### Breaking changes
+
+- `react-native-nitro-modules` now has a peer range of `>=0.37.0 <0.38.0`.
+  Upgrade Nitro Modules and rebuild the native app before using Nitro Storage
+  0.9.0; the previous 0.36.x range is not supported.
+- `SetStorageItem.get()` now returns `Partial<Record<TMember, true>>`. Use
+  `has()` for membership checks or handle an indexed value as `true | undefined`
+  instead of assuming every member exists.
+
+### Changed
+
+- Regenerated the shipped Nitro bindings with Nitro Modules and Nitrogen 0.37.0
+  while preserving synchronous JSI storage behavior across native platforms.
+- Native batch reads now preserve missing entries as `undefined`, matching the
+  TypeScript contract and allowing stored values that match the old internal
+  sentinel string.
+- The standalone package development and type baseline is now React Native
+  0.87.0. The Expo SDK 57 example remains on its supported React Native 0.86.2
+  baseline.
+
 ## 0.8.0 - 2026-08-12
 
 ### Breaking changes

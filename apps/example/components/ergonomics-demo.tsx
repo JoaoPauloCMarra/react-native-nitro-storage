@@ -324,7 +324,7 @@ const ExpireCard = memo(function ExpireCard() {
 export function ErgonomicsDemo() {
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionTitle}>v0.6 Ergonomics</Text>
+      <Text style={styles.sectionTitle}>Ergonomic APIs</Text>
       <ItemErgonomicsCard />
       <SetItemCard />
       <GroupsCard />

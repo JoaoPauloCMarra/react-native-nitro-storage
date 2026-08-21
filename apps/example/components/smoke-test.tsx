@@ -1,8 +1,16 @@
-import { memo, useCallback, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentRef,
+} from "react";
 import { Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import {
   AccessControl,
   BiometricLevel,
+  createIndexedDBBackend,
   createSecureAuthStorage,
   createStorageItem,
   flushWebStorageBackends,
@@ -11,6 +19,7 @@ import {
   getWebSecureStorageBackend,
   getBatch,
   isKeychainLockedError,
+  migrateFromMMKV,
   migrateToLatest,
   registerMigration,
   removeBatch,
@@ -18,6 +27,7 @@ import {
   setWebDiskStorageBackend,
   setWebSecureStorageBackend,
   setBatch,
+  secureItem,
   storage,
   StorageScope,
 } from "react-native-nitro-storage";
@@ -335,6 +345,46 @@ function buildTests(): SmokeTest[] {
         const val = storage.getString("__smoke_mig_key__", StorageScope.Disk);
         assert(val === "migrated", `expected migrated, got ${val}`);
         storage.deleteString("__smoke_mig_key__", StorageScope.Disk);
+      },
+    },
+    {
+      label: "MMKV migration + scoped secureItem",
+      fn: () => {
+        const item = createStorageItem({
+          key: "__smoke_mmkv__",
+          scope: StorageScope.Disk,
+          defaultValue: "",
+        });
+        const legacy = new Map([[item.key, "legacy-value"]]);
+        const migrated = migrateFromMMKV(
+          {
+            getString: (key) => legacy.get(key),
+            getNumber: () => undefined,
+            getBoolean: () => undefined,
+            contains: (key) => legacy.has(key),
+            delete: (key) => {
+              legacy.delete(key);
+            },
+            getAllKeys: () => Array.from(legacy.keys()),
+          },
+          item,
+          true,
+        );
+        assert(migrated, "expected MMKV value to migrate");
+        assert(item.get() === "legacy-value", "migrated value mismatch");
+        assert(!legacy.has(item.key), "expected legacy value to be deleted");
+        item.delete();
+
+        const secure = secureItem<string>({
+          key: "__smoke_secure_factory__",
+          defaultValue: "",
+        });
+        secure.set("secure-factory-value");
+        assert(
+          secure.get() === "secure-factory-value",
+          "secureItem factory mismatch",
+        );
+        secure.delete();
       },
     },
     {
@@ -937,13 +987,44 @@ function buildTests(): SmokeTest[] {
         assert(flushed, "expected backend flush to run");
       },
     },
+    {
+      label: "Web IndexedDB backend",
+      isSupported: () =>
+        Platform.OS === "web" && typeof indexedDB !== "undefined",
+      unsupportedReason: "IndexedDB is available only in web runtimes",
+      fn: async () => {
+        const backend = await createIndexedDBBackend(
+          "nitro-storage-smoke",
+          "keyvalue",
+        );
+        try {
+          backend.setItem("__smoke_idb__", "indexeddb-value");
+          await backend.flush?.();
+          assert(
+            backend.getItem("__smoke_idb__") === "indexeddb-value",
+            "IndexedDB value mismatch",
+          );
+          assert(
+            backend.getAllKeys().includes("__smoke_idb__"),
+            "IndexedDB key missing",
+          );
+          backend.removeItem("__smoke_idb__");
+          assert(
+            backend.getItem("__smoke_idb__") === null,
+            "IndexedDB value was not removed",
+          );
+        } finally {
+          backend.close?.();
+        }
+      },
+    },
   ];
 }
 
 export function SmokeTestRunner() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [running, setRunning] = useState(false);
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
 
   const run = useCallback(async () => {
     setRunning(true);
