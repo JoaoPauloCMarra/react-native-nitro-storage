@@ -3,6 +3,20 @@ name: Publish npm
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to validate and verify
+        required: true
+      npm_dist_tag:
+        description: npm dist-tag to publish or verify
+        required: false
+        default: latest
+      publish:
+        description: Publish the package for an existing release tag (use only for release recovery)
+        required: false
+        type: boolean
+        default: false
 
 env:
   BUN_VERSION: "1.3.14"
@@ -17,8 +31,9 @@ jobs:
       contents: read
       id-token: write
     env:
-      DIST_TAG: ${{ github.event.release.prerelease && 'next' || 'latest' }}
-      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      DIST_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.npm_dist_tag || github.event.release.prerelease && 'next' || 'latest' }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+      SHOULD_PUBLISH: ${{ github.event_name == 'release' || inputs.publish == true }}
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -27,6 +42,7 @@ jobs:
           persist-credentials: false
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        if: env.SHOULD_PUBLISH == 'true'
         with:
           bun-version: ${{ env.BUN_VERSION }}
           no-cache: true
@@ -38,11 +54,13 @@ jobs:
           package-manager-cache: false
 
       - name: Install C++ coverage tools
+        if: env.SHOULD_PUBLISH == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y clang llvm
 
       - run: bun install --frozen-lockfile
+        if: env.SHOULD_PUBLISH == 'true'
 
       - name: Validate release tag
         run: |
@@ -54,6 +72,7 @@ jobs:
           fi
 
       - name: Check npm version availability
+        if: env.SHOULD_PUBLISH == 'true'
         run: |
           package_name="$(node -p "require('./${PACKAGE_DIR}/package.json').name")"
           version="$(node -p "require('./${PACKAGE_DIR}/package.json').version")"
@@ -63,10 +82,45 @@ jobs:
           fi
 
       - name: Release preflight
+        if: env.SHOULD_PUBLISH == 'true'
         env:
           CC: clang
           CXX: clang++
         run: bun run release:preflight
 
       - name: Publish to npm
-        run: bun run publish-package -- --yes --with-coverage --tag="${DIST_TAG}"
+        if: env.SHOULD_PUBLISH == 'true'
+        working-directory: ${{ env.PACKAGE_DIR }}
+        run: npm publish --access public --tag="${DIST_TAG}" --ignore-scripts
+
+      - name: Verify published package
+        run: |
+          package_name="$(node -p "require('./${PACKAGE_DIR}/package.json').name")"
+          version="$(node -p "require('./${PACKAGE_DIR}/package.json').version")"
+          expected_head="$(git rev-parse HEAD)"
+          published_version=""
+          published_git_head=""
+          published_dist_tag=""
+
+          for attempt in $(seq 1 30); do
+            published_version="$(npm view "${package_name}@${version}" version 2>/dev/null || true)"
+            published_git_head="$(npm view "${package_name}@${version}" gitHead 2>/dev/null || true)"
+            published_dist_tag="$(npm view "${package_name}" "dist-tags.${DIST_TAG}" 2>/dev/null || true)"
+
+            if [ "${published_version}" = "${version}" ] &&
+              { [ -z "${published_git_head}" ] || [ "${published_git_head}" = "${expected_head}" ]; } &&
+              [ "${published_dist_tag}" = "${version}" ]; then
+              echo "Verified ${package_name}@${version} on npm with dist-tag ${DIST_TAG}."
+              exit 0
+            fi
+
+            echo "Waiting for npm registry propagation (attempt ${attempt}/30)..."
+            sleep 10
+          done
+
+          echo "::error::npm registry verification failed for ${package_name}@${version}"
+          echo "Published version: ${published_version}"
+          echo "Published gitHead: ${published_git_head}"
+          echo "Published ${DIST_TAG} dist-tag: ${published_dist_tag}"
+          echo "Expected gitHead: ${expected_head}"
+          exit 1
