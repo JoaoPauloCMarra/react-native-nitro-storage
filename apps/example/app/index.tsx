@@ -22,6 +22,7 @@ import {
   type WebDiskStorageBackend,
   type WebSecureStorageBackend,
 } from "react-native-nitro-storage";
+import { AdvancedApiDemo } from "../components/advanced-api-demo";
 import { ErgonomicsDemo } from "../components/ergonomics-demo";
 import {
   Button,
@@ -449,6 +450,7 @@ export default function HomeScreen() {
       <SmokeTestRunner />
 
       <ErgonomicsDemo />
+      <AdvancedApiDemo />
 
       <Card
         title="Memory Scope"

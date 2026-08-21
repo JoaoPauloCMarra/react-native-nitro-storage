@@ -371,7 +371,7 @@ void testRemoveGetAllSizeAndClearAcrossScopes() {
     assert(storage.size(1.0) == 0.0);
 }
 
-void testBatchMissingSentinel() {
+void testBatchMissingValue() {
     auto adapter = std::make_shared<MockAdapter>();
     HybridStorage storage(adapter);
 
@@ -380,7 +380,7 @@ void testBatchMissingSentinel() {
     const auto values = storage.getBatch({"existing", "missing"}, 1.0);
     assert(values.size() == 2);
     assert(values[0] == "value");
-    assert(values[1] == "__nitro_storage_batch_missing__::v1");
+    assert(!values[1].has_value());
 }
 
 void testMemoryAndSecureBatchPaths() {
@@ -390,14 +390,14 @@ void testMemoryAndSecureBatchPaths() {
     storage.setBatch({"m1", "m2"}, {"one", "two"}, 0.0);
     auto memoryValues = storage.getBatch({"m1", "missing"}, 0.0);
     assert(memoryValues[0] == "one");
-    assert(memoryValues[1] == "__nitro_storage_batch_missing__::v1");
+    assert(!memoryValues[1].has_value());
     storage.removeBatch({"m1", "m2"}, 0.0);
-    assert(storage.getBatch({"m1"}, 0.0)[0] == "__nitro_storage_batch_missing__::v1");
+    assert(!storage.getBatch({"m1"}, 0.0)[0].has_value());
 
     storage.setBatch({"s1", "s2"}, {"secure-one", "secure-two"}, 2.0);
     auto secureValues = storage.getBatch({"s1", "missing"}, 2.0);
     assert(secureValues[0] == "secure-one");
-    assert(secureValues[1] == "__nitro_storage_batch_missing__::v1");
+    assert(!secureValues[1].has_value());
     storage.removeBatch({"s1", "s2"}, 2.0);
     assert(!storage.has("s1", 2.0));
 
@@ -793,7 +793,7 @@ int main() {
 
     testSetGetAcrossScopes();
     testRemoveGetAllSizeAndClearAcrossScopes();
-    testBatchMissingSentinel();
+    testBatchMissingValue();
     testMemoryAndSecureBatchPaths();
     testBatchListeners();
     testListenerExceptionsAreIgnored();

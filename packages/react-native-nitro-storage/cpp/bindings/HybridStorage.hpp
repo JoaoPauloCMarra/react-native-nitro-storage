@@ -39,7 +39,7 @@ public:
     std::vector<std::string> getKeysByPrefix(const std::string& prefix, double scope) override;
     double size(double scope) override;
     void setBatch(const std::vector<std::string>& keys, const std::vector<std::string>& values, double scope) override;
-    std::vector<std::string> getBatch(const std::vector<std::string>& keys, double scope) override;
+    std::vector<std::optional<std::string>> getBatch(const std::vector<std::string>& keys, double scope) override;
     void removeBatch(const std::vector<std::string>& keys, double scope) override;
     void removeByPrefix(const std::string& prefix, double scope) override;
     std::function<void()> addOnChange(
