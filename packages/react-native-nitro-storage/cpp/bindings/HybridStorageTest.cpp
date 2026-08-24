@@ -40,9 +40,6 @@ public:
         for (const auto& [key, _] : disk_) {
             keys.push_back(key);
         }
-        if (diskSnapshotHook_) {
-            diskSnapshotHook_();
-        }
         return keys;
     }
 
@@ -207,9 +204,6 @@ public:
     int secureWritesAsyncCalls() const { return secureWritesAsyncCalls_; }
     const std::string& keychainGroup() const { return keychainGroup_; }
     int biometricLevel() const { return biometricLevel_; }
-    void setDiskSnapshotHook(std::function<void()> hook) {
-        diskSnapshotHook_ = std::move(hook);
-    }
 
 private:
     std::map<std::string, std::string> disk_;
@@ -220,7 +214,6 @@ private:
     int secureWritesAsyncCalls_ = 0;
     std::string keychainGroup_;
     int biometricLevel_ = -1;
-    std::function<void()> diskSnapshotHook_;
 };
 
 class ThrowingAdapter final : public ::NitroStorage::NativeStorageAdapter {
@@ -261,7 +254,11 @@ public:
     void setKeychainAccessGroup(const std::string&) override {}
 
     void setSecureBiometric(const std::string&, const std::string&) override {}
-    void setSecureBiometricWithLevel(const std::string&, const std::string&, int) override {}
+    void setSecureBiometricWithLevel(const std::string&, const std::string&, int) override {
+        throw std::runtime_error(
+            "[nitro-error:storage_compensation_failed] NitroStorage: Biometric promotion failed; rollback_error_count=2"
+        );
+    }
     std::optional<std::string> getSecureBiometric(const std::string&) override { return std::nullopt; }
     void deleteSecureBiometric(const std::string&) override {}
     bool hasSecureBiometric(const std::string&) override { return false; }
@@ -608,7 +605,21 @@ void testNativeTaggedErrorsPassThrough() {
     }
 }
 
-void testHydratedKeyIndexUpdates() {
+void testNativeCompensationTagPassThrough() {
+    auto adapter = std::make_shared<ThrowingAdapter>();
+    HybridStorage storage(adapter);
+
+    try {
+        storage.setSecureBiometricWithLevel("secure-key", "secure-value", 2.0);
+        assert(false && "Expected biometric promotion to throw");
+    } catch (const std::runtime_error& error) {
+        const std::string message = error.what();
+        assert(message.find("[nitro-error:storage_compensation_failed]") == 0);
+        assert(message.find("rollback_error_count=2") != std::string::npos);
+    }
+}
+
+void testAdapterBackedKeyQueries() {
     auto adapter = std::make_shared<MockAdapter>();
     HybridStorage storage(adapter);
 
@@ -626,7 +637,7 @@ void testHydratedKeyIndexUpdates() {
     assert(storage.getAllKeys(1.0).empty());
 }
 
-void testHydratedBatchKeyIndexUpdates() {
+void testAdapterBackedBatchKeyQueries() {
     auto adapter = std::make_shared<MockAdapter>();
     HybridStorage storage(adapter);
 
@@ -673,35 +684,96 @@ void testConcurrentMemoryAccess() {
     assert(storage->getAllKeys(0.0).size() == 64);
 }
 
-void testKeyMutationDuringHydrationRemainsIndexed() {
+void testExternalMemorySizeTracksRetainedState() {
     auto adapter = std::make_shared<MockAdapter>();
     auto storage = std::make_shared<HybridStorage>(adapter);
-    std::atomic<bool> snapshotReady{false};
-    std::atomic<bool> releaseSnapshot{false};
 
-    adapter->setDiskSnapshotHook([&]() {
-        snapshotReady.store(true, std::memory_order_release);
-        while (!releaseSnapshot.load(std::memory_order_acquire)) {
-            std::this_thread::yield();
-        }
+    assert(storage->getExternalMemorySize() == 0);
+
+    const std::string retainedKey(256, 'k');
+    const std::string retainedValue(512, 'v');
+    storage->set(retainedKey, retainedValue, 0.0);
+    const auto withMemoryValue = storage->getExternalMemorySize();
+    assert(withMemoryValue >= retainedKey.capacity() + retainedValue.capacity());
+
+    auto unsubscribe = storage->addOnChange(
+        0.0,
+        [](const std::string&, const std::optional<std::string>&) {});
+    const auto withListener = storage->getExternalMemorySize();
+    assert(withListener > withMemoryValue);
+
+    storage->clear(0.0);
+    const auto afterClear = storage->getExternalMemorySize();
+    assert(afterClear > 0);
+
+    unsubscribe();
+    assert(storage->getExternalMemorySize() >= afterClear);
+}
+
+void testKeyQueriesDelegateToAdapter() {
+    auto adapter = std::make_shared<MockAdapter>();
+    HybridStorage storage(adapter);
+
+    adapter->setDisk("external-a", "1");
+    adapter->setDisk("external-b", "2");
+    adapter->setSecure("secure-external", "s1");
+    adapter->setSecureBiometricWithLevel("bio-external", "b1", 2);
+
+    assert(storage.has("external-a", 1.0));
+    assert(storage.has("secure-external", 2.0));
+    assert(storage.has("bio-external", 2.0));
+    assert(!storage.has("unknown", 1.0));
+
+    assert(storage.size(1.0) == 2.0);
+    assert(storage.size(2.0) == 2.0);
+
+    const auto diskKeys = storage.getAllKeys(1.0);
+    assert(diskKeys.size() == 2);
+    assert(contains(diskKeys, "external-a"));
+    assert(contains(diskKeys, "external-b"));
+
+    const auto prefixedDiskKeys = storage.getKeysByPrefix("external-", 1.0);
+    assert(prefixedDiskKeys.size() == 2);
+
+    const auto prefixedSecureKeys = storage.getKeysByPrefix("bio-", 2.0);
+    assert(prefixedSecureKeys.size() == 1);
+    assert(prefixedSecureKeys[0] == "bio-external");
+
+    adapter->deleteDisk("external-a");
+    assert(!storage.has("external-a", 1.0));
+    assert(storage.size(1.0) == 1.0);
+
+    adapter->deleteSecureBiometric("bio-external");
+    assert(!storage.has("bio-external", 2.0));
+    assert(storage.getKeysByPrefix("bio-", 2.0).empty());
+
+    adapter->clearDisk();
+    assert(storage.getAllKeys(1.0).empty());
+    assert(storage.size(1.0) == 0.0);
+}
+
+void testDelegatedQueriesFireChangeEvents() {
+    auto adapter = std::make_shared<MockAdapter>();
+    auto storage = std::make_shared<HybridStorage>(adapter);
+    std::vector<std::pair<std::string, std::optional<std::string>>> events;
+
+    auto unsubscribe = storage->addOnChange(1.0, [&](const std::string& key, const std::optional<std::string>& value) {
+        events.push_back({key, value});
     });
 
-    std::thread hydration([&]() {
-        storage->getAllKeys(1.0);
-    });
-    while (!snapshotReady.load(std::memory_order_acquire)) {
-        std::this_thread::yield();
-    }
+    storage->set("delegated-key", "value", 1.0);
+    storage->remove("delegated-key", 1.0);
+    storage->clear(1.0);
 
-    std::thread writer([&]() {
-        storage->set("during-hydration", "value", 1.0);
-    });
-    releaseSnapshot.store(true, std::memory_order_release);
-    hydration.join();
-    writer.join();
+    assert(events.size() == 3);
+    assert(events[0].first == "delegated-key" && events[0].second.value() == "value");
+    assert(events[1].first == "delegated-key" && !events[1].second.has_value());
+    assert(events[2].first.empty() && !events[2].second.has_value());
 
-    const auto keys = storage->getAllKeys(1.0);
-    assert(std::find(keys.begin(), keys.end(), "during-hydration") != keys.end());
+    assert(!storage->has("delegated-key", 1.0));
+    assert(storage->getAllKeys(1.0).empty());
+
+    unsubscribe();
 }
 
 void testListenerFastPathToggles() {
@@ -806,10 +878,13 @@ int main() {
     testClearNotifiesScope();
     testInvalidInputsAndMissingAdapter();
     testNativeTaggedErrorsPassThrough();
-    testHydratedKeyIndexUpdates();
-    testHydratedBatchKeyIndexUpdates();
+    testNativeCompensationTagPassThrough();
+    testAdapterBackedKeyQueries();
+    testAdapterBackedBatchKeyQueries();
     testConcurrentMemoryAccess();
-    testKeyMutationDuringHydrationRemainsIndexed();
+    testExternalMemorySizeTracksRetainedState();
+    testKeyQueriesDelegateToAdapter();
+    testDelegatedQueriesFireChangeEvents();
     testListenerFastPathToggles();
     testConcurrentListenerChurn();
     testUnknownNativeFailuresAreWrapped();

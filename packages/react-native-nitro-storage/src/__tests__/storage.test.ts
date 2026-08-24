@@ -40,6 +40,7 @@ import {
   useStorage,
   useStorageSelector,
   type StorageMetricsEvent,
+  type StorageBatchChangeEvent,
   StorageScope,
   AccessControl,
   BiometricLevel,
@@ -50,12 +51,17 @@ import {
   registerMigration,
   runTransaction,
   storage,
+  isStorageError,
   isKeychainLockedError,
 } from "../index";
 import {
   escapeCollidingRawValue,
   serializeWithPrimitiveFastPath,
 } from "../internal";
+import {
+  DEFAULT_SECURE_WRITES_ASYNC,
+  resolveNativeWriteBuffering,
+} from "../capabilities";
 
 beforeEach(() => {
   storage.setDiskWritesAsync(false);
@@ -240,6 +246,33 @@ describe("createStorageItem", () => {
     expect(mockHybridObject.setSecureWritesAsync).toHaveBeenCalledWith(true);
   });
 
+  it("does not update secure write capabilities when native configuration fails", () => {
+    const { Platform } =
+      require("react-native") as typeof import("react-native");
+    const originalOS = Platform.OS;
+    Object.defineProperty(Platform, "OS", {
+      value: "android",
+      configurable: true,
+    });
+
+    try {
+      storage.setSecureWritesAsync(false);
+      mockHybridObject.setSecureWritesAsync.mockImplementationOnce(() => {
+        throw new Error("native configuration failed");
+      });
+
+      expect(() => storage.setSecureWritesAsync(true)).toThrow(
+        "native configuration failed",
+      );
+      expect(storage.getCapabilities().writeBuffering.secure).toBe(false);
+    } finally {
+      Object.defineProperty(Platform, "OS", {
+        value: originalOS,
+        configurable: true,
+      });
+    }
+  });
+
   it("coalesces disk writes until flush when configured per item", () => {
     const item = createStorageItem({
       key: "flush-disk",
@@ -348,6 +381,33 @@ describe("createStorageItem", () => {
     expect(capabilities.writeBuffering.secure).toBe(false);
     expect(capabilities.backend.disk).toBe("platform-preferences");
     expect(capabilities.backend.secure).toBe("platform-secure-storage");
+  });
+
+  it("defaults secure writes to sync and reports opt-in async buffering", () => {
+    expect(DEFAULT_SECURE_WRITES_ASYNC).toBe(false);
+    expect(resolveNativeWriteBuffering("android").secure).toBe(false);
+    expect(resolveNativeWriteBuffering("android", true).secure).toBe(true);
+    expect(resolveNativeWriteBuffering("android", false).secure).toBe(false);
+    expect(resolveNativeWriteBuffering("ios").secure).toBe(false);
+
+    const { Platform } =
+      require("react-native") as typeof import("react-native");
+    const originalOS = Platform.OS;
+    Object.defineProperty(Platform, "OS", {
+      value: "android",
+      configurable: true,
+    });
+    try {
+      storage.setSecureWritesAsync(DEFAULT_SECURE_WRITES_ASYNC);
+      expect(storage.getCapabilities().writeBuffering.secure).toBe(false);
+      storage.setSecureWritesAsync(false);
+      expect(storage.getCapabilities().writeBuffering.secure).toBe(false);
+    } finally {
+      Object.defineProperty(Platform, "OS", {
+        value: originalOS,
+        configurable: true,
+      });
+    }
   });
 
   it("reports secure write buffering per active mode", () => {
@@ -924,9 +984,7 @@ describe("useStorage", () => {
       defaultValue: "fallback",
     });
 
-    mockHybridObject.getBatch.mockReturnValue([
-      "__nitro_storage_batch_missing__::v1",
-    ]);
+    mockHybridObject.getBatch.mockReturnValue([undefined]);
 
     const values = getBatch([item], StorageScope.Disk);
     expect(values).toEqual(["fallback"]);
@@ -1089,7 +1147,7 @@ describe("useStorage", () => {
     mockHybridObject.getAllKeys.mockReturnValueOnce(["a", "b"]);
     mockHybridObject.getBatch.mockReturnValueOnce([
       serializeWithPrimitiveFastPath("x"),
-      "__nitro_storage_batch_missing__::v1",
+      undefined,
     ]);
     expect(storage.getAll(StorageScope.Disk)).toEqual({
       a: serializeWithPrimitiveFastPath("x"),
@@ -1565,21 +1623,6 @@ describe("Batch Operations", () => {
     expect(mockHybridObject.get).not.toHaveBeenCalled();
   });
 
-  it("treats native batch missing sentinel as undefined", () => {
-    const sentinelItem = createStorageItem({
-      key: "batch-native-sentinel",
-      scope: StorageScope.Disk,
-      defaultValue: "default",
-    });
-
-    mockHybridObject.getBatch.mockReturnValue([
-      "__nitro_storage_batch_missing__::v1",
-    ]);
-
-    const values = getBatch([sentinelItem], StorageScope.Disk);
-    expect(values).toEqual(["default"]);
-  });
-
   it("unescapes collision-prefixed values exactly once in getAll and getByPrefix", () => {
     const colliding = "__nitro_storage_escaped__:raw-value";
     const stored = escapeCollidingRawValue(colliding);
@@ -1637,6 +1680,52 @@ describe("Batch Operations", () => {
     expect(event.scope).toBe(StorageScope.Disk);
     expect(event.oldValue).toBe(colliding);
     expect(event.newValue).toBe(colliding);
+  });
+
+  it("invalidates every secure representation for native callbacks", () => {
+    const plainItem = createStorageItem({
+      key: "native-shared-cache",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      readCache: true,
+    });
+    const biometricItem = createStorageItem({
+      key: "native-shared-cache",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      biometric: true,
+      readCache: true,
+    });
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("plain-old"),
+    );
+    mockHybridObject.getSecureBiometric.mockReturnValue(
+      serializeWithPrimitiveFastPath("bio-fresh"),
+    );
+
+    expect(plainItem.get()).toBe("plain-old");
+    expect(biometricItem.get()).toBe("bio-fresh");
+
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("plain-fresh"),
+    );
+    const unsubscribe = storage.subscribeKey(
+      StorageScope.Secure,
+      "native-shared-cache",
+      () => {},
+    );
+    const onChangeCallback = mockHybridObject.addOnChange.mock.calls.find(
+      (call) => call[0] === StorageScope.Secure,
+    )?.[1] as ((key: string, value: string | undefined) => void) | undefined;
+
+    onChangeCallback?.(
+      "native-shared-cache",
+      serializeWithPrimitiveFastPath("bio-event"),
+    );
+
+    expect(plainItem.get()).toBe("plain-fresh");
+    expect(biometricItem.get()).toBe("bio-fresh");
+    unsubscribe();
   });
 });
 
@@ -1933,6 +2022,115 @@ describe("v0.2 edge cases", () => {
     ).toThrow("rollback");
 
     expect(item.get()).toBe("initial");
+  });
+
+  it("restores a memory TTL deadline exactly during transaction rollback", () => {
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(1_000);
+    const expired = jest.fn();
+    const item = createStorageItem<string>({
+      key: "tx-memory-ttl-deadline",
+      scope: StorageScope.Memory,
+      defaultValue: "default",
+      expiration: { ttlMs: 100 },
+      onExpired: expired,
+    });
+    item.set("before");
+
+    nowSpy.mockReturnValue(1_050);
+    expect(() =>
+      runTransaction(StorageScope.Memory, (tx) => {
+        tx.setItem(item, "during");
+        nowSpy.mockReturnValue(1_060);
+        throw new Error("rollback ttl");
+      }),
+    ).toThrow("rollback ttl");
+
+    nowSpy.mockReturnValue(1_090);
+    expect(item.get()).toBe("before");
+    nowSpy.mockReturnValue(1_101);
+    expect(item.get()).toBe("default");
+    expect(expired).toHaveBeenCalledWith("tx-memory-ttl-deadline");
+    nowSpy.mockRestore();
+  });
+
+  it("keeps the first memory TTL snapshot across raw updates", () => {
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(4_000);
+    const item = createStorageItem<string>({
+      key: "tx-memory-ttl-first-snapshot",
+      scope: StorageScope.Memory,
+      defaultValue: "default",
+      expiration: { ttlMs: 100 },
+    });
+    item.set("before");
+    expect(item.get()).toBe("before");
+
+    nowSpy.mockReturnValue(4_050);
+    expect(() =>
+      runTransaction(StorageScope.Memory, (tx) => {
+        tx.setRaw("tx-memory-ttl-first-snapshot", JSON.stringify("step-1"));
+        nowSpy.mockReturnValue(4_060);
+        tx.setRaw("tx-memory-ttl-first-snapshot", JSON.stringify("step-2"));
+        throw new Error("first ttl snapshot");
+      }),
+    ).toThrow("first ttl snapshot");
+
+    nowSpy.mockReturnValue(4_099);
+    expect(item.get()).toBe("before");
+    nowSpy.mockReturnValue(4_101);
+    expect(item.get()).toBe("default");
+    nowSpy.mockRestore();
+  });
+
+  it("expires a restored memory value when its original deadline elapsed during rollback", () => {
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(2_000);
+    const item = createStorageItem<string>({
+      key: "tx-memory-ttl-expired-rollback",
+      scope: StorageScope.Memory,
+      defaultValue: "default",
+      expiration: { ttlMs: 50 },
+    });
+    item.set("before");
+
+    expect(() =>
+      runTransaction(StorageScope.Memory, (tx) => {
+        tx.setItem(item, "during");
+        nowSpy.mockReturnValue(2_051);
+        throw new Error("expired rollback");
+      }),
+    ).toThrow("expired rollback");
+
+    expect(item.get()).toBe("default");
+    nowSpy.mockRestore();
+  });
+
+  it("restores absent and non-TTL memory snapshots without inventing expiry", () => {
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(3_000);
+    const ttlItem = createStorageItem<string>({
+      key: "tx-memory-ttl-absent",
+      scope: StorageScope.Memory,
+      defaultValue: "default",
+      expiration: { ttlMs: 100 },
+    });
+    const plainItem = createStorageItem<string>({
+      key: "tx-memory-no-ttl",
+      scope: StorageScope.Memory,
+      defaultValue: "default",
+    });
+    plainItem.set("before");
+
+    expect(() =>
+      runTransaction(StorageScope.Memory, (tx) => {
+        tx.setItem(ttlItem, "created");
+        tx.setItem(plainItem, "during");
+        throw new Error("absent rollback");
+      }),
+    ).toThrow("absent rollback");
+
+    expect(ttlItem.has()).toBe(false);
+    expect(ttlItem.get()).toBe("default");
+    nowSpy.mockReturnValue(3_500);
+    expect(plainItem.get()).toBe("before");
+    nowSpy.mockRestore();
   });
 
   it("supports transaction removeItem and getItem with scope checks", () => {
@@ -2280,6 +2478,32 @@ describe("storage raw APIs", () => {
 });
 
 describe("isKeychainLockedError", () => {
+  it("matches only the requested stable storage error code", () => {
+    const locked = new Error(
+      "[nitro-error:keychain_locked] NitroStorage: locked",
+    );
+    const authenticationRequired = new Error(
+      "[nitro-error:authentication_required] NitroStorage: auth required",
+    );
+    const invalidated = new Error(
+      "[nitro-error:key_invalidated] NitroStorage: invalidated",
+    );
+
+    expect(isStorageError(locked, "keychain_locked")).toBe(true);
+    expect(isStorageError(authenticationRequired, "keychain_locked")).toBe(
+      false,
+    );
+    expect(isStorageError(invalidated, "keychain_locked")).toBe(false);
+    expect(isStorageError(locked, "authentication_required")).toBe(false);
+    expect(
+      isStorageError(
+        new Error("errSecInteractionNotAllowed"),
+        "keychain_locked",
+      ),
+    ).toBe(false);
+    expect(isStorageError(null, "keychain_locked")).toBe(false);
+  });
+
   it("classifies storage errors into stable codes from tagged messages", () => {
     expect(
       getStorageErrorCode(
@@ -2470,6 +2694,791 @@ describe("secure write coalescing", () => {
     item.set("pending-value");
     expect(item.get()).toBe("pending-value");
   });
+
+  it("flushes a pending plain secure write before biometric promotion", async () => {
+    const plain = createStorageItem({
+      key: "coalesced-promotion",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      coalesceSecureWrites: true,
+    });
+    const biometric = createStorageItem({
+      key: "coalesced-promotion",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+
+    plain.set("plain-before-promotion");
+    biometric.set("biometric-value");
+    await Promise.resolve();
+
+    expect(mockHybridObject.setBatch).toHaveBeenCalledWith(
+      ["coalesced-promotion"],
+      [serializeWithPrimitiveFastPath("plain-before-promotion")],
+      StorageScope.Secure,
+    );
+    expect(mockHybridObject.setSecureBiometricWithLevel).toHaveBeenCalledWith(
+      "coalesced-promotion",
+      serializeWithPrimitiveFastPath("biometric-value"),
+      BiometricLevel.BiometryOnly,
+    );
+    expect(mockHybridObject.setBatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains a pending plain secure write when promotion pre-flush fails and retries it", () => {
+    const plain = createStorageItem({
+      key: "coalesced-promotion-flush-failure",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      coalesceSecureWrites: true,
+    });
+    const biometric = createStorageItem({
+      key: "coalesced-promotion-flush-failure",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+    const flushFailure = new Error("plain flush failed");
+    mockHybridObject.setBatch.mockImplementationOnce(() => {
+      throw flushFailure;
+    });
+
+    plain.set("queued-before-failure");
+    expect(() => biometric.set("not-promoted")).toThrow(flushFailure);
+    expect(mockHybridObject.setSecureBiometricWithLevel).not.toHaveBeenCalled();
+
+    storage.flushSecureWrites();
+    expect(mockHybridObject.setBatch).toHaveBeenLastCalledWith(
+      ["coalesced-promotion-flush-failure"],
+      [serializeWithPrimitiveFastPath("queued-before-failure")],
+      StorageScope.Secure,
+    );
+  });
+
+  it("keeps the flushed plain value after biometric promotion fails", async () => {
+    const plain = createStorageItem({
+      key: "coalesced-promotion-failure",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      coalesceSecureWrites: true,
+    });
+    const biometric = createStorageItem({
+      key: "coalesced-promotion-failure",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+    const promotionFailure = new Error("promotion failed");
+    mockHybridObject.setSecureBiometricWithLevel.mockImplementationOnce(() => {
+      throw promotionFailure;
+    });
+
+    plain.set("plain-before-failure");
+    expect(() => biometric.set("not-promoted")).toThrow(promotionFailure);
+    await Promise.resolve();
+
+    expect(mockHybridObject.setBatch).toHaveBeenCalledTimes(1);
+    expect(mockHybridObject.setSecureBiometricWithLevel).toHaveBeenCalledTimes(
+      1,
+    );
+  });
+
+  it("replays a newer plain secure write after a successful promotion", async () => {
+    const plain = createStorageItem({
+      key: "coalesced-promotion-newer-plain",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      coalesceSecureWrites: true,
+    });
+    const biometric = createStorageItem({
+      key: "coalesced-promotion-newer-plain",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+
+    plain.set("plain-before-promotion");
+    biometric.set("biometric-value");
+    plain.set("plain-after-promotion");
+    await Promise.resolve();
+
+    expect(mockHybridObject.setBatch).toHaveBeenNthCalledWith(
+      1,
+      ["coalesced-promotion-newer-plain"],
+      [serializeWithPrimitiveFastPath("plain-before-promotion")],
+      StorageScope.Secure,
+    );
+    expect(mockHybridObject.setBatch).toHaveBeenNthCalledWith(
+      2,
+      ["coalesced-promotion-newer-plain"],
+      [serializeWithPrimitiveFastPath("plain-after-promotion")],
+      StorageScope.Secure,
+    );
+  });
+});
+
+describe("pending coalesced tombstones", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    storage.clearAll();
+  });
+
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "hides the persisted value after a queued delete in scope %s",
+    (scope) => {
+      const item = createStorageItem<string>({
+        key: `queued-delete-${scope}`,
+        scope,
+        defaultValue: "default",
+        ...(scope === StorageScope.Disk
+          ? { coalesceDiskWrites: true }
+          : { coalesceSecureWrites: true }),
+      });
+      const persisted = serializeWithPrimitiveFastPath("persisted");
+      mockHybridObject.get.mockReturnValue(persisted);
+
+      item.delete();
+
+      expect(item.get()).toBe("default");
+    },
+  );
+
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "does not resurrect a queued delete through TTL reads in scope %s",
+    (scope) => {
+      const nowSpy = jest.spyOn(Date, "now").mockReturnValue(1_000);
+      try {
+        const item = createStorageItem<string>({
+          key: `queued-delete-ttl-${scope}`,
+          scope,
+          defaultValue: "default",
+          expiration: { ttlMs: 500 },
+          ...(scope === StorageScope.Disk
+            ? { coalesceDiskWrites: true }
+            : { coalesceSecureWrites: true }),
+        });
+        mockHybridObject.get.mockReturnValue(
+          JSON.stringify({
+            __nitroStorageEnvelope: true,
+            expiresAt: 1_500,
+            payload: serializeWithPrimitiveFastPath("persisted"),
+          }),
+        );
+
+        item.delete();
+        nowSpy.mockReturnValue(1_250);
+        expect(item.get()).toBe("default");
+        nowSpy.mockReturnValue(1_600);
+        expect(item.get()).toBe("default");
+        expect(mockHybridObject.get).toHaveBeenCalledTimes(1);
+      } finally {
+        nowSpy.mockRestore();
+      }
+    },
+  );
+
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "uses the default value when an updater follows a queued delete in scope %s",
+    (scope) => {
+      const item = createStorageItem<string>({
+        key: `queued-delete-updater-${scope}`,
+        scope,
+        defaultValue: "default",
+        ...(scope === StorageScope.Disk
+          ? { coalesceDiskWrites: true }
+          : { coalesceSecureWrites: true }),
+      });
+      mockHybridObject.get.mockReturnValue(
+        serializeWithPrimitiveFastPath("persisted"),
+      );
+
+      item.delete();
+      item.set((previous) => `${previous}-replacement`);
+
+      expect(item.get()).toBe("default-replacement");
+      if (scope === StorageScope.Disk) {
+        storage.flushDiskWrites();
+      } else {
+        storage.flushSecureWrites();
+      }
+      expect(mockHybridObject.setBatch).toHaveBeenCalledWith(
+        [`queued-delete-updater-${scope}`],
+        [serializeWithPrimitiveFastPath("default-replacement")],
+        scope,
+      );
+    },
+  );
+
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "returns the default value from batch reads after a queued delete in scope %s",
+    (scope) => {
+      const item = createStorageItem<string>({
+        key: `queued-delete-batch-${scope}`,
+        scope,
+        defaultValue: "default",
+        ...(scope === StorageScope.Disk
+          ? { coalesceDiskWrites: true }
+          : { coalesceSecureWrites: true }),
+      });
+      const persisted = serializeWithPrimitiveFastPath("persisted");
+      mockHybridObject.get.mockReturnValue(persisted);
+      mockHybridObject.getBatch.mockReturnValue([persisted]);
+
+      item.delete();
+      mockHybridObject.getBatch.mockClear();
+
+      expect(getBatch([item], scope)).toEqual(["default"]);
+      expect(mockHybridObject.getBatch).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("rename migration and pending writes", () => {
+  const backendValues = new Map<string, string>();
+  let failingSetKey: string | undefined;
+  let setFailure: Error | undefined;
+  let failingRemoveKey: string | undefined;
+  let removeFailure: Error | undefined;
+  let removeBeforeFailure = false;
+
+  beforeEach(() => {
+    backendValues.clear();
+    failingSetKey = undefined;
+    setFailure = undefined;
+    failingRemoveKey = undefined;
+    removeFailure = undefined;
+    removeBeforeFailure = false;
+    jest.clearAllMocks();
+    mockHybridObject.get.mockImplementation((key: string) =>
+      backendValues.get(key),
+    );
+    mockHybridObject.getSecureBiometric.mockReturnValue(undefined);
+    mockHybridObject.has.mockImplementation((key: string) =>
+      backendValues.has(key),
+    );
+    mockHybridObject.set.mockImplementation((key: string, value: string) => {
+      if (key === failingSetKey && setFailure) {
+        throw setFailure;
+      }
+      backendValues.set(key, value);
+    });
+    mockHybridObject.remove.mockImplementation((key: string) => {
+      if (key === failingRemoveKey && removeFailure) {
+        if (removeBeforeFailure) {
+          backendValues.delete(key);
+        }
+        throw removeFailure;
+      }
+      backendValues.delete(key);
+    });
+    mockHybridObject.setBatch.mockImplementation(
+      (keys: string[], values: string[]) => {
+        if (keys.some((key) => key === failingSetKey) && setFailure) {
+          throw setFailure;
+        }
+        keys.forEach((key, index) => {
+          const value = values[index];
+          if (value !== undefined) {
+            backendValues.set(key, value);
+          }
+        });
+      },
+    );
+    mockHybridObject.removeBatch.mockImplementation((keys: string[]) => {
+      if (keys.some((key) => key === failingRemoveKey) && removeFailure) {
+        if (removeBeforeFailure) {
+          keys.forEach((key) => backendValues.delete(key));
+        }
+        throw removeFailure;
+      }
+      keys.forEach((key) => backendValues.delete(key));
+    });
+    mockHybridObject.clear.mockImplementation(() => {
+      backendValues.clear();
+    });
+    storage.clearAll();
+    backendValues.clear();
+  });
+
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "does not migrate a stale legacy value over a queued delete in scope %s",
+    (scope) => {
+      const legacyKey = `rename-delete-legacy-${scope}`;
+      const currentKey = `rename-delete-current-${scope}`;
+      backendValues.set(legacyKey, serializeWithPrimitiveFastPath("stale"));
+      const item = createStorageItem<string>({
+        key: currentKey,
+        scope,
+        defaultValue: "default",
+        renameFrom: legacyKey,
+        ...(scope === StorageScope.Disk
+          ? { coalesceDiskWrites: true }
+          : { coalesceSecureWrites: true }),
+      });
+
+      item.delete();
+
+      expect(item.get()).toBe("default");
+      expect(item.has()).toBe(false);
+    },
+  );
+
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "does not migrate a stale legacy value over a queued newer set in scope %s",
+    (scope) => {
+      const legacyKey = `rename-set-legacy-${scope}`;
+      const currentKey = `rename-set-current-${scope}`;
+      backendValues.set(legacyKey, serializeWithPrimitiveFastPath("stale"));
+      const item = createStorageItem<string>({
+        key: currentKey,
+        scope,
+        defaultValue: "default",
+        renameFrom: legacyKey,
+        ...(scope === StorageScope.Disk
+          ? { coalesceDiskWrites: true }
+          : { coalesceSecureWrites: true }),
+      });
+
+      item.set("new");
+
+      expect(item.get()).toBe("new");
+      expect(item.has()).toBe(true);
+    },
+  );
+
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "migrates a legacy value when there is no pending current write in scope %s",
+    (scope) => {
+      const legacyKey = `rename-normal-legacy-${scope}`;
+      const currentKey = `rename-normal-current-${scope}`;
+      backendValues.set(legacyKey, serializeWithPrimitiveFastPath("legacy"));
+      const item = createStorageItem<string>({
+        key: currentKey,
+        scope,
+        defaultValue: "default",
+        renameFrom: legacyKey,
+      });
+
+      expect(item.get()).toBe("legacy");
+      expect(item.has()).toBe(true);
+      expect(backendValues.get(currentKey)).toBe(
+        serializeWithPrimitiveFastPath("legacy"),
+      );
+      expect(backendValues.has(legacyKey)).toBe(false);
+    },
+  );
+
+  it("invalidates a cached biometric rename source after cleanup", () => {
+    const biometricValues = new Map<string, string>();
+    mockHybridObject.getSecureBiometric.mockImplementation((key: string) =>
+      biometricValues.get(key),
+    );
+    mockHybridObject.hasSecureBiometric.mockImplementation((key: string) =>
+      biometricValues.has(key),
+    );
+    mockHybridObject.setSecureBiometricWithLevel.mockImplementation(
+      (key: string, value: string) => {
+        biometricValues.set(key, value);
+        backendValues.delete(key);
+      },
+    );
+    mockHybridObject.deleteSecureBiometric.mockImplementation((key: string) => {
+      biometricValues.delete(key);
+    });
+
+    const sourceKey = "rename-cached-biometric-source";
+    const currentKey = "rename-cached-biometric-current";
+    const sourceValue = serializeWithPrimitiveFastPath("cached-legacy");
+    biometricValues.set(sourceKey, sourceValue);
+    const source = createStorageItem<string>({
+      key: sourceKey,
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      biometric: true,
+      readCache: true,
+    });
+    expect(source.get()).toBe("cached-legacy");
+
+    const current = createStorageItem<string>({
+      key: currentKey,
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      biometric: true,
+      readCache: true,
+      renameFrom: sourceKey,
+    });
+
+    expect(current.get()).toBe("cached-legacy");
+    expect(source.get()).toBe("default");
+    expect(biometricValues.has(sourceKey)).toBe(false);
+  });
+
+  it("restores a parallel biometric alias after plain secure cleanup fails", () => {
+    const biometricValues = new Map<string, string>();
+    mockHybridObject.getSecureBiometric.mockImplementation((key: string) =>
+      biometricValues.get(key),
+    );
+    mockHybridObject.hasSecureBiometric.mockImplementation((key: string) =>
+      biometricValues.has(key),
+    );
+    mockHybridObject.setSecureBiometricWithLevel.mockImplementation(
+      (key: string, value: string) => {
+        biometricValues.set(key, value);
+        backendValues.delete(key);
+      },
+    );
+    mockHybridObject.deleteSecureBiometric.mockImplementation((key: string) => {
+      biometricValues.delete(key);
+    });
+    mockHybridObject.remove.mockImplementation((key: string) => {
+      if (key === failingRemoveKey && removeFailure) {
+        backendValues.delete(key);
+        biometricValues.delete(key);
+        throw removeFailure;
+      }
+      backendValues.delete(key);
+      biometricValues.delete(key);
+    });
+
+    const legacyKey = "parallel-secure-legacy";
+    const currentKey = "parallel-secure-current";
+    const currentValue = serializeWithPrimitiveFastPath("current");
+    const legacyValue = serializeWithPrimitiveFastPath("legacy");
+    const biometricValue = serializeWithPrimitiveFastPath("biometric");
+    backendValues.set(currentKey, currentValue);
+    backendValues.set(legacyKey, legacyValue);
+    biometricValues.set(legacyKey, biometricValue);
+    failingRemoveKey = legacyKey;
+    removeFailure = new Error("parallel alias cleanup failed");
+    removeBeforeFailure = true;
+
+    const item = createStorageItem<string>({
+      key: currentKey,
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      renameFrom: legacyKey,
+    });
+
+    expect(() => item.set("new")).toThrow("parallel alias cleanup failed");
+    expect(backendValues.get(currentKey)).toBe(currentValue);
+    expect(backendValues.get(legacyKey)).toBe(legacyValue);
+    expect(biometricValues.get(legacyKey)).toBe(biometricValue);
+  });
+
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "runs rename migration before batch reads in scope %s",
+    (scope) => {
+      const legacyKey = `rename-batch-legacy-${scope}`;
+      const currentKey = `rename-batch-current-${scope}`;
+      const legacyValue = serializeWithPrimitiveFastPath("legacy");
+      backendValues.set(legacyKey, legacyValue);
+      const item = createStorageItem<string>({
+        key: currentKey,
+        scope,
+        defaultValue: "default",
+        renameFrom: legacyKey,
+      });
+
+      expect(getBatch([item], scope)).toEqual(["legacy"]);
+      expect(backendValues.get(currentKey)).toBe(legacyValue);
+      expect(backendValues.has(legacyKey)).toBe(false);
+    },
+  );
+
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "flushes a pending legacy set before migration in scope %s",
+    (scope) => {
+      const legacyKey = `rename-pending-legacy-set-${scope}`;
+      const currentKey = `rename-pending-current-set-${scope}`;
+      backendValues.set(legacyKey, serializeWithPrimitiveFastPath("stale"));
+      const legacyItem = createStorageItem<string>({
+        key: legacyKey,
+        scope,
+        defaultValue: "default",
+        ...(scope === StorageScope.Disk
+          ? { coalesceDiskWrites: true }
+          : { coalesceSecureWrites: true }),
+      });
+      legacyItem.set("pending");
+      const currentItem = createStorageItem<string>({
+        key: currentKey,
+        scope,
+        defaultValue: "default",
+        renameFrom: legacyKey,
+      });
+
+      expect(currentItem.get()).toBe("pending");
+      expect(backendValues.get(currentKey)).toBe(
+        serializeWithPrimitiveFastPath("pending"),
+      );
+      expect(backendValues.has(legacyKey)).toBe(false);
+    },
+  );
+
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "flushes a pending legacy delete before migration in scope %s",
+    (scope) => {
+      const legacyKey = `rename-pending-legacy-delete-${scope}`;
+      const currentKey = `rename-pending-current-delete-${scope}`;
+      backendValues.set(legacyKey, serializeWithPrimitiveFastPath("stale"));
+      const legacyItem = createStorageItem<string>({
+        key: legacyKey,
+        scope,
+        defaultValue: "default",
+        ...(scope === StorageScope.Disk
+          ? { coalesceDiskWrites: true }
+          : { coalesceSecureWrites: true }),
+      });
+      legacyItem.delete();
+      const currentItem = createStorageItem<string>({
+        key: currentKey,
+        scope,
+        defaultValue: "default",
+        renameFrom: legacyKey,
+      });
+
+      expect(currentItem.get()).toBe("default");
+      expect(backendValues.has(legacyKey)).toBe(false);
+    },
+  );
+
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "rolls back a failed legacy removal and retries migration in scope %s",
+    (scope) => {
+      const legacyKey = `rename-failure-legacy-${scope}`;
+      const currentKey = `rename-failure-current-${scope}`;
+      const legacyValue = serializeWithPrimitiveFastPath("legacy");
+      const removalError = new Error("legacy removal failed");
+      backendValues.set(legacyKey, legacyValue);
+      failingRemoveKey = legacyKey;
+      removeFailure = removalError;
+      removeBeforeFailure = true;
+      const item = createStorageItem<string>({
+        key: currentKey,
+        scope,
+        defaultValue: "default",
+        renameFrom: legacyKey,
+        ...(scope === StorageScope.Disk
+          ? { coalesceDiskWrites: true }
+          : { coalesceSecureWrites: true }),
+      });
+
+      expect(() => item.get()).toThrow(removalError);
+      expect(backendValues.has(currentKey)).toBe(false);
+      expect(backendValues.get(legacyKey)).toBe(legacyValue);
+      expect(() => item.get()).toThrow(removalError);
+
+      failingRemoveKey = undefined;
+      removeFailure = undefined;
+      expect(item.get()).toBe("legacy");
+      expect(backendValues.get(currentKey)).toBe(legacyValue);
+      expect(backendValues.has(legacyKey)).toBe(false);
+    },
+  );
+
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "rolls back every alias when one of several legacy removals fails in scope %s",
+    (scope) => {
+      const firstKey = `rename-multi-failure-first-${scope}`;
+      const secondKey = `rename-multi-failure-second-${scope}`;
+      const currentKey = `rename-multi-failure-current-${scope}`;
+      const firstValue = serializeWithPrimitiveFastPath("first");
+      const secondValue = serializeWithPrimitiveFastPath("second");
+      const removalError = new Error("second legacy removal failed");
+      backendValues.set(firstKey, firstValue);
+      backendValues.set(secondKey, secondValue);
+      failingRemoveKey = secondKey;
+      removeFailure = removalError;
+      removeBeforeFailure = true;
+      const item = createStorageItem<string>({
+        key: currentKey,
+        scope,
+        defaultValue: "default",
+        renameFrom: [firstKey, secondKey],
+      });
+
+      expect(() => item.get()).toThrow(removalError);
+      expect(backendValues.has(currentKey)).toBe(false);
+      expect(backendValues.get(firstKey)).toBe(firstValue);
+      expect(backendValues.get(secondKey)).toBe(secondValue);
+
+      failingRemoveKey = undefined;
+      removeFailure = undefined;
+      expect(item.get()).toBe("first");
+      expect(backendValues.has(firstKey)).toBe(false);
+      expect(backendValues.has(secondKey)).toBe(false);
+    },
+  );
+
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "does not publish a queued migration value when its write fails in scope %s",
+    (scope) => {
+      const legacyKey = `rename-write-failure-legacy-${scope}`;
+      const currentKey = `rename-write-failure-current-${scope}`;
+      const legacyValue = serializeWithPrimitiveFastPath("legacy");
+      const writeError = new Error("current write failed");
+      backendValues.set(legacyKey, legacyValue);
+      failingSetKey = currentKey;
+      setFailure = writeError;
+      const item = createStorageItem<string>({
+        key: currentKey,
+        scope,
+        defaultValue: "default",
+        renameFrom: legacyKey,
+        ...(scope === StorageScope.Disk
+          ? { coalesceDiskWrites: true }
+          : { coalesceSecureWrites: true }),
+      });
+
+      expect(() => item.get()).toThrow(writeError);
+      expect(backendValues.has(currentKey)).toBe(false);
+      expect(backendValues.get(legacyKey)).toBe(legacyValue);
+      expect(() => item.get()).toThrow(writeError);
+
+      failingSetKey = undefined;
+      setFailure = undefined;
+      expect(item.get()).toBe("legacy");
+      expect(backendValues.get(currentKey)).toBe(legacyValue);
+      expect(backendValues.has(legacyKey)).toBe(false);
+    },
+  );
+
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "keeps a queued delete authoritative after flush and recreation in scope %s",
+    (scope) => {
+      const legacyKey = `rename-delete-flush-legacy-${scope}`;
+      const currentKey = `rename-delete-flush-current-${scope}`;
+      backendValues.set(legacyKey, serializeWithPrimitiveFastPath("stale"));
+      const createCurrent = () =>
+        createStorageItem<string>({
+          key: currentKey,
+          scope,
+          defaultValue: "default",
+          renameFrom: legacyKey,
+          ...(scope === StorageScope.Disk
+            ? { coalesceDiskWrites: true }
+            : { coalesceSecureWrites: true }),
+        });
+      const item = createCurrent();
+
+      item.delete();
+      if (scope === StorageScope.Disk) {
+        storage.flushDiskWrites();
+      } else {
+        storage.flushSecureWrites();
+      }
+
+      expect(item.get()).toBe("default");
+      expect(createCurrent().get()).toBe("default");
+    },
+  );
+
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "keeps a queued newer set authoritative after flush and recreation in scope %s",
+    (scope) => {
+      const legacyKey = `rename-set-flush-legacy-${scope}`;
+      const currentKey = `rename-set-flush-current-${scope}`;
+      backendValues.set(legacyKey, serializeWithPrimitiveFastPath("stale"));
+      const createCurrent = () =>
+        createStorageItem<string>({
+          key: currentKey,
+          scope,
+          defaultValue: "default",
+          renameFrom: legacyKey,
+          ...(scope === StorageScope.Disk
+            ? { coalesceDiskWrites: true }
+            : { coalesceSecureWrites: true }),
+        });
+      const item = createCurrent();
+
+      item.set("new");
+      if (scope === StorageScope.Disk) {
+        storage.flushDiskWrites();
+      } else {
+        storage.flushSecureWrites();
+      }
+
+      expect(item.get()).toBe("new");
+      expect(createCurrent().get()).toBe("new");
+      expect(backendValues.has(legacyKey)).toBe(false);
+    },
+  );
+
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "restores current and alias state when direct set cleanup fails in scope %s",
+    (scope) => {
+      const legacyKey = `rename-direct-set-legacy-${scope}`;
+      const currentKey = `rename-direct-set-current-${scope}`;
+      const currentValue = serializeWithPrimitiveFastPath("current");
+      const legacyValue = serializeWithPrimitiveFastPath("legacy");
+      backendValues.set(currentKey, currentValue);
+      backendValues.set(legacyKey, legacyValue);
+      const cleanupError = new Error("direct alias cleanup failed");
+      failingRemoveKey = legacyKey;
+      removeFailure = cleanupError;
+      const item = createStorageItem<string>({
+        key: currentKey,
+        scope,
+        defaultValue: "default",
+        renameFrom: legacyKey,
+      });
+
+      expect(() => item.set("new")).toThrow(cleanupError);
+      expect(backendValues.get(currentKey)).toBe(currentValue);
+      expect(backendValues.get(legacyKey)).toBe(legacyValue);
+    },
+  );
+
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "does not commit migration when an updater throws in scope %s",
+    (scope) => {
+      const legacyKey = `rename-updater-legacy-${scope}`;
+      const currentKey = `rename-updater-current-${scope}`;
+      const legacyValue = serializeWithPrimitiveFastPath("legacy");
+      backendValues.set(legacyKey, legacyValue);
+      const item = createStorageItem<string>({
+        key: currentKey,
+        scope,
+        defaultValue: "default",
+        renameFrom: legacyKey,
+      });
+
+      expect(() =>
+        item.set(() => {
+          throw new Error("updater failed");
+        }),
+      ).toThrow("updater failed");
+      expect(backendValues.has(currentKey)).toBe(false);
+      expect(backendValues.get(legacyKey)).toBe(legacyValue);
+      expect(item.get()).toBe("legacy");
+    },
+  );
+
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "restores current and alias state when direct delete cleanup fails in scope %s",
+    (scope) => {
+      const legacyKey = `rename-direct-delete-legacy-${scope}`;
+      const currentKey = `rename-direct-delete-current-${scope}`;
+      const currentValue = serializeWithPrimitiveFastPath("current");
+      const legacyValue = serializeWithPrimitiveFastPath("legacy");
+      backendValues.set(currentKey, currentValue);
+      backendValues.set(legacyKey, legacyValue);
+      const cleanupError = new Error("direct delete alias cleanup failed");
+      failingRemoveKey = legacyKey;
+      removeFailure = cleanupError;
+      const item = createStorageItem<string>({
+        key: currentKey,
+        scope,
+        defaultValue: "default",
+        renameFrom: legacyKey,
+      });
+
+      expect(() => item.delete()).toThrow(cleanupError);
+      expect(backendValues.get(currentKey)).toBe(currentValue);
+      expect(backendValues.get(legacyKey)).toBe(legacyValue);
+    },
+  );
 });
 
 describe("transaction rollback", () => {
@@ -3036,12 +4045,251 @@ describe("storage.clearBiometric", () => {
     storage.clearBiometric();
     expect(mockHybridObject.clearSecureBiometric).toHaveBeenCalled();
   });
+
+  it("clears the secure raw cache so cached reads do not outlive biometric entries", () => {
+    mockHybridObject.getSecureBiometric.mockReturnValue(
+      serializeWithPrimitiveFastPath("cached"),
+    );
+
+    const item = createStorageItem({
+      key: "bio-key",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+      readCache: true,
+    });
+
+    expect(item.get()).toBe("cached");
+
+    storage.clearBiometric();
+
+    mockHybridObject.getSecureBiometric.mockReturnValue(undefined);
+    expect(item.get()).toBe("");
+  });
+
+  it("flushes pending secure writes before clearing biometric entries", () => {
+    const item = createStorageItem({
+      key: "pending-secure-bio",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      coalesceSecureWrites: true,
+    });
+
+    item.set("queued");
+    expect(mockHybridObject.setBatch).not.toHaveBeenCalled();
+
+    storage.clearBiometric();
+
+    expect(mockHybridObject.setBatch).toHaveBeenCalledWith(
+      ["pending-secure-bio"],
+      [serializeWithPrimitiveFastPath("queued")],
+      StorageScope.Secure,
+    );
+  });
+
+  it("invalidates secure raw caches when native biometric clear fails", () => {
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("cached-value"),
+    );
+    const item = createStorageItem({
+      key: "partial-clear",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      readCache: true,
+    });
+
+    expect(item.get()).toBe("cached-value");
+    mockHybridObject.clearSecureBiometric.mockImplementationOnce(() => {
+      throw new Error("biometric clear failed");
+    });
+
+    expect(() => storage.clearBiometric()).toThrow("biometric clear failed");
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("fresh-value"),
+    );
+    expect(item.get()).toBe("fresh-value");
+  });
+
+  it("notifies a redacted native observer of biometric clear keys without reading values", () => {
+    mockHybridObject.getAllKeys.mockReturnValue(["bio-key"]);
+    mockHybridObject.hasSecureBiometric.mockReturnValue(true);
+    const getBiometricSpy = mockHybridObject.getSecureBiometric;
+    const events: unknown[] = [];
+    storage.setEventObserver((event) => {
+      events.push(event);
+    });
+
+    storage.clearBiometric();
+
+    expect(getBiometricSpy).not.toHaveBeenCalled();
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "batch",
+        operation: "clear",
+        changes: [
+          expect.objectContaining({
+            key: "bio-key",
+            oldValue: undefined,
+            newValue: undefined,
+          }),
+        ],
+      }),
+    ]);
+  });
+
+  it("emits a clear change event for the removed biometric keys", () => {
+    mockHybridObject.getAllKeys.mockReturnValue(["bio-key", "plain-key"]);
+    mockHybridObject.hasSecureBiometric.mockImplementation(
+      (key: string) => key === "bio-key",
+    );
+    mockHybridObject.getSecureBiometric.mockReturnValue(
+      serializeWithPrimitiveFastPath("bio-value"),
+    );
+
+    const events: StorageBatchChangeEvent[] = [];
+    storage.subscribe(StorageScope.Secure, (event) => {
+      events.push(event as StorageBatchChangeEvent);
+    });
+
+    storage.clearBiometric();
+
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe("batch");
+    expect(events[0].operation).toBe("clear");
+    expect(events[0].changes).toHaveLength(1);
+    expect(events[0].changes[0].key).toBe("bio-key");
+    expect(events[0].changes[0].oldValue).toBe(
+      serializeWithPrimitiveFastPath("bio-value"),
+    );
+    expect(events[0].changes[0].newValue).toBeUndefined();
+  });
+
+  it("preserves biometric values for an explicitly value-enabled observer", () => {
+    mockHybridObject.getAllKeys.mockReturnValue(["bio-key"]);
+    mockHybridObject.hasSecureBiometric.mockReturnValue(true);
+    mockHybridObject.getSecureBiometric.mockReturnValue(
+      serializeWithPrimitiveFastPath("bio-value"),
+    );
+    const events: StorageBatchChangeEvent[] = [];
+    storage.setEventObserver(
+      (event) => {
+        events.push(event as StorageBatchChangeEvent);
+      },
+      { redactSecureValues: false },
+    );
+
+    storage.clearBiometric();
+
+    expect(events[0]?.changes[0]).toMatchObject({
+      key: "bio-key",
+      oldValue: serializeWithPrimitiveFastPath("bio-value"),
+      newValue: undefined,
+    });
+  });
 });
 
 describe("biometric storage items", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     storage.clearAll();
+  });
+
+  it("isolates plain and biometric caches across promotion and plain overwrite", () => {
+    const plainItem = createStorageItem({
+      key: "shared-cache-key",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      readCache: true,
+    });
+    const biometricItem = createStorageItem({
+      key: "shared-cache-key",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      biometric: true,
+      readCache: true,
+    });
+
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("plain-old"),
+    );
+    mockHybridObject.getSecureBiometric.mockReturnValue(
+      serializeWithPrimitiveFastPath("bio-backend"),
+    );
+
+    expect(plainItem.get()).toBe("plain-old");
+
+    biometricItem.set("bio-new");
+    expect(biometricItem.get()).toBe("bio-backend");
+
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("plain-fresh"),
+    );
+    plainItem.set("plain-new");
+    expect(plainItem.get()).toBe("plain-new");
+
+    mockHybridObject.getSecureBiometric.mockReturnValue(
+      serializeWithPrimitiveFastPath("bio-fresh"),
+    );
+    expect(biometricItem.get()).toBe("bio-fresh");
+  });
+
+  it("invalidates both secure representations when biometric data is deleted", () => {
+    const plainItem = createStorageItem({
+      key: "delete-shared-cache",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      readCache: true,
+    });
+    const biometricItem = createStorageItem({
+      key: "delete-shared-cache",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      biometric: true,
+      readCache: true,
+    });
+    mockHybridObject.get.mockReturnValue(
+      serializeWithPrimitiveFastPath("plain-secret"),
+    );
+    mockHybridObject.getSecureBiometric.mockReturnValue(
+      serializeWithPrimitiveFastPath("bio-secret"),
+    );
+
+    expect(plainItem.get()).toBe("plain-secret");
+    expect(biometricItem.get()).toBe("bio-secret");
+
+    biometricItem.delete();
+    mockHybridObject.get.mockReturnValue(undefined);
+    mockHybridObject.getSecureBiometric.mockReturnValue(undefined);
+
+    expect(plainItem.get()).toBe("default");
+    expect(biometricItem.get()).toBe("default");
+  });
+
+  it("uses the biometric representation for biometric delete oldValue events", () => {
+    const plainRaw = serializeWithPrimitiveFastPath("plain-value");
+    const biometricRaw = serializeWithPrimitiveFastPath("biometric-value");
+    mockHybridObject.get.mockReturnValue(plainRaw);
+    mockHybridObject.getSecureBiometric.mockReturnValue(biometricRaw);
+    const biometricItem = createStorageItem({
+      key: "delete-event-shared-key",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+    const events: StorageBatchChangeEvent[] = [];
+    storage.subscribeKey(StorageScope.Secure, biometricItem.key, (event) => {
+      events.push(event as StorageBatchChangeEvent);
+    });
+
+    biometricItem.delete();
+
+    const event = events.at(-1);
+    expect(event?.type).toBe("key");
+    if (event?.type === "key") {
+      expect(event.oldValue).toBe(biometricRaw);
+      expect(event.oldValue).not.toBe(plainRaw);
+      expect(event.newValue).toBeUndefined();
+    }
   });
 
   it("biometric item set calls setSecureBiometricWithLevel on native", () => {

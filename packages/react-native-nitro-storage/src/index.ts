@@ -1,7 +1,10 @@
 import { Platform } from "react-native";
 import { NitroModules } from "react-native-nitro-modules";
-import { resolveNativeWriteBuffering } from "./capabilities";
-import { decodeNativeBatchValue, unescapeCollidingRawValue } from "./internal";
+import {
+  DEFAULT_SECURE_WRITES_ASYNC,
+  resolveNativeWriteBuffering,
+} from "./capabilities";
+import { unescapeCollidingRawValue } from "./internal";
 import {
   assertAccessControlLevel,
   notifyAllListeners,
@@ -37,6 +40,8 @@ export type {
   StorageMetricsObserver,
   StorageSelectorListener,
   StorageSelectorSubscribeOptions,
+  StorageCompositeError,
+  StorageCompensationError,
   StorageVersion,
   Validator,
   VersionedValue,
@@ -48,6 +53,7 @@ export type { Storage } from "./Storage.nitro";
 export { migrateFromMMKV } from "./migration";
 export {
   getStorageErrorCode,
+  isStorageError,
   type SecureStorageMetadata,
   type SecurityCapabilities,
   type StorageCapabilities,
@@ -111,10 +117,7 @@ const nativeBackend: StorageCoreBackend = {
   setBatch: (keys, values, scope) => {
     getStorageModule().setBatch(keys, values, scope);
   },
-  getBatch: (keys, scope) =>
-    (getStorageModule().getBatch(keys, scope) ?? []).map((value) =>
-      decodeNativeBatchValue(value),
-    ),
+  getBatch: (keys, scope) => getStorageModule().getBatch(keys, scope) ?? [],
   removeBatch: (keys, scope) => {
     getStorageModule().removeBatch(keys, scope);
   },
@@ -196,8 +199,15 @@ function buildNativeAdapter(
         return;
       }
 
-      const oldValue = internals.readCachedRawValue(scope, key);
-      internals.cacheRawValue(scope, key, value);
+      const oldValue =
+        scope === StorageScope.Secure
+          ? undefined
+          : internals.readCachedRawValue(scope, key);
+      if (scope === StorageScope.Secure) {
+        internals.invalidateRawCache(scope, key);
+      } else {
+        internals.cacheRawValue(scope, key, value);
+      }
       notifyKeyListeners(internals.getScopedListeners(scope), key);
       if (consumeSuppressedNativeEvent(scope, key)) {
         return;
@@ -267,7 +277,7 @@ function buildNativeAdapter(
 const core = createStorageCore(buildNativeAdapter);
 const { internals } = core;
 
-let secureWritesBuffered = false;
+let secureWritesBuffered = DEFAULT_SECURE_WRITES_ASYNC;
 
 export const storage = {
   ...core.storage,
@@ -287,8 +297,8 @@ export const storage = {
       "storage:setSecureWritesAsync",
       StorageScope.Secure,
       () => {
-        secureWritesBuffered = enabled;
         getStorageModule().setSecureWritesAsync(enabled);
+        secureWritesBuffered = enabled;
       },
     );
   },

@@ -1,9 +1,7 @@
 import { StorageScope } from "../Storage.types";
 import {
-  NATIVE_BATCH_MISSING_SENTINEL,
   assertBatchScope,
   assertValidScope,
-  decodeNativeBatchValue,
   deserializeWithPrimitiveFastPath,
   isStoredEnvelope,
   prefixKey,
@@ -58,13 +56,6 @@ describe("internal helpers", () => {
         StorageScope.Disk,
       ),
     ).toThrow(/expected Disk, received 999/);
-  });
-
-  it("decodes native missing sentinel", () => {
-    expect(
-      decodeNativeBatchValue(NATIVE_BATCH_MISSING_SENTINEL),
-    ).toBeUndefined();
-    expect(decodeNativeBatchValue("raw")).toBe("raw");
   });
 
   it("serializes primitives via fast path and falls back to JSON", () => {

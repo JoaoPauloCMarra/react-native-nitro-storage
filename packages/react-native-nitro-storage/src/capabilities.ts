@@ -25,9 +25,11 @@ function isIndexedDBWebBackendByName(backendName: string | undefined): boolean {
   return backendName.startsWith("indexeddb:");
 }
 
+export const DEFAULT_SECURE_WRITES_ASYNC = false;
+
 export function resolveNativeWriteBuffering(
   platform: "ios" | "android",
-  secureWritesAsync: boolean,
+  secureWritesAsync: boolean = DEFAULT_SECURE_WRITES_ASYNC,
 ): WriteBuffering {
   return {
     disk: true,

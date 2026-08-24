@@ -24,6 +24,7 @@ import {
 } from "react-native-nitro-storage";
 import { AdvancedApiDemo } from "../components/advanced-api-demo";
 import { ErgonomicsDemo } from "../components/ergonomics-demo";
+import { KeychainLifecycleProbe } from "../components/keychain-lifecycle-probe";
 import {
   Button,
   Card,
@@ -448,6 +449,8 @@ export default function HomeScreen() {
   return (
     <Page title="Nitro Storage" subtitle="Complete feature showcase">
       <SmokeTestRunner />
+
+      <KeychainLifecycleProbe />
 
       <ErgonomicsDemo />
       <AdvancedApiDemo />

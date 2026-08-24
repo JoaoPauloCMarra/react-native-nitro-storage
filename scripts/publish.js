@@ -206,10 +206,10 @@ function isNpmTrustedPublishingCI() {
 
 function cleanupPackageDocs() {
   if (!fs.existsSync(packageDocsSyncScript)) {
-    return;
+    return true;
   }
 
-  execCommand(`node ${shellQuote(packageDocsSyncScript)} cleanup`, {
+  return execCommand(`node ${shellQuote(packageDocsSyncScript)} cleanup`, {
     cwd: packageDir,
   });
 }
@@ -224,6 +224,19 @@ function preparePackageDocs() {
   });
 }
 
+function runPackageCommandWithDocs(command) {
+  try {
+    if (!preparePackageDocs()) {
+      throw new Error("Failed to prepare package documents");
+    }
+    return execCommand(command, { cwd: packageDir });
+  } finally {
+    if (!cleanupPackageDocs()) {
+      throw new Error("Failed to restore package documents; lifecycle state was preserved");
+    }
+  }
+}
+
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf-8"));
 }
@@ -231,7 +244,7 @@ function readJson(filePath) {
 function getFirstChangelogVersion() {
   const changelogPath = path.join(projectRoot, "CHANGELOG.md");
   const changelog = fs.readFileSync(changelogPath, "utf-8");
-  return changelog.match(/^##\s+([^\s]+)/m)?.[1] ?? null;
+  return changelog.match(/^##\s+([^\s]+)/m)?.[1]?.replace(/^[[]|]$/g, "") ?? null;
 }
 
 function assertReleaseDocs(version) {
@@ -379,7 +392,9 @@ Options:
 
   const packageName = getPackageName();
   const version = getPackageVersion();
-  cleanupPackageDocs();
+  if (!cleanupPackageDocs()) {
+    throw new Error("Failed to recover package document lifecycle state");
+  }
   assertReleaseDocs(version);
 
   log(`Version: ${version}`, "cyan");
@@ -514,18 +529,10 @@ Options:
 
   if (isDryRun) {
     log("🏃 Running package pack dry-run...", "cyan");
-    if (!verifyNpmLifecycle) {
-      if (!preparePackageDocs()) {
-        log("✗ Failed to prepare package docs", "red");
-        cleanupPackageDocs();
-        process.exit(1);
-      }
-    }
     const dryPublishCommand = verifyNpmLifecycle
       ? "bun pm pack --dry-run"
       : "bun pm pack --dry-run --ignore-scripts";
-    const ok = execCommand(dryPublishCommand, { cwd: packageDir });
-    cleanupPackageDocs();
+    const ok = runPackageCommandWithDocs(dryPublishCommand);
     if (!ok) {
       log("✗ package pack dry-run failed", "red");
       process.exit(1);
@@ -548,12 +555,10 @@ Options:
   } else {
     log("🚀 Publishing to npm...", "cyan");
     const publishCommand = `npm publish --tag ${shellQuote(tag)} --access public${isCI ? " --provenance" : ""}`;
-    if (!execCommand(publishCommand, { cwd: packageDir })) {
+    if (!runPackageCommandWithDocs(publishCommand)) {
       log("✗ Publish failed", "red");
-      cleanupPackageDocs();
       process.exit(1);
     }
-    cleanupPackageDocs();
     console.log("");
     log(
       `✅ Successfully published react-native-nitro-storage@${version}`,

@@ -1,67 +1,36 @@
-const fs = require("fs");
-const path = require("path");
+"use strict";
 
+const path = require("node:path");
+const {
+  createPackageDocLifecycle,
+  LifecycleError,
+} = require("../../../scripts/package-doc-lifecycle.js");
+
+const repoRoot = path.resolve(__dirname, "../../..");
 const packageRoot = path.resolve(__dirname, "..");
-const repoRoot = path.resolve(packageRoot, "../..");
-
-const entries = [
-  { source: "README.md", target: "README.md", type: "file" },
-  { source: "CHANGELOG.md", target: "CHANGELOG.md", type: "file" },
-  { source: "LICENSE", target: "LICENSE", type: "file" },
-  { source: "SECURITY.md", target: "SECURITY.md", type: "file" },
-  { source: "docs", target: "docs", type: "directory" },
-];
-
-function removeTarget(target) {
-  const targetPath = path.join(packageRoot, target);
-  if (!fs.existsSync(targetPath)) {
-    return;
-  }
-
-  fs.rmSync(targetPath, { recursive: true, force: true });
-}
-
-function copyEntry(entry) {
-  const sourcePath = path.join(repoRoot, entry.source);
-  const targetPath = path.join(packageRoot, entry.target);
-
-  if (!fs.existsSync(sourcePath)) {
-    throw new Error(
-      `Required package artifact source is missing: ${entry.source}`,
-    );
-  }
-
-  removeTarget(entry.target);
-
-  if (entry.type === "directory") {
-    fs.cpSync(sourcePath, targetPath, { recursive: true });
-    return;
-  }
-
-  fs.copyFileSync(sourcePath, targetPath);
-}
-
-function prepare() {
-  entries.forEach(copyEntry);
-}
-
-function cleanup() {
-  entries.forEach((entry) => removeTarget(entry.target));
-}
+const lifecycle = createPackageDocLifecycle({
+  repoRoot,
+  packageRoot,
+  entries: [
+    { source: "README.md", target: "README.md", persistent: false },
+    { source: "CHANGELOG.md", target: "CHANGELOG.md", persistent: false },
+    { source: "LICENSE", target: "LICENSE", persistent: false },
+    { source: "SECURITY.md", target: "SECURITY.md", persistent: false },
+    { source: "docs", target: "docs", persistent: false },
+  ],
+});
 
 const mode = process.argv[2];
-
 try {
-  if (mode === "prepare") {
-    prepare();
-  } else if (mode === "cleanup") {
-    cleanup();
-  } else {
-    throw new Error(
-      "Usage: node scripts/sync-package-docs.js <prepare|cleanup>",
+  if (mode === "prepare") lifecycle.prepare();
+  else if (mode === "cleanup") lifecycle.cleanup();
+  else if (mode === "sync") lifecycle.sync();
+  else if (mode === "--check") lifecycle.check();
+  else
+    throw new LifecycleError(
+      "Usage: node scripts/sync-package-docs.js <prepare|cleanup|sync|--check>",
     );
-  }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
+  process.exitCode = 1;
 }

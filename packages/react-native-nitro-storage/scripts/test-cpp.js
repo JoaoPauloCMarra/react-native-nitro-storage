@@ -118,6 +118,7 @@ public:
   explicit HybridObject(const char* = "") {}
   virtual ~HybridObject() = default;
   virtual void loadHybridMethods() {}
+  virtual size_t getExternalMemorySize() noexcept { return 0; }
 
 protected:
   template <typename Fn>
@@ -133,8 +134,6 @@ protected:
 );
 
 // Paths
-const storageTestFile = path.join(cppDir, "core", "StorageTest.cpp");
-const storageOutputFile = path.join(buildDir, "storage_test");
 const hybridTestFile = path.join(cppDir, "bindings", "HybridStorageTest.cpp");
 const hybridSourceFile = path.join(cppDir, "bindings", "HybridStorage.cpp");
 const hybridSpecFile = path.join(
@@ -216,8 +215,7 @@ function sanitizerRuntimeEnv() {
   return process.env;
 }
 
-function runCoverage(storageOutputFile, hybridOutputFile) {
-  const storageProfile = path.join(buildDir, "storage.profraw");
+function runCoverage(hybridOutputFile) {
   const hybridProfile = path.join(buildDir, "hybrid.profraw");
   const mergedProfile = path.join(buildDir, "coverage.profdata");
   const exportFile = path.join(buildDir, "coverage-summary.json");
@@ -229,9 +227,6 @@ function runCoverage(storageOutputFile, hybridOutputFile) {
     path.join(cppDir, "bindings", "HybridStorage.hpp"),
   ];
 
-  runCommand(storageOutputFile, [], {
-    env: { ...process.env, LLVM_PROFILE_FILE: storageProfile },
-  });
   runCommand(hybridOutputFile, [], {
     env: { ...process.env, LLVM_PROFILE_FILE: hybridProfile },
   });
@@ -239,7 +234,6 @@ function runCoverage(storageOutputFile, hybridOutputFile) {
   runCommand(profdata, [
     "merge",
     "-sparse",
-    storageProfile,
     hybridProfile,
     "-o",
     mergedProfile,
@@ -247,8 +241,6 @@ function runCoverage(storageOutputFile, hybridOutputFile) {
 
   runCommand(cov, [
     "report",
-    storageOutputFile,
-    "-object",
     hybridOutputFile,
     `-instr-profile=${mergedProfile}`,
     ...sourceFiles,
@@ -257,8 +249,6 @@ function runCoverage(storageOutputFile, hybridOutputFile) {
     cov,
     [
       "export",
-      storageOutputFile,
-      "-object",
       hybridOutputFile,
       `-instr-profile=${mergedProfile}`,
       "-summary-only",
@@ -301,16 +291,6 @@ function runCoverage(storageOutputFile, hybridOutputFile) {
 }
 
 try {
-  const compileStorageArgs = [
-    ...commonFlags,
-    `-I${path.join(cppDir, "core")}`,
-    storageTestFile,
-    "-o",
-    storageOutputFile,
-    ...linkFlags,
-  ];
-  runCommand("clang++", compileStorageArgs);
-
   const compileHybridArgs = [
     ...commonFlags,
     "-DNITRO_STORAGE_DISABLE_PLATFORM_ADAPTER",
@@ -347,6 +327,7 @@ try {
     const compileIosAdapterArgs = [
       ...commonFlags,
       "-fobjc-arc",
+      "-DNITRO_STORAGE_TESTING",
       `-I${path.join(cppDir, "core")}`,
       `-I${path.join(__dirname, "..", "ios")}`,
       iosAdapterTestFile,
@@ -364,7 +345,6 @@ try {
     runCommand("clang++", compileIosAdapterArgs);
   }
 
-  signDarwinBinary(storageOutputFile);
   signDarwinBinary(hybridOutputFile);
   if (iosAdapterOutputFile) {
     signDarwinBinary(iosAdapterOutputFile);
@@ -374,13 +354,12 @@ try {
   console.log("🚀 Running tests...");
 
   if (coverageEnabled) {
-    runCoverage(storageOutputFile, hybridOutputFile);
+    runCoverage(hybridOutputFile);
     if (iosAdapterOutputFile) {
       runCommand(iosAdapterOutputFile, [], { env: sanitizerRuntimeEnv() });
     }
   } else {
     const sanitizerEnv = sanitizerRuntimeEnv();
-    runCommand(storageOutputFile, [], { env: sanitizerEnv });
     runCommand(hybridOutputFile, [], { env: sanitizerEnv });
     if (iosAdapterOutputFile) {
       runCommand(iosAdapterOutputFile, [], { env: sanitizerEnv });

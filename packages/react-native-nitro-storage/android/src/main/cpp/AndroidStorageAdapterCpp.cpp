@@ -40,8 +40,11 @@ std::vector<std::string> fromJavaStringArray(alias_ref<JavaStringArray> values) 
     result.reserve(size);
     for (jsize i = 0; i < size; ++i) {
         auto currentValue = values->getElement(i);
-        // Preserve null as empty string to maintain index alignment with caller
-        result.push_back(currentValue ? currentValue->toStdString() : std::string());
+        // Null entries are dropped so a missing key can never surface as the
+        // empty-string clear sentinel used by change listeners.
+        if (currentValue) {
+            result.push_back(currentValue->toStdString());
+        }
     }
     return result;
 }

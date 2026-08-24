@@ -4,7 +4,7 @@
 [![npm downloads](https://img.shields.io/npm/dm/react-native-nitro-storage?color=22c55e&label=downloads)](https://www.npmjs.com/package/react-native-nitro-storage)
 [![CI](https://github.com/JoaoPauloCMarra/react-native-nitro-storage/actions/workflows/ci.yml/badge.svg)](https://github.com/JoaoPauloCMarra/react-native-nitro-storage/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/react-native-nitro-storage?color=007ec6)](https://github.com/JoaoPauloCMarra/react-native-nitro-storage/blob/main/LICENSE)
-[![React Native](https://img.shields.io/badge/react--native-0.87.0-61dafb)](https://reactnative.dev/docs/0.87/getting-started-without-a-framework)
+[![React Native](https://img.shields.io/badge/react--native-0.86.2-61dafb)](https://reactnative.dev/docs/0.86/getting-started-without-a-framework)
 [![Expo](https://img.shields.io/badge/expo-SDK%2057%20%28RN%200.86.2%29-000020)](https://docs.expo.dev/versions/v57.0.0/)
 [![Nitro Modules](https://img.shields.io/badge/nitro--modules-%3E%3D0.37.0%20%3C0.38.0-black)](https://nitro.margelo.com/)
 [![TypeScript](https://img.shields.io/badge/typescript-6.0-3178c6)](https://www.typescriptlang.org/)
@@ -24,6 +24,7 @@ pagination, conflict resolution, or remote synchronization.
 ## Contents
 
 - [Install](#install)
+- [Requirements and compatibility](#requirements-and-compatibility)
 - [Expo Config](#expo-config)
 - [Quick Start](#quick-start)
 - [Auth Tokens](#auth-tokens)
@@ -52,6 +53,8 @@ pagination, conflict resolution, or remote synchronization.
 bun add react-native-nitro-storage react-native-nitro-modules
 ```
 
+## Requirements and compatibility
+
 Peer dependencies:
 
 | Package                      | Version            |
@@ -62,24 +65,26 @@ Peer dependencies:
 
 Nitro peer requirement: `react-native-nitro-modules >=0.37.0 <0.38.0`.
 
-The standalone package gate uses React Native `0.87.0` and the Strict
-TypeScript API. The Expo example uses Expo SDK `57.0.15`, React Native
+The package gate uses React Native `0.86.2` and the Strict TypeScript API.
+`check:ci` also compiles the public source against React Native `0.87.0`'s
+Strict TypeScript API; this does not change the runtime baseline. The Expo
+example uses Expo SDK `57.0.16`, React Native
 `0.86.2`, React `19.2.3`, and Nitro Modules `0.37.0`, which is the React Native
 version supported by that Expo SDK. Do not override Expo's React Native version.
 
-When upgrading from 0.8.x, upgrade Nitro Modules to the 0.37.x range before
-installing this package, then rebuild the native app so the generated Nitro
-bindings and native runtime use the same major-minor version:
+When upgrading from 0.8.x or 0.9.x, upgrade Nitro Modules to the 0.37.x range
+before installing this package, then rebuild the native app so the generated
+Nitro bindings and native runtime use the same major-minor version:
 
 ```sh
-bun add react-native-nitro-modules@0.37.0 react-native-nitro-storage@0.9.0
+bun add react-native-nitro-modules@0.37.0 react-native-nitro-storage@0.10.0
 bunx expo prebuild
 ```
 
-`SetStorageItem.get()` now returns a partial membership map because a member can
-be absent. Use `set.has(member)` for membership checks, or handle an indexed
-value as `true | undefined`; code that assigned the result to
-`Record<string, true>` must update its type.
+`SetStorageItem.get()` retains its original `Record<string, true>` compatibility
+shape. At runtime, absent members are still absent, so use `set.has(member)` for
+membership checks. New code that wants a precise member union can use
+`set.getTyped()`, which returns `Partial<Record<TMember, true>>`.
 
 Nitro Storage requires an Expo development build or a bare React Native app;
 Expo Go and native Windows, macOS, and tvOS targets are not supported.
@@ -171,7 +176,7 @@ const auth = createSecureAuthStorage(
     accessToken: { renameFrom: "authToken" },
     refreshToken: { renameFrom: "refreshToken" },
   },
-  { namespace: "auth", fallbackToCacheOnReadError: true },
+  { namespace: "auth" },
 );
 
 auth.accessToken.set("access-token");
@@ -182,6 +187,11 @@ auth.accessToken.subscribe(() => {});
 Keep `getString` facades only when the app owns a storage architecture
 boundary. `createSecureAuthStorage` already namespaces keys, notifies
 subscribers, and migrates legacy keys.
+
+Do not enable `fallbackToCacheOnReadError` for access or refresh tokens unless
+the application explicitly accepts stale or revoked credentials. Handle
+temporary secure-storage errors and retry from application lifecycle state
+instead.
 
 ## Typed Storage Items
 
@@ -248,9 +258,11 @@ loginMethod.setOrDelete(maybeMethod); // null/undefined deletes, value sets
 ## Set Items
 
 `createSetItem()` models set-membership state (seen ids, dismissed prompts)
-without hand-rolling membership helpers. Its `get()` result is a partial map,
-because absent members are not stored. Adding an existing member or deleting an
-absent one is a no-op, so subscribers do not re-render.
+without hand-rolling membership helpers. Its compatibility `get()` result is a
+`Record<string, true>`; absent members are still not stored at runtime. Use
+`getTyped()` when a precise `Partial<Record<TMember, true>>` result is useful.
+Adding an existing member or deleting an absent one is a no-op, so subscribers
+do not re-render.
 
 ```ts
 import { createSetItem, StorageScope } from "react-native-nitro-storage";
@@ -386,7 +398,7 @@ import {
   StorageScope,
   createSecureAuthStorage,
   createStorageItem,
-  isKeychainLockedError,
+  isStorageError,
   storage,
 } from "react-native-nitro-storage";
 
@@ -417,7 +429,7 @@ const auth = createSecureAuthStorage({
 try {
   recoveryCode.get();
 } catch (error) {
-  if (isKeychainLockedError(error)) {
+  if (isStorageError(error, "keychain_locked")) {
     storage.getSecurityCapabilities();
   }
 }
@@ -429,6 +441,15 @@ exporting secure values unless you are intentionally doing a short-lived
 in-memory migration. `storage.export(StorageScope.Secure)` throws unless you
 explicitly opt into `{ includeSecureValues: true }`.
 
+Android secure writes default to synchronous `commit()` durability. Call
+`storage.setSecureWritesAsync(true)` only when asynchronous `apply()` writes are
+acceptable. After opting into async writes, call `storage.flushSecureWrites()`
+before a deterministic persistence boundary. A failed secure flush throws and
+keeps failed or unattempted queued writes available for retry.
+`storage.clearBiometric()`
+flushes pending Secure writes before clearing biometric entries and surfaces
+native clear failures.
+
 On Android 11 and newer, `BiometricLevel.BiometryOnly` and
 `BiometricLevel.BiometryOrPasscode` use separate Keystore policies. Android 10
 and older support `BiometryOrPasscode`; `BiometryOnly` throws
@@ -436,9 +457,11 @@ and older support `BiometryOrPasscode`; `BiometryOnly` throws
 biometric-only distinction. Promoting a value to biometric storage removes the
 plain secure copy on every platform, so plain reads cannot return a stale
 value. Secure existence, discovery, and cleanup operations
-can also throw when a protected store is locked or its key is invalidated. Catch
-those failures and use `isKeychainLockedError()` when authentication-aware retry
-behavior is appropriate.
+can also throw when a protected store is locked or its key is invalidated. Use
+`isStorageError()` to choose the correct recovery path: retry
+`keychain_locked` after unlock, request user interaction for
+`authentication_required`, and rebuild the affected credential for
+`key_invalidated`.
 
 ## Batch Operations
 
@@ -596,6 +619,31 @@ beforeEach(() => {
 // Or build an isolated instance per test file.
 const { storage, memoryItem } = createNitroStorageMock();
 ```
+
+## API
+
+The default export is a configured `storage` instance; `createStorage()`
+builds isolated instances. Values are read and written through typed storage
+items (`stringItem`, `numberItem`, `booleanItem`, `jsonItem`, plus custom
+`createStorageItem` schemas) bound to a scope (`Memory`, `Disk`, or
+`Secure`). The surface covers single-key operations (`get`/`set`/`remove`/
+`has`), batch reads and writes, prefixed key enumeration, size queries,
+`flushSecureWrites()`, clear-by-scope, events and observers, React hooks,
+transactional migrations with rename/rollback, and the web backend adapter
+API. The full reference lives in
+[docs/api-reference.md](docs/api-reference.md).
+
+## Error Contract
+
+Native failures cross the bridge as tagged, deterministic errors and surface
+as typed `StorageError` values with stable string codes — identical codes on
+iOS, Android, and web. Use `isStorageError(error, code)` to branch on them:
+`keychain_locked` reports a locked Keychain that a retry can recover after
+authentication, secure-scope write or biometric failures carry their own
+codes, and invalid inputs (bad scope, malformed keys, numeric guard
+violations) are rejected before reaching native storage. Errors never
+swallow the underlying cause silently: the original platform message is
+preserved on the error for diagnostics.
 
 ## Platform Support
 

@@ -3,6 +3,7 @@ export type StorageErrorCode =
   | "authentication_required"
   | "key_invalidated"
   | "storage_corruption"
+  | "storage_compensation_failed"
   | "biometric_unavailable"
   | "unsupported";
 
@@ -61,6 +62,7 @@ const STORAGE_ERROR_CODES = new Set<StorageErrorCode>([
   "authentication_required",
   "key_invalidated",
   "storage_corruption",
+  "storage_compensation_failed",
   "biometric_unavailable",
   "unsupported",
 ]);
@@ -82,6 +84,10 @@ export function getStorageErrorCode(
   }
 
   return undefined;
+}
+
+export function isStorageError(err: unknown, code: StorageErrorCode): boolean {
+  return getStorageErrorCode(err) === code;
 }
 
 export function isLockedStorageErrorCode(

@@ -2,9 +2,47 @@
 
 All notable changes to this project are documented in this file.
 
-The format follows Keep a Changelog and the project adheres to SemVer.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Breaking changes are always listed first in each release section.
 
-## 0.9.0 - 2026-08-20
+## [0.10.0] - 2026-08-24
+
+### Breaking changes
+
+- None. The Nitro Modules `0.37.x` native rebuild requirement remains from
+  0.9.0; this release restores the previous set-item type and secure-write
+  defaults for existing consumers.
+
+### Added
+
+- Added `isStorageError(error, code)` to select recovery behavior from an exact
+  stable storage error code on native and web.
+
+### Changed
+
+- Restored `SetStorageItem.get()` and its `item` property to the original
+  `Record<string, true>` compatibility shape. Added `getTyped()` for new code
+  that wants `Partial<Record<TMember, true>>` without forcing a type migration.
+- Restored synchronous Android Secure writes by default. Asynchronous
+  `apply()` writes remain available through the explicit
+  `storage.setSecureWritesAsync(true)` opt-in and can be drained with
+  `storage.flushSecureWrites()`.
+
+### Deprecated
+
+- Deprecated `isKeychainLockedError()`. It remains backward compatible but
+  groups `keychain_locked`, `authentication_required`, and `key_invalidated`;
+  use `isStorageError()` when deciding whether to retry, authenticate, or
+  rebuild a credential.
+
+### Documentation
+
+- Documented secure-storage recovery semantics and warned against cached
+  fallback for authentication tokens unless stale credentials are an explicit
+  application policy.
+
+## [0.9.0] - 2026-08-20
 
 ### Breaking changes
 
@@ -14,6 +52,10 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 - `SetStorageItem.get()` now returns `Partial<Record<TMember, true>>`. Use
   `has()` for membership checks or handle an indexed value as `true | undefined`
   instead of assuming every member exists.
+- Android Secure writes now default to asynchronous `apply()`. Call
+  `storage.setSecureWritesAsync(false)` when existing code depends on
+  synchronous `commit()` durability, or call `storage.flushSecureWrites()` at
+  deterministic persistence boundaries.
 
 ### Changed
 
@@ -22,11 +64,25 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 - Native batch reads now preserve missing entries as `undefined`, matching the
   TypeScript contract and allowing stored values that match the old internal
   sentinel string.
-- The standalone package development and type baseline is now React Native
-  0.87.0. The Expo SDK 57 example remains on its supported React Native 0.86.2
-  baseline.
+- Secure write flushes now retain failed and unattempted last-write-wins entries
+  for retry instead of silently dropping them.
+- iOS legacy Disk migration is conservative and retryable. A valid registry is
+  copied into the suite domain and each `standardUserDefaults` source is
+  removed only after target persistence is verified; malformed registries,
+  fallback or same-domain stores, conflicts, and failed persistence leave the
+  source and registry available for recovery.
 
-## 0.8.0 - 2026-08-12
+### Fixed
+
+- `storage.clearBiometric()` flushes pending Secure writes, clears the JS raw
+  cache before listener notification, uses a durable Android biometric clear,
+  surfaces failures, and emits the same Secure-scope `clear` event as a Secure
+  clear after success.
+- Android biometric corruption is checked and recovered at preference-store
+  initialization instead of probing the full encrypted store on each
+  existence or deletion hot path.
+
+## [0.8.0] - 2026-08-12
 
 ### Breaking changes
 
@@ -58,7 +114,7 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 - The IndexedDB backend reports affected keys when `flush()` fails and starts a best-effort flush on `pagehide` and hidden visibility changes.
 - `setIfVersion()` is documented as optimistic (no backend-level atomicity); CAS guarantees are covered by race tests.
 
-## 0.7.0 - 2026-07-30
+## [0.7.0] - 2026-07-30
 
 ### Changes
 
@@ -69,7 +125,7 @@ The format follows Keep a Changelog and the project adheres to SemVer.
 - Enforce Android biometric policy levels with distinct Keystore keys, propagate locked or invalidated biometric failures, and keep secure preference files excluded from backup.
 - Preflight biometric store access before aggregate secure mutations and surface native commit or corruption-recovery failures.
 
-## 0.6.0 - 2026-06-15
+## [0.6.0] - 2026-06-15
 
 ### Added
 
@@ -97,7 +153,7 @@ type changes can affect advanced consumers:
 - `StorageChangeOperation` gained the `"expire"` and `"clearGroup"` members. Exhaustive `switch` statements over a change event's `operation` need cases for the new members.
 - `useStorage()` now returns a three-element tuple `[value, setter, actions]` (was two). Array destructuring such as `const [value, setStore] = useStorage(item)` is unaffected; only code that annotated the result with an explicit two-element tuple type needs to widen the annotation.
 
-## 0.5.9 - 2026-06-11
+## [0.5.9] - 2026-06-11
 
 ### Fixed
 
@@ -108,7 +164,7 @@ type changes can affect advanced consumers:
 
 - Included `CHANGELOG.md` in the packed package docs.
 
-## 0.5.8 - 2026-06-11
+## [0.5.8] - 2026-06-11
 
 ### Changed
 
@@ -119,7 +175,7 @@ type changes can affect advanced consumers:
 
 - Regenerate Nitrogen output and package build artifacts before pack-content audits so clean release and CI environments validate the actual published tarball.
 
-## 0.5.7 - 2026-06-10
+## [0.5.7] - 2026-06-10
 
 ### Added
 
@@ -137,7 +193,7 @@ type changes can affect advanced consumers:
 - Keep native and web public TypeScript entrypoints aligned so IDEs infer storage setters and batch tuple results consistently across React Native and web imports.
 - Keep the README, issue template, package metadata, and release notes aligned with the current `0.5.7` package surface.
 
-## 0.5.6 - 2026-05-22
+## [0.5.6] - 2026-05-22
 
 ### Added
 
@@ -159,7 +215,7 @@ type changes can affect advanced consumers:
 - Remove package-owned Android native log spam for expected unavailable biometric storage paths.
 - Modernize Android Gradle assignment syntax to avoid package-owned Gradle warnings.
 
-## 0.5.4 - 2026-05-13
+## [0.5.4] - 2026-05-13
 
 ### Fixed
 
@@ -170,7 +226,7 @@ type changes can affect advanced consumers:
 - Publish GitHub Releases to npm through a Trusted Publishing/OIDC workflow.
 - Resolve the package build's TypeScript binary lookup warning during release checks.
 
-## 0.5.2 - 2026-04-27
+## [0.5.2] - 2026-04-27
 
 ### Fixed
 
@@ -178,7 +234,7 @@ type changes can affect advanced consumers:
 - Stabilize the release benchmark gate by sampling each benchmark three times while keeping the same regression thresholds.
 - Correct package content check commands in the release documentation for current Bun.
 
-## 0.5.1 - 2026-04-24
+## [0.5.1] - 2026-04-24
 
 ### Added
 
@@ -196,7 +252,7 @@ type changes can affect advanced consumers:
 - Document raw import/export workflows and warn that Secure exports expose secret values.
 - Refactor the publish script to validate release docs, report check timings, support coverage gates, and avoid redundant pack dry-runs.
 
-## 0.5.0 - 2026-04-18
+## [0.5.0] - 2026-04-18
 
 ### Added
 
@@ -213,7 +269,7 @@ type changes can affect advanced consumers:
 - Expand npm package description and keywords around React Native secure storage, biometric storage, Keychain, Android Keystore, Nitro Modules, MMKV migration, Expo SecureStore, Zustand/Jotai, and IndexedDB.
 - Harden publish dry-runs, package docs syncing, and npm pack content validation.
 
-## 0.4.5 - 2026-04-14
+## [0.4.5] - 2026-04-14
 
 ### Added
 
@@ -258,7 +314,7 @@ type changes can affect advanced consumers:
 - Fix web `import()` for Secure scope skipping `flushSecureWrites()` and `setSecureAccessControl()` before writing.
 - Expand ProGuard/R8 keep rules with explicit method-signature patterns so JNI-callable methods survive aggressive R8 shrinking in release builds.
 
-## 0.4.1 - 2026-03-04
+## [0.4.1] - 2026-03-04
 
 ### Added
 
@@ -277,7 +333,7 @@ type changes can affect advanced consumers:
 - Bump to **React 19.2.0** and **React Native 0.83.2** across workspace and example.
 - Add `--provenance` flag to `npm publish` for npm supply-chain attestation.
 
-## 0.4.0 - 2026-02-25
+## [0.4.0] - 2026-02-25
 
 ### Added
 
@@ -297,7 +353,7 @@ type changes can affect advanced consumers:
 - Keep iOS secure keychain cache/index behavior aligned with new prefix query and biometric-level paths.
 - Expand README/API docs to cover the new public API surface with concrete TypeScript use-case snippets.
 
-## 0.3.2 - 2026-02-22
+## [0.3.2] - 2026-02-22
 
 ### Added
 
@@ -320,7 +376,7 @@ type changes can affect advanced consumers:
 - Expand benchmark coverage to include Disk and Secure scope throughput checks and tighten regression thresholds.
 - Expand README coverage so every public feature has a concrete TypeScript use-case example, including secure write flush, biometric/access-control usage, batch bootstrap, and storage utility workflows.
 
-## 0.3.1 - 2026-02-16
+## [0.3.1] - 2026-02-16
 
 ### Changed
 
@@ -337,7 +393,7 @@ type changes can affect advanced consumers:
 - Fix global `storage.setAccessControl(...)` handling so non-item raw secure writes keep the configured level instead of being forced back to default.
 - Fix Android secure key enumeration to return deduplicated key sets when secure and biometric stores share key names.
 
-## 0.3.0 - 2026-02-15
+## [0.3.0] - 2026-02-15
 
 ### Added
 
@@ -354,7 +410,7 @@ type changes can affect advanced consumers:
 - Route native batch calls through true adapter-level batch APIs (HybridStorage + iOS/Android adapters) instead of per-key loops.
 - Add read-through cache invalidation on scoped/key change events and native/web clear paths.
 
-## 0.2.1 - 2026-02-15
+## [0.2.1] - 2026-02-15
 
 ### Added
 
@@ -375,7 +431,7 @@ type changes can affect advanced consumers:
 
 - Raise `react` peer dependency floor to `>=18.2.0`.
 
-## 0.2.0 - 2026-02-15
+## [0.2.0] - 2026-02-15
 
 ### Added
 
@@ -398,7 +454,7 @@ type changes can affect advanced consumers:
 - Expand README with complete API behavior/throws documentation.
 - Strengthen native and web test coverage for validation, TTL, migrations, and transactions.
 
-## 0.1.4 - 2026-02-09
+## [0.1.4] - 2026-02-09
 
 ### Added
 
@@ -412,13 +468,13 @@ type changes can affect advanced consumers:
 
 - Bump react-native-nitro-modules to the latest version and raise the peer dependency floor.
 
-## 0.1.3 - 2026-01-22
+## [0.1.3] - 2026-01-22
 
 ### Fixed
 
 - Prevent ProGuard from stripping the JNI class in release builds.
 
-## 0.1.2 - 2026-01-07
+## [0.1.2] - 2026-01-07
 
 ### Added
 
@@ -429,7 +485,7 @@ type changes can affect advanced consumers:
 
 - Point types to the correct path and simplify bob targets.
 
-## 0.1.1 - 2025-12-15
+## [0.1.1] - 2025-12-15
 
 ### Added
 
@@ -442,7 +498,7 @@ type changes can affect advanced consumers:
 - Update README screenshots.
 - Add tests for memory item deletion and MMKV migration, and simplify the README.
 
-## 0.1.0 - 2025-12-15
+## [0.1.0] - 2025-12-15
 
 ### Added
 

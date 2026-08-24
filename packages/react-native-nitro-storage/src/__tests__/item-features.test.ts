@@ -76,6 +76,8 @@ describe("createSetItem", () => {
     seen.add("a");
     seen.add("b");
     expect(seen.has("a")).toBe(true);
+    expect(seen.get()).toEqual({ a: true, b: true });
+    expect(seen.getTyped()).toEqual({ a: true, b: true });
     expect(seen.size()).toBe(2);
     expect(seen.values().sort()).toEqual(["a", "b"]);
 
