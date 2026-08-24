@@ -244,7 +244,7 @@ function readJson(filePath) {
 function getFirstChangelogVersion() {
   const changelogPath = path.join(projectRoot, "CHANGELOG.md");
   const changelog = fs.readFileSync(changelogPath, "utf-8");
-  return changelog.match(/^##\s+([^\s]+)/m)?.[1] ?? null;
+  return changelog.match(/^##\s+([^\s]+)/m)?.[1]?.replace(/^[[]|]$/g, "") ?? null;
 }
 
 function assertReleaseDocs(version) {
