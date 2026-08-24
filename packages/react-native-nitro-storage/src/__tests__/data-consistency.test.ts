@@ -12,14 +12,14 @@ import {
   StorageScope,
 } from "../index.web";
 import {
-  NATIVE_BATCH_MISSING_SENTINEL,
-  decodeNativeBatchValue,
   deserializeWithPrimitiveFastPath,
   escapeCollidingRawValue,
   serializeWithPrimitiveFastPath,
   unescapeCollidingRawValue,
 } from "../internal";
 import { createNitroStorageMock, resetNitroStorageMock } from "../testing";
+
+const retiredBatchMissingSentinel = "__nitro_storage_batch_missing__::v1";
 
 function createStorageMock(): Storage {
   const store = new Map<string, string>();
@@ -375,13 +375,13 @@ describe("item 9: migrations are failure-atomic", () => {
 });
 
 describe("item 11: encoding collisions", () => {
-  it("round-trips strings equal to the batch missing sentinel", () => {
+  it("round-trips strings equal to the retired batch missing sentinel", () => {
     const serialized = serializeWithPrimitiveFastPath(
-      NATIVE_BATCH_MISSING_SENTINEL,
+      retiredBatchMissingSentinel,
     );
-    expect(serialized).not.toBe(NATIVE_BATCH_MISSING_SENTINEL);
+    expect(serialized).not.toBe(retiredBatchMissingSentinel);
     expect(deserializeWithPrimitiveFastPath<string>(serialized)).toBe(
-      NATIVE_BATCH_MISSING_SENTINEL,
+      retiredBatchMissingSentinel,
     );
   });
 
@@ -430,18 +430,6 @@ describe("item 11: encoding collisions", () => {
     );
   });
 
-  it("maps the native batch sentinel to missing without decoding payloads", () => {
-    expect(decodeNativeBatchValue(NATIVE_BATCH_MISSING_SENTINEL)).toBe(
-      undefined,
-    );
-    const encodedSentinel = escapeCollidingRawValue(
-      NATIVE_BATCH_MISSING_SENTINEL,
-    );
-    expect(decodeNativeBatchValue(encodedSentinel)).toBe(encodedSentinel);
-    expect(decodeNativeBatchValue("plain")).toBe("plain");
-    expect(decodeNativeBatchValue(undefined)).toBe(undefined);
-  });
-
   it("keeps raw API writes of colliding strings readable through items", () => {
     const colliding = "__nitro_storage_primitive__:u";
     storage.setString("collision-key", colliding, StorageScope.Disk);
@@ -455,8 +443,8 @@ describe("item 11: encoding collisions", () => {
     );
   });
 
-  it("keeps raw API writes of the sentinel readable through raw reads", () => {
-    const sentinel = NATIVE_BATCH_MISSING_SENTINEL;
+  it("keeps raw API writes of the retired sentinel readable through raw reads", () => {
+    const sentinel = retiredBatchMissingSentinel;
     storage.setString("sentinel-key", sentinel, StorageScope.Disk);
     expect(storage.getString("sentinel-key", StorageScope.Disk)).toBe(sentinel);
     expect(storage.getAll(StorageScope.Disk)["sentinel-key"]).toBe(sentinel);

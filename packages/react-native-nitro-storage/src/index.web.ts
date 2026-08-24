@@ -2,6 +2,7 @@ import { resolveWebWriteBuffering } from "./capabilities";
 import { unescapeCollidingRawValue } from "./internal";
 import {
   assertAccessControlLevel,
+  createStorageCompositeError,
   assertBiometricLevel,
   notifyAllListeners,
   notifyKeyListeners,
@@ -16,6 +17,7 @@ import type {
   SecurityCapabilities,
   StorageCapabilities,
 } from "./storage-runtime";
+import type { Storage } from "./Storage.nitro";
 import type { AccessControl } from "./Storage.types";
 import { StorageScope, BiometricLevel } from "./Storage.types";
 import {
@@ -37,6 +39,8 @@ export type {
   StorageMetricsObserver,
   StorageSelectorListener,
   StorageSelectorSubscribeOptions,
+  StorageCompositeError,
+  StorageCompensationError,
   StorageVersion,
   Validator,
   VersionedValue,
@@ -44,9 +48,11 @@ export type {
 export { isKeychainLockedError } from "./shared";
 
 export { StorageScope, AccessControl, BiometricLevel } from "./Storage.types";
+export type { Storage } from "./Storage.nitro";
 export { migrateFromMMKV } from "./migration";
 export {
   getStorageErrorCode,
+  isStorageError,
   type SecureStorageMetadata,
   type SecurityCapabilities,
   type StorageCapabilities,
@@ -84,37 +90,6 @@ export type {
   TransactionContext,
 } from "./storage-core";
 export type { PlatformScope, PlatformStorage } from "./storage-platform";
-
-export type Storage = {
-  name: string;
-  equals: (other: unknown) => boolean;
-  dispose: () => void;
-  set(key: string, value: string, scope: number): void;
-  get(key: string, scope: number): string | undefined;
-  remove(key: string, scope: number): void;
-  clear(scope: number): void;
-  has(key: string, scope: number): boolean;
-  getAllKeys(scope: number): string[];
-  getKeysByPrefix(prefix: string, scope: number): string[];
-  size(scope: number): number;
-  setBatch(keys: string[], values: string[], scope: number): void;
-  getBatch(keys: string[], scope: number): (string | undefined)[];
-  removeBatch(keys: string[], scope: number): void;
-  removeByPrefix(prefix: string, scope: number): void;
-  addOnChange(
-    scope: number,
-    callback: (key: string, value: string | undefined) => void,
-  ): () => void;
-  setSecureAccessControl(level: number): void;
-  setSecureWritesAsync(enabled: boolean): void;
-  setKeychainAccessGroup(group: string): void;
-  setSecureBiometric(key: string, value: string): void;
-  setSecureBiometricWithLevel(key: string, value: string, level: number): void;
-  getSecureBiometric(key: string): string | undefined;
-  deleteSecureBiometric(key: string): void;
-  hasSecureBiometric(key: string): boolean;
-  clearSecureBiometric(): void;
-};
 
 const webScopeKeyIndex: Record<NonMemoryScope, Set<string>> = {
   [StorageScope.Disk]: new Set(),
@@ -182,9 +157,16 @@ function createWebStorageError(
   const backendName = getBackendName(scope, backend);
   const message =
     error instanceof Error ? error.message : String(error ?? "Unknown error");
-  return new Error(
+  const wrapped = new Error(
     `NitroStorage(web): ${operation} failed for ${backendName}: ${message}`,
   );
+  Object.defineProperty(wrapped, "cause", {
+    configurable: true,
+    enumerable: false,
+    value: error,
+    writable: false,
+  });
+  return wrapped;
 }
 
 function withWebBackendOperation<T>(
@@ -236,15 +218,12 @@ function getWebScopeKeyIndex(scope: NonMemoryScope): Set<string> {
   return webScopeKeyIndex[scope];
 }
 
-function hydrateWebScopeKeyIndex(scope: NonMemoryScope): void {
-  if (hydratedWebScopeKeyIndex.has(scope)) {
-    return;
-  }
-
-  const backend = getWebBackend(scope);
+function replaceWebScopeKeyIndex(
+  scope: NonMemoryScope,
+  keys: readonly string[],
+): void {
   const keyIndex = getWebScopeKeyIndex(scope);
   keyIndex.clear();
-  const keys = backend?.getAllKeys() ?? [];
   for (const key of keys) {
     if (scope === StorageScope.Disk) {
       keyIndex.add(key);
@@ -259,7 +238,63 @@ function hydrateWebScopeKeyIndex(scope: NonMemoryScope): void {
       keyIndex.add(fromBiometricStorageKey(key));
     }
   }
-  hydratedWebScopeKeyIndex.add(scope);
+}
+
+function invalidateWebScopeKeyIndex(scope: NonMemoryScope): void {
+  getWebScopeKeyIndex(scope).clear();
+  hydratedWebScopeKeyIndex.delete(scope);
+  getInternals().clearScopeRawCache(scope);
+}
+
+function hydrateWebScopeKeyIndex(scope: NonMemoryScope): void {
+  if (hydratedWebScopeKeyIndex.has(scope)) {
+    return;
+  }
+
+  try {
+    const backend = getWebBackend(scope);
+    const keys = backend?.getAllKeys() ?? [];
+    replaceWebScopeKeyIndex(scope, keys);
+    hydratedWebScopeKeyIndex.add(scope);
+  } catch (error) {
+    invalidateWebScopeKeyIndex(scope);
+    throw error;
+  }
+}
+
+function reconcileWebScopeKeyIndex(scope: NonMemoryScope): void {
+  try {
+    const keys = withWebBackendOperation(
+      scope,
+      "reconcile-key-index",
+      (backend) => backend.getAllKeys(),
+    );
+    replaceWebScopeKeyIndex(scope, keys);
+    hydratedWebScopeKeyIndex.add(scope);
+  } catch (error) {
+    invalidateWebScopeKeyIndex(scope);
+    throw error;
+  }
+}
+
+function throwAfterWebMutationFailure(
+  scope: NonMemoryScope,
+  operation: string,
+  primary: unknown,
+  contexts: readonly { label: string; error: unknown }[] = [],
+): never {
+  try {
+    reconcileWebScopeKeyIndex(scope);
+  } catch (reconciliationError) {
+    throw createStorageCompositeError(operation, primary, [
+      ...contexts,
+      { label: "index reconciliation", error: reconciliationError },
+    ]);
+  }
+  if (contexts.length > 0) {
+    throw createStorageCompositeError(operation, primary, contexts);
+  }
+  throw primary;
 }
 
 function ensureWebScopeKeyIndex(scope: NonMemoryScope): Set<string> {
@@ -284,13 +319,34 @@ function applyExternalChangeEvent(
     const oldValue = getInternals().readCachedRawValue(
       StorageScope.Secure,
       plainKey,
+      "plain",
     );
+    getInternals().invalidateRawCache(StorageScope.Secure, plainKey);
     if (newValue === null) {
-      ensureWebScopeKeyIndex(StorageScope.Secure).delete(plainKey);
-      getInternals().cacheRawValue(StorageScope.Secure, plainKey, undefined);
+      if (
+        !withWebBackendOperation(
+          StorageScope.Secure,
+          "external-sync:getBiometricItem",
+          (backend) =>
+            backend.getAllKeys().includes(toBiometricStorageKey(plainKey)),
+        )
+      ) {
+        ensureWebScopeKeyIndex(StorageScope.Secure).delete(plainKey);
+      }
+      getInternals().cacheRawValue(
+        StorageScope.Secure,
+        plainKey,
+        undefined,
+        "plain",
+      );
     } else {
       ensureWebScopeKeyIndex(StorageScope.Secure).add(plainKey);
-      getInternals().cacheRawValue(StorageScope.Secure, plainKey, newValue);
+      getInternals().cacheRawValue(
+        StorageScope.Secure,
+        plainKey,
+        newValue,
+        "plain",
+      );
     }
     notifyKeyListeners(
       getInternals().getScopedListeners(StorageScope.Secure),
@@ -312,21 +368,34 @@ function applyExternalChangeEvent(
     const oldValue = getInternals().readCachedRawValue(
       StorageScope.Secure,
       plainKey,
+      "biometric",
     );
+    getInternals().invalidateRawCache(StorageScope.Secure, plainKey);
     if (newValue === null) {
       if (
-        withWebBackendOperation(
+        !withWebBackendOperation(
           StorageScope.Secure,
           "external-sync:getItem",
-          (backend) => backend.getItem(toSecureStorageKey(plainKey)),
-        ) === null
+          (backend) =>
+            backend.getAllKeys().includes(toSecureStorageKey(plainKey)),
+        )
       ) {
         ensureWebScopeKeyIndex(StorageScope.Secure).delete(plainKey);
       }
-      getInternals().cacheRawValue(StorageScope.Secure, plainKey, undefined);
+      getInternals().cacheRawValue(
+        StorageScope.Secure,
+        plainKey,
+        undefined,
+        "biometric",
+      );
     } else {
       ensureWebScopeKeyIndex(StorageScope.Secure).add(plainKey);
-      getInternals().cacheRawValue(StorageScope.Secure, plainKey, newValue);
+      getInternals().cacheRawValue(
+        StorageScope.Secure,
+        plainKey,
+        newValue,
+        "biometric",
+      );
     }
     notifyKeyListeners(
       getInternals().getScopedListeners(StorageScope.Secure),
@@ -456,9 +525,13 @@ const WebStorage: Storage = {
     }
     const storageKey =
       scope === StorageScope.Secure ? toSecureStorageKey(key) : key;
-    withWebBackendOperation(scope, "set", (backend) => {
-      backend.setItem(storageKey, value);
-    });
+    try {
+      withWebBackendOperation(scope, "set", (backend) => {
+        backend.setItem(storageKey, value);
+      });
+    } catch (error) {
+      throwAfterWebMutationFailure(scope, "set", error);
+    }
     ensureWebScopeKeyIndex(scope).add(key);
     notifyKeyListeners(getInternals().getScopedListeners(scope), key);
   },
@@ -477,22 +550,26 @@ const WebStorage: Storage = {
     if (scope !== StorageScope.Disk && scope !== StorageScope.Secure) {
       return;
     }
-    if (scope === StorageScope.Secure) {
-      withWebBackendOperation(scope, "remove", (backend) => {
-        if (backend.removeMany) {
-          backend.removeMany([
-            toSecureStorageKey(key),
-            toBiometricStorageKey(key),
-          ]);
-          return;
-        }
-        backend.removeItem(toSecureStorageKey(key));
-        backend.removeItem(toBiometricStorageKey(key));
-      });
-    } else {
-      withWebBackendOperation(scope, "remove", (backend) => {
-        backend.removeItem(key);
-      });
+    try {
+      if (scope === StorageScope.Secure) {
+        withWebBackendOperation(scope, "remove", (backend) => {
+          if (backend.removeMany) {
+            backend.removeMany([
+              toSecureStorageKey(key),
+              toBiometricStorageKey(key),
+            ]);
+            return;
+          }
+          backend.removeItem(toSecureStorageKey(key));
+          backend.removeItem(toBiometricStorageKey(key));
+        });
+      } else {
+        withWebBackendOperation(scope, "remove", (backend) => {
+          backend.removeItem(key);
+        });
+      }
+    } catch (error) {
+      throwAfterWebMutationFailure(scope, "remove", error);
     }
     ensureWebScopeKeyIndex(scope).delete(key);
     notifyKeyListeners(getInternals().getScopedListeners(scope), key);
@@ -501,9 +578,13 @@ const WebStorage: Storage = {
     if (scope !== StorageScope.Disk && scope !== StorageScope.Secure) {
       return;
     }
-    withWebBackendOperation(scope, "clear", (backend) => {
-      backend.clear();
-    });
+    try {
+      withWebBackendOperation(scope, "clear", (backend) => {
+        backend.clear();
+      });
+    } catch (error) {
+      throwAfterWebMutationFailure(scope, "clear", error);
+    }
     ensureWebScopeKeyIndex(scope).clear();
     notifyAllListeners(getInternals().getScopedListeners(scope));
   },
@@ -528,15 +609,19 @@ const WebStorage: Storage = {
         value,
       ]);
     });
-    withWebBackendOperation(scope, "setBatch", (backend) => {
-      if (backend.setMany) {
-        backend.setMany(entries);
-        return;
-      }
-      entries.forEach(([storageKey, value]) => {
-        backend.setItem(storageKey, value);
+    try {
+      withWebBackendOperation(scope, "setBatch", (backend) => {
+        if (backend.setMany) {
+          backend.setMany(entries);
+          return;
+        }
+        entries.forEach(([storageKey, value]) => {
+          backend.setItem(storageKey, value);
+        });
       });
-    });
+    } catch (error) {
+      throwAfterWebMutationFailure(scope, "setBatch", error);
+    }
     const keyIndex = ensureWebScopeKeyIndex(scope);
     entries.forEach(([storageKey]) =>
       keyIndex.add(
@@ -570,30 +655,34 @@ const WebStorage: Storage = {
       return;
     }
 
-    if (scope === StorageScope.Secure) {
-      const storageKeys = keys.flatMap((key) => [
-        toSecureStorageKey(key),
-        toBiometricStorageKey(key),
-      ]);
-      withWebBackendOperation(scope, "removeBatch", (backend) => {
-        if (backend.removeMany) {
-          backend.removeMany(storageKeys);
-          return;
-        }
-        storageKeys.forEach((storageKey) => {
-          backend.removeItem(storageKey);
+    try {
+      if (scope === StorageScope.Secure) {
+        const storageKeys = keys.flatMap((key) => [
+          toSecureStorageKey(key),
+          toBiometricStorageKey(key),
+        ]);
+        withWebBackendOperation(scope, "removeBatch", (backend) => {
+          if (backend.removeMany) {
+            backend.removeMany(storageKeys);
+            return;
+          }
+          storageKeys.forEach((storageKey) => {
+            backend.removeItem(storageKey);
+          });
         });
-      });
-    } else {
-      withWebBackendOperation(scope, "removeBatch", (backend) => {
-        if (backend.removeMany) {
-          backend.removeMany(keys);
-          return;
-        }
-        keys.forEach((key) => {
-          backend.removeItem(key);
+      } else {
+        withWebBackendOperation(scope, "removeBatch", (backend) => {
+          if (backend.removeMany) {
+            backend.removeMany(keys);
+            return;
+          }
+          keys.forEach((key) => {
+            backend.removeItem(key);
+          });
         });
-      });
+      }
+    } catch (error) {
+      throwAfterWebMutationFailure(scope, "removeBatch", error);
     }
 
     const keyIndex = ensureWebScopeKeyIndex(scope);
@@ -662,19 +751,8 @@ const WebStorage: Storage = {
   },
   setSecureBiometricWithLevel: (key: string, value: string, level: number) => {
     assertBiometricLevel(level);
-    if (level === BiometricLevel.None) {
-      withWebBackendOperation(StorageScope.Secure, "setSecure", (backend) => {
-        backend.removeItem(toBiometricStorageKey(key));
-        backend.setItem(toSecureStorageKey(key), value);
-      });
-      ensureWebScopeKeyIndex(StorageScope.Secure).add(key);
-      notifyKeyListeners(
-        getInternals().getScopedListeners(StorageScope.Secure),
-        key,
-      );
-      return;
-    }
     if (
+      level !== BiometricLevel.None &&
       typeof __DEV__ !== "undefined" &&
       __DEV__ &&
       !hasWarnedAboutWebBiometricFallback
@@ -684,14 +762,71 @@ const WebStorage: Storage = {
         "[NitroStorage] Biometric storage is not supported on web. Using localStorage.",
       );
     }
-    withWebBackendOperation(
+
+    const biometricStorageKey = toBiometricStorageKey(key);
+    const plainStorageKey = toSecureStorageKey(key);
+    const previous = withWebBackendOperation(
       StorageScope.Secure,
-      "setSecureBiometric",
-      (backend) => {
-        backend.setItem(toBiometricStorageKey(key), value);
-        backend.removeItem(toSecureStorageKey(key));
-      },
+      "setSecureBiometric:readPrevious",
+      (backend) => ({
+        biometric: backend.getItem(biometricStorageKey),
+        plain: backend.getItem(plainStorageKey),
+      }),
     );
+    getInternals().invalidateRawCache(StorageScope.Secure, key);
+
+    const restoreErrors: { label: string; error: unknown }[] = [];
+    const restore = (
+      storageKey: string,
+      previousValue: string | null,
+      label: string,
+    ): void => {
+      try {
+        withWebBackendOperation(
+          StorageScope.Secure,
+          `setSecureBiometric:rollback:${label}`,
+          (backend) => {
+            if (previousValue === null) {
+              backend.removeItem(storageKey);
+            } else {
+              backend.setItem(storageKey, previousValue);
+            }
+          },
+        );
+      } catch (error) {
+        restoreErrors.push({ label: `rollback ${label}`, error });
+      }
+    };
+
+    try {
+      withWebBackendOperation(
+        StorageScope.Secure,
+        level === BiometricLevel.None
+          ? "setSecureBiometric:demote"
+          : "setSecureBiometric:promote",
+        (backend) => {
+          if (level === BiometricLevel.None) {
+            backend.removeItem(biometricStorageKey);
+            backend.setItem(plainStorageKey, value);
+            return;
+          }
+          backend.setItem(biometricStorageKey, value);
+          backend.removeItem(plainStorageKey);
+        },
+      );
+    } catch (error) {
+      restore(biometricStorageKey, previous.biometric, "biometric");
+      restore(plainStorageKey, previous.plain, "plain");
+      throwAfterWebMutationFailure(
+        StorageScope.Secure,
+        level === BiometricLevel.None
+          ? "secure demotion"
+          : "biometric promotion",
+        error,
+        restoreErrors,
+      );
+    }
+
     ensureWebScopeKeyIndex(StorageScope.Secure).add(key);
     notifyKeyListeners(
       getInternals().getScopedListeners(StorageScope.Secure),
@@ -707,20 +842,36 @@ const WebStorage: Storage = {
     return value ?? undefined;
   },
   deleteSecureBiometric: (key: string) => {
-    withWebBackendOperation(
-      StorageScope.Secure,
-      "deleteSecureBiometric",
-      (backend) => {
-        backend.removeItem(toBiometricStorageKey(key));
-      },
-    );
-    if (
+    try {
       withWebBackendOperation(
+        StorageScope.Secure,
+        "deleteSecureBiometric",
+        (backend) => {
+          backend.removeItem(toBiometricStorageKey(key));
+        },
+      );
+    } catch (error) {
+      throwAfterWebMutationFailure(
+        StorageScope.Secure,
+        "delete biometric",
+        error,
+      );
+    }
+    let hasPlainValue: string | null;
+    try {
+      hasPlainValue = withWebBackendOperation(
         StorageScope.Secure,
         "deleteSecureBiometric:getItem",
         (backend) => backend.getItem(toSecureStorageKey(key)),
-      ) === null
-    ) {
+      );
+    } catch (error) {
+      throwAfterWebMutationFailure(
+        StorageScope.Secure,
+        "delete biometric",
+        error,
+      );
+    }
+    if (hasPlainValue === null) {
       ensureWebScopeKeyIndex(StorageScope.Secure).delete(key);
     }
     notifyKeyListeners(
@@ -729,54 +880,65 @@ const WebStorage: Storage = {
     );
   },
   hasSecureBiometric: (key: string) => {
-    return (
-      withWebBackendOperation(
+    try {
+      return withWebBackendOperation(
         StorageScope.Secure,
         "hasSecureBiometric",
-        (backend) => backend.getItem(toBiometricStorageKey(key)),
-      ) !== null
-    );
+        (backend) => backend.getAllKeys().includes(toBiometricStorageKey(key)),
+      );
+    } catch (error) {
+      invalidateWebScopeKeyIndex(StorageScope.Secure);
+      throw error;
+    }
   },
   clearSecureBiometric: () => {
-    const storageKeys = withWebBackendOperation(
-      StorageScope.Secure,
-      "clearSecureBiometric:getAllKeys",
-      (backend) => backend.getAllKeys(),
-    );
+    let storageKeys: string[];
+    try {
+      storageKeys = withWebBackendOperation(
+        StorageScope.Secure,
+        "clearSecureBiometric:getAllKeys",
+        (backend) => backend.getAllKeys(),
+      );
+    } catch (error) {
+      invalidateWebScopeKeyIndex(StorageScope.Secure);
+      throw error;
+    }
     const keysToNotify = storageKeys
       .filter((key) => key.startsWith(BIOMETRIC_WEB_PREFIX))
       .map((key) => fromBiometricStorageKey(key));
     if (keysToNotify.length === 0) {
+      replaceWebScopeKeyIndex(StorageScope.Secure, storageKeys);
+      hydratedWebScopeKeyIndex.add(StorageScope.Secure);
       return;
     }
-    withWebBackendOperation(
-      StorageScope.Secure,
-      "clearSecureBiometric",
-      (backend) => {
-        const biometricKeys = keysToNotify.map((key) =>
-          toBiometricStorageKey(key),
-        );
-        if (backend.removeMany) {
-          backend.removeMany(biometricKeys);
-          return;
-        }
-        biometricKeys.forEach((storageKey) => {
-          backend.removeItem(storageKey);
-        });
-      },
-    );
-    const keyIndex = ensureWebScopeKeyIndex(StorageScope.Secure);
-    keysToNotify.forEach((key) => {
-      if (
-        withWebBackendOperation(
-          StorageScope.Secure,
-          "clearSecureBiometric:getItem",
-          (backend) => backend.getItem(toSecureStorageKey(key)),
-        ) === null
-      ) {
-        keyIndex.delete(key);
-      }
-    });
+
+    try {
+      withWebBackendOperation(
+        StorageScope.Secure,
+        "clearSecureBiometric",
+        (backend) => {
+          const biometricKeys = keysToNotify.map((key) =>
+            toBiometricStorageKey(key),
+          );
+          if (backend.removeMany) {
+            backend.removeMany(biometricKeys);
+            return;
+          }
+          biometricKeys.forEach((storageKey) => {
+            backend.removeItem(storageKey);
+          });
+        },
+      );
+    } catch (error) {
+      throwAfterWebMutationFailure(
+        StorageScope.Secure,
+        "clear biometric",
+        error,
+      );
+    }
+
+    reconcileWebScopeKeyIndex(StorageScope.Secure);
+
     const listeners = getInternals().getScopedListeners(StorageScope.Secure);
     keysToNotify.forEach((key) => {
       notifyKeyListeners(listeners, key);

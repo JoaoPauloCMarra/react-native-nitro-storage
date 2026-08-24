@@ -11,6 +11,7 @@ import android.security.keystore.UserNotAuthenticatedException
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import java.io.File
 import java.security.InvalidKeyException
 import java.security.KeyStore
 import java.security.KeyStoreException
@@ -26,6 +27,11 @@ private fun Throwable.hasCause(type: Class<*>): Boolean {
 }
 
 private fun Throwable.storageErrorCode(): String? {
+    val taggedCode = message
+        ?.let { Regex("\\[nitro-error:([a-z_]+)]").find(it)?.groupValues?.get(1) }
+    if (taggedCode == "storage_compensation_failed") {
+        return taggedCode
+    }
     return when {
         hasCause(AEADBadTagException::class.java) -> "storage_corruption"
         hasCause(UserNotAuthenticatedException::class.java) ||
@@ -40,6 +46,9 @@ private fun Throwable.wrapStorageException(
     defaultMessage: String,
     defaultCode: String? = null,
 ): RuntimeException {
+    if (message?.contains("[nitro-error:") == true && this is RuntimeException) {
+        return this
+    }
     val code = storageErrorCode() ?: defaultCode
     val message = if (code != null) {
         "[nitro-error:$code] $defaultMessage"
@@ -76,32 +85,47 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
     private val biometricOnlyMasterKeyAlias =
         "${context.packageName}.nitro_storage.biometric_only_key"
 
+    @Volatile
+    private var legacyBiometricInitialized = false
+
+    @Volatile
+    private var biometricOrPasscodeInitialized = false
+
+    @Volatile
+    private var biometricOnlyInitialized = false
+
     private val legacyBiometricPreferences: SharedPreferences by lazy {
-        createBiometricPreferences(
+        val preferences = createBiometricPreferences(
             "NitroStorageBiometric",
             biometricMasterKeyAlias,
             1,
         )
+        legacyBiometricInitialized = true
+        preferences
     }
 
     private val biometricOrPasscodePreferences: SharedPreferences by lazy {
-        createBiometricPreferences(
+        val preferences = createBiometricPreferences(
             "NitroStorageBiometricOrPasscode",
             biometricOrPasscodeMasterKeyAlias,
             1,
         )
+        biometricOrPasscodeInitialized = true
+        preferences
     }
 
     private val biometricOnlyPreferences: SharedPreferences by lazy {
-        createBiometricPreferences(
+        val preferences = createBiometricPreferences(
             "NitroStorageBiometricOnly",
             biometricOnlyMasterKeyAlias,
             2,
         )
+        biometricOnlyInitialized = true
+        preferences
     }
 
     @Volatile
-    private var secureWritesAsync = false
+    private var secureWritesAsync = true
 
     @Volatile
     private var secureKeysCache: Array<String>? = null
@@ -154,13 +178,44 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
     ): SharedPreferences {
         return try {
             val keyFactory = { createBiometricMasterKey(alias, level) }
-            initializeEncryptedPreferences(name, keyFactory(), alias, keyFactory)
+            val preferences = initializeEncryptedPreferences(
+                name,
+                keyFactory(),
+                alias,
+                keyFactory,
+            )
+            verifyReadablePreferences(preferences, name, alias, keyFactory)
         } catch (e: Exception) {
             throw e.wrapStorageException(
                 "NitroStorage: Biometric storage is not available on this device. " +
                     "Ensure supported authentication is enrolled.",
                 defaultCode = "biometric_unavailable",
             )
+        }
+    }
+
+    private fun verifyReadablePreferences(
+        preferences: SharedPreferences,
+        name: String,
+        alias: String,
+        keyFactory: () -> MasterKey,
+    ): SharedPreferences {
+        return try {
+            preferences.all
+            preferences
+        } catch (e: Exception) {
+            if (!e.hasCause(AEADBadTagException::class.java)) {
+                throw e
+            }
+            clearCorruptedStorage(name, alias)
+            try {
+                initializeEncryptedPreferences(name, keyFactory(), alias, keyFactory)
+            } catch (retryEx: Exception) {
+                throw retryEx.wrapStorageException(
+                    "NitroStorage: Unrecoverable storage corruption in $name",
+                    defaultCode = "storage_corruption",
+                )
+            }
         }
     }
 
@@ -212,22 +267,28 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
     }
 
     private fun preferencesFileExists(name: String): Boolean {
-        return context.getSharedPreferences(name, Context.MODE_PRIVATE).all.isNotEmpty()
+        return File(context.applicationInfo.dataDir, "shared_prefs/$name.xml").exists()
     }
 
     private fun existingBiometricPreferences(): List<SharedPreferences> {
         val stores = mutableListOf<SharedPreferences>()
-        if (preferencesFileExists("NitroStorageBiometricOnly")) {
+        if (
+            biometricOnlyInitialized ||
+            preferencesFileExists("NitroStorageBiometricOnly")
+        ) {
             stores.add(biometricOnlyPreferences)
         }
-        if (preferencesFileExists("NitroStorageBiometricOrPasscode")) {
+        if (
+            biometricOrPasscodeInitialized ||
+            preferencesFileExists("NitroStorageBiometricOrPasscode")
+        ) {
             stores.add(biometricOrPasscodePreferences)
         }
-        if (preferencesFileExists("NitroStorageBiometric")) {
+        if (
+            legacyBiometricInitialized ||
+            preferencesFileExists("NitroStorageBiometric")
+        ) {
             stores.add(legacyBiometricPreferences)
-        }
-        for (preferences in stores) {
-            preferences.all
         }
         return stores
     }
@@ -245,17 +306,19 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
     private fun removeBiometricKey(
         key: String,
         preferencesList: List<SharedPreferences> = existingBiometricPreferences(),
+        forceSynchronous: Boolean = false,
     ) {
         for (preferences in preferencesList) {
-            applySecureEditor(preferences.edit().remove(key))
+            applySecureEditor(preferences.edit().remove(key), forceSynchronous)
         }
     }
 
     private fun clearBiometricStores(
         preferencesList: List<SharedPreferences> = existingBiometricPreferences(),
+        forceSynchronous: Boolean = false,
     ) {
         for (preferences in preferencesList) {
-            applySecureEditor(preferences.edit().clear())
+            applySecureEditor(preferences.edit().clear(), forceSynchronous)
         }
     }
 
@@ -272,9 +335,12 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         }
     }
 
-    private fun applySecureEditor(editor: SharedPreferences.Editor) {
+    private fun applySecureEditor(
+        editor: SharedPreferences.Editor,
+        forceSynchronous: Boolean = false,
+    ) {
         try {
-            if (secureWritesAsync) {
+            if (secureWritesAsync && !forceSynchronous) {
                 editor.apply()
             } else if (!editor.commit()) {
                 throw IllegalStateException("SharedPreferences commit returned false")
@@ -284,6 +350,108 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
                 "NitroStorage: Failed to write to secure storage: ${e.message}",
             )
         }
+    }
+
+    private data class BiometricEntrySnapshot(
+        val preferences: SharedPreferences,
+        val present: Boolean,
+        val value: String?,
+    )
+
+    private data class PlainEntrySnapshot(
+        val present: Boolean,
+        val value: String?,
+    )
+
+    private fun captureBiometricEntrySnapshots(key: String): List<BiometricEntrySnapshot> {
+        return existingBiometricPreferences().map { preferences ->
+            val present = preferences.contains(key)
+            BiometricEntrySnapshot(
+                preferences = preferences,
+                present = present,
+                value = if (present) getSecureSafe(preferences, key) else null,
+            )
+        }
+    }
+
+    private fun capturePlainEntrySnapshot(key: String): PlainEntrySnapshot {
+        val present = encryptedPreferences.contains(key)
+        return PlainEntrySnapshot(
+            present = present,
+            value = if (present) getSecureSafe(encryptedPreferences, key) else null,
+        )
+    }
+
+    private fun restoreBiometricEntrySnapshots(
+        key: String,
+        snapshots: List<BiometricEntrySnapshot>,
+        additionalPreferences: List<SharedPreferences>,
+    ): List<Throwable> {
+        val errors = mutableListOf<Throwable>()
+        val existingPreferences = try {
+            existingBiometricPreferences()
+        } catch (error: Throwable) {
+            errors.add(error)
+            emptyList()
+        }
+        val preferencesToClear = (
+            existingPreferences +
+                snapshots.map { it.preferences } +
+                additionalPreferences
+            ).distinct()
+        preferencesToClear.forEach { preferences ->
+            try {
+                applySecureEditor(preferences.edit().remove(key), forceSynchronous = true)
+            } catch (error: Throwable) {
+                errors.add(error)
+            }
+        }
+        snapshots.filter { it.present }.forEach { snapshot ->
+            try {
+                val value = snapshot.value
+                    ?: throw IllegalStateException("Biometric snapshot contained a null value")
+                applySecureEditor(
+                    snapshot.preferences.edit().putString(key, value),
+                    forceSynchronous = true,
+                )
+            } catch (error: Throwable) {
+                errors.add(error)
+            }
+        }
+        return errors
+    }
+
+    private fun restorePlainEntrySnapshot(
+        key: String,
+        snapshot: PlainEntrySnapshot,
+    ): List<Throwable> {
+        return try {
+            val editor = if (snapshot.present) {
+                val value = snapshot.value
+                    ?: throw IllegalStateException("Plain snapshot contained a null value")
+                encryptedPreferences.edit().putString(key, value)
+            } else {
+                encryptedPreferences.edit().remove(key)
+            }
+            applySecureEditor(editor, forceSynchronous = true)
+            emptyList()
+        } catch (error: Throwable) {
+            listOf(error)
+        }
+    }
+
+    private fun compositeBiometricMutationError(
+        operation: String,
+        primary: Throwable,
+        rollbackErrors: List<Throwable>,
+    ): RuntimeException {
+        val composite = RuntimeException(
+            "[nitro-error:storage_compensation_failed] NitroStorage: $operation failed; " +
+                "rollback_error_count=${rollbackErrors.size}",
+            primary,
+        )
+        rollbackErrors.forEach(composite::addSuppressed)
+        return composite
     }
 
     private fun invalidateSecureKeysCache() {
@@ -418,7 +586,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             getInstanceOrThrow().sharedPreferences.edit().clear().apply()
         }
 
-        // --- Secure (sync commit by default, async apply when enabled) ---
+        // --- Secure (async apply by default, sync commit when requested) ---
 
         @JvmStatic
         fun setSecure(key: String, value: String) {
@@ -550,29 +718,66 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             val inst = getInstanceOrThrow()
             try {
                 synchronized(inst) {
-                    val biometricPreferences = inst.existingBiometricPreferences()
-                    if (level == 0) {
-                        inst.removeBiometricKey(key, biometricPreferences)
-                        inst.applySecureEditor(
-                            inst.encryptedPreferences.edit().putString(key, value),
-                        )
-                    } else {
-                        val targetPreferences = inst.biometricPreferencesForLevel(level)
-                        inst.applySecureEditor(
-                            targetPreferences.edit().putString(key, value),
-                        )
-                        inst.applySecureEditor(
-                            inst.encryptedPreferences.edit().remove(key),
-                        )
-                        for (preferences in biometricPreferences) {
-                            if (preferences !== targetPreferences) {
-                                inst.applySecureEditor(preferences.edit().remove(key))
+                    val previousBiometric = inst.captureBiometricEntrySnapshots(key)
+                    val previousPlain = inst.capturePlainEntrySnapshot(key)
+                    val additionalPreferences = mutableListOf<SharedPreferences>()
+
+                    try {
+                        if (level == 0) {
+                            inst.removeBiometricKey(
+                                key,
+                                previousBiometric.map { it.preferences },
+                                forceSynchronous = true,
+                            )
+                            inst.applySecureEditor(
+                                inst.encryptedPreferences.edit().putString(key, value),
+                                forceSynchronous = true,
+                            )
+                        } else {
+                            val targetPreferences = inst.biometricPreferencesForLevel(level)
+                            additionalPreferences.add(targetPreferences)
+                            inst.applySecureEditor(
+                                targetPreferences.edit().putString(key, value),
+                                forceSynchronous = true,
+                            )
+                            for (preferences in previousBiometric.map { it.preferences }) {
+                                if (preferences !== targetPreferences) {
+                                    inst.applySecureEditor(
+                                        preferences.edit().remove(key),
+                                        forceSynchronous = true,
+                                    )
+                                }
                             }
+                            inst.applySecureEditor(
+                                inst.encryptedPreferences.edit().remove(key),
+                                forceSynchronous = true,
+                            )
                         }
+                    } catch (primary: Exception) {
+                        val rollbackErrors = mutableListOf<Throwable>()
+                        rollbackErrors.addAll(
+                            inst.restoreBiometricEntrySnapshots(
+                                key,
+                                previousBiometric,
+                                additionalPreferences,
+                            ),
+                        )
+                        rollbackErrors.addAll(
+                            inst.restorePlainEntrySnapshot(key, previousPlain),
+                        )
+                        if (rollbackErrors.isNotEmpty()) {
+                            throw inst.compositeBiometricMutationError(
+                                if (level == 0) "Secure demotion" else "Biometric promotion",
+                                primary,
+                                rollbackErrors,
+                            )
+                        }
+                        throw primary
                     }
                     inst.invalidateSecureKeysCache()
                 }
             } catch (e: Exception) {
+                inst.invalidateSecureKeysCache()
                 throw e.wrapStorageException(
                     "NitroStorage: Biometric storage unavailable on this device",
                     defaultCode = "biometric_unavailable",
@@ -630,13 +835,14 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             val inst = getInstanceOrThrow()
             try {
                 synchronized(inst) {
-                    inst.clearBiometricStores()
-                    inst.invalidateSecureKeysCache()
+                    inst.clearBiometricStores(forceSynchronous = true)
                 }
             } catch (e: Exception) {
                 throw e.wrapStorageException(
                     "NitroStorage: Failed to clear biometric storage: ${e.message}",
                 )
+            } finally {
+                inst.invalidateSecureKeysCache()
             }
         }
     }

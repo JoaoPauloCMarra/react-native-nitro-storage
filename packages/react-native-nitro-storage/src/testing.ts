@@ -15,7 +15,7 @@ import { StorageScope, AccessControl } from "./Storage.types";
 export { StorageScope, AccessControl, BiometricLevel } from "./Storage.types";
 export { isKeychainLockedError } from "./shared";
 export { migrateFromMMKV } from "./migration";
-export { getStorageErrorCode } from "./storage-runtime";
+export { getStorageErrorCode, isStorageError } from "./storage-runtime";
 export { createIndexedDBBackend } from "./indexeddb-backend";
 export {
   describeWebBackendCapabilities,
@@ -101,6 +101,9 @@ function createInMemoryBackend(): InMemoryBackend {
     },
     remove: (key, scope) => {
       storeFor(scope).delete(key);
+      if (scope === StorageScope.Secure) {
+        biometricStore.delete(key);
+      }
     },
     clear: (scope) => {
       storeFor(scope).clear();
@@ -128,6 +131,9 @@ function createInMemoryBackend(): InMemoryBackend {
     removeBatch: (keys, scope) => {
       const store = storeFor(scope);
       keys.forEach((key) => store.delete(key));
+      if (scope === StorageScope.Secure) {
+        keys.forEach((key) => biometricStore.delete(key));
+      }
     },
     removeByPrefix: (prefix, scope) => {
       const store = storeFor(scope);
@@ -141,6 +147,7 @@ function createInMemoryBackend(): InMemoryBackend {
     getSecureBiometric: (key) => biometricStore.get(key),
     setSecureBiometricWithLevel: (key, value) => {
       biometricStore.set(key, value);
+      storeFor(StorageScope.Secure).delete(key);
     },
     deleteSecureBiometric: (key) => {
       biometricStore.delete(key);

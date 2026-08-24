@@ -211,6 +211,23 @@ auth.accessToken.set("token");
 
 The returned object is a typed record of secure string `StorageItem`s.
 
+## Storage Error Classification
+
+```ts
+if (isStorageError(error, "keychain_locked")) {
+  scheduleRetryAfterUnlock();
+}
+```
+
+`getStorageErrorCode(error)` returns the stable `StorageErrorCode` embedded by
+the native or web adapter. `isStorageError(error, code)` matches one exact code
+without parsing platform message text. See [secure-storage.md](secure-storage.md)
+for recovery semantics.
+
+`isKeychainLockedError(error)` is deprecated. It remains available for
+compatibility and returns `true` for `keychain_locked`,
+`authentication_required`, and `key_invalidated`.
+
 ## Web Backend APIs
 
 ```ts

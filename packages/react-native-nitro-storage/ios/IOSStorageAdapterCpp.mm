@@ -3,6 +3,9 @@
 #import <Security/Security.h>
 #import <LocalAuthentication/LocalAuthentication.h>
 
+#include <utility>
+#include <vector>
+
 namespace NitroStorage {
 
 static NSString* const kKeychainService = @"com.nitrostorage.keychain";
@@ -37,48 +40,91 @@ static NSUserDefaults* NitroDiskDefaults() {
     return defaults ?: [NSUserDefaults standardUserDefaults];
 }
 
-// --- Legacy disk key registry ---
+// --- Legacy disk key migration ---
 // Versions before the suite domain stored Disk values in standardUserDefaults.
-// The registry records legacy keys observed through the storage API so that
-// clearDisk can remove both stores and deleted legacy values cannot reappear.
-// Only keys observed through the storage API are ever registered; the host
-// app's own standard defaults keys are never enumerated or touched.
+// A conservative, retryable cutover runs at adapter initialization. A valid
+// registry is copied into the suite domain and each source is removed only
+// after a target readback confirms the copy. Malformed registries, fallback
+// domains, and persistence failures remain untouched for a later retry.
 
-static NSSet<NSString*>* registeredLegacyDiskKeys() {
-    NSArray* stored = [NitroDiskDefaults() stringArrayForKey:kLegacyDiskKeysRegistryKey];
-    return stored ? [NSSet setWithArray:stored] : [NSSet set];
-}
+static NSString* const kLegacyDiskMigrationMarkerKey =
+    @"__nitro_storage_legacy_disk_migration_v1__";
 
-static void persistLegacyDiskKeys(NSSet<NSString*>* keys) {
-    if (keys.count == 0) {
-        [NitroDiskDefaults() removeObjectForKey:kLegacyDiskKeysRegistryKey];
+static void runLegacyDiskMigrationCutover(
+    NSUserDefaults* defaults,
+    NSUserDefaults* standard
+) {
+    if ([defaults boolForKey:kLegacyDiskMigrationMarkerKey]) {
         return;
     }
-    [NitroDiskDefaults() setObject:[keys allObjects] forKey:kLegacyDiskKeysRegistryKey];
-}
 
-static void registerLegacyDiskKey(NSString* key) {
-    NSMutableSet* keys = [registeredLegacyDiskKeys() mutableCopy];
-    [keys addObject:key];
-    persistLegacyDiskKeys(keys);
-}
-
-static void unregisterLegacyDiskKeys(NSArray<NSString*>* keys) {
-    if (keys.count == 0) {
+    if (defaults == standard) {
         return;
     }
-    NSMutableSet* registered = [registeredLegacyDiskKeys() mutableCopy];
-    BOOL changed = NO;
+
+    id registryValue = [defaults objectForKey:kLegacyDiskKeysRegistryKey];
+    if (registryValue == nil || ![registryValue isKindOfClass:[NSArray class]]) {
+        return;
+    }
+
+    NSArray* registry = (NSArray*)registryValue;
+    NSMutableArray<NSString*>* keys = [NSMutableArray arrayWithCapacity:registry.count];
+    for (id rawKey in registry) {
+        if (![rawKey isKindOfClass:[NSString class]]) {
+            return;
+        }
+        NSString* key = (NSString*)rawKey;
+        if (key.length == 0 ||
+            [key isEqualToString:kLegacyDiskKeysRegistryKey] ||
+            [key isEqualToString:kLegacyDiskMigrationMarkerKey]) {
+            return;
+        }
+        [keys addObject:key];
+    }
+
     for (NSString* key in keys) {
-        if ([registered containsObject:key]) {
-            [registered removeObject:key];
-            changed = YES;
+        id legacyValue = [standard objectForKey:key];
+        if (legacyValue == nil) {
+            continue;
+        }
+        if (![legacyValue isKindOfClass:[NSString class]]) {
+            return;
+        }
+
+        id targetValue = [defaults objectForKey:key];
+        if (targetValue == nil) {
+            [defaults setObject:legacyValue forKey:key];
+        }
+        if (![defaults synchronize] ||
+            ![[defaults objectForKey:key] isEqual:legacyValue]) {
+            return;
+        }
+
+        [standard removeObjectForKey:key];
+        if (![standard synchronize] || [standard objectForKey:key] != nil) {
+            return;
         }
     }
-    if (changed) {
-        persistLegacyDiskKeys(registered);
+
+    [defaults removeObjectForKey:kLegacyDiskKeysRegistryKey];
+    if (![defaults synchronize] ||
+        [defaults objectForKey:kLegacyDiskKeysRegistryKey] != nil) {
+        return;
+    }
+
+    [defaults setBool:YES forKey:kLegacyDiskMigrationMarkerKey];
+    if (![defaults synchronize] ||
+        ![defaults boolForKey:kLegacyDiskMigrationMarkerKey]) {
+        [defaults removeObjectForKey:kLegacyDiskMigrationMarkerKey];
+        [defaults synchronize];
     }
 }
+
+#if defined(NITRO_STORAGE_TESTING)
+void runLegacyDiskMigrationCutoverForTesting(NSUserDefaults* defaults) {
+    runLegacyDiskMigrationCutover(defaults, [NSUserDefaults standardUserDefaults]);
+}
+#endif
 
 // Prevents the Keychain from showing auth UI. On iOS 14+ kSecUseAuthenticationUIFail is
 // deprecated; the correct replacement is an LAContext with interactionNotAllowed = YES.
@@ -87,6 +133,34 @@ static void disableKeychainInteraction(NSMutableDictionary* query) {
     ctx.interactionNotAllowed = YES;
     query[(__bridge id)kSecUseAuthenticationContext] = ctx;
 }
+
+struct BiometricKeychainSnapshot {
+    bool present{false};
+    std::string value;
+    SecAccessControlRef accessControl{nullptr};
+
+    BiometricKeychainSnapshot() = default;
+    BiometricKeychainSnapshot(const BiometricKeychainSnapshot&) = delete;
+    BiometricKeychainSnapshot& operator=(const BiometricKeychainSnapshot&) = delete;
+    BiometricKeychainSnapshot(BiometricKeychainSnapshot&& other) noexcept
+        : present(other.present),
+          value(std::move(other.value)),
+          accessControl(other.accessControl) {
+        other.accessControl = nullptr;
+    }
+    BiometricKeychainSnapshot& operator=(BiometricKeychainSnapshot&& other) noexcept {
+        if (this == &other) return *this;
+        if (accessControl) CFRelease(accessControl);
+        present = other.present;
+        value = std::move(other.value);
+        accessControl = other.accessControl;
+        other.accessControl = nullptr;
+        return *this;
+    }
+    ~BiometricKeychainSnapshot() {
+        if (accessControl) CFRelease(accessControl);
+    }
+};
 
 static CFStringRef accessControlAttr(int level) {
     switch (level) {
@@ -99,7 +173,12 @@ static CFStringRef accessControlAttr(int level) {
     }
 }
 
-IOSStorageAdapterCpp::IOSStorageAdapterCpp() {}
+IOSStorageAdapterCpp::IOSStorageAdapterCpp() {
+    runLegacyDiskMigrationCutover(
+        NitroDiskDefaults(),
+        [NSUserDefaults standardUserDefaults]
+    );
+}
 IOSStorageAdapterCpp::~IOSStorageAdapterCpp() {}
 
 // --- Disk ---
@@ -107,31 +186,12 @@ IOSStorageAdapterCpp::~IOSStorageAdapterCpp() {}
 void IOSStorageAdapterCpp::setDisk(const std::string& key, const std::string& value) {
     NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
     NSString* nsValue = [NSString stringWithUTF8String:value.c_str()];
-    NSUserDefaults* defaults = NitroDiskDefaults();
-    [defaults setObject:nsValue forKey:nsKey];
-    NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
-    if ([standard objectForKey:nsKey] != nil) {
-        [standard removeObjectForKey:nsKey];
-        unregisterLegacyDiskKeys(@[nsKey]);
-    }
+    [NitroDiskDefaults() setObject:nsValue forKey:nsKey];
 }
 
 std::optional<std::string> IOSStorageAdapterCpp::getDisk(const std::string& key) {
     NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
-    NSUserDefaults* defaults = NitroDiskDefaults();
-    NSString* result = [defaults stringForKey:nsKey];
-
-    if (!result) {
-        NSUserDefaults* legacyDefaults = [NSUserDefaults standardUserDefaults];
-        NSString* legacyValue = [legacyDefaults stringForKey:nsKey];
-        if (legacyValue) {
-            [defaults setObject:legacyValue forKey:nsKey];
-            [legacyDefaults removeObjectForKey:nsKey];
-            unregisterLegacyDiskKeys(@[nsKey]);
-            result = legacyValue;
-        }
-    }
-
+    NSString* result = [NitroDiskDefaults() stringForKey:nsKey];
     if (!result) return std::nullopt;
     return std::string([result UTF8String]);
 }
@@ -139,44 +199,23 @@ std::optional<std::string> IOSStorageAdapterCpp::getDisk(const std::string& key)
 void IOSStorageAdapterCpp::deleteDisk(const std::string& key) {
     NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
     [NitroDiskDefaults() removeObjectForKey:nsKey];
-    NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
-    if ([standard objectForKey:nsKey] != nil) {
-        [standard removeObjectForKey:nsKey];
-    }
-    unregisterLegacyDiskKeys(@[nsKey]);
 }
 
 bool IOSStorageAdapterCpp::hasDisk(const std::string& key) {
     NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
-    if ([NitroDiskDefaults() objectForKey:nsKey] != nil) return true;
-    // Check legacy standardUserDefaults for un-migrated keys
-    if ([[NSUserDefaults standardUserDefaults] stringForKey:nsKey] != nil) {
-        registerLegacyDiskKey(nsKey);
-        return true;
-    }
-    return false;
+    return [NitroDiskDefaults() objectForKey:nsKey] != nil;
 }
 
 std::vector<std::string> IOSStorageAdapterCpp::getAllKeysDisk() {
     NSUserDefaults* defaults = NitroDiskDefaults();
     NSDictionary<NSString*, id>* entries = [defaults persistentDomainForName:kDiskSuiteName] ?: @{};
-    std::unordered_set<std::string> combined;
-    for (NSString* key in entries) {
-        if (![key isEqualToString:kLegacyDiskKeysRegistryKey]) {
-            combined.insert(std::string([key UTF8String]));
-        }
-    }
-    // Only keys observed through the storage API are registered legacy keys;
-    // arbitrary host-app standard defaults keys are never enumerated.
-    for (NSString* key in [registeredLegacyDiskKeys() allObjects]) {
-        if (entries[key] == nil && ![key isEqualToString:kLegacyDiskKeysRegistryKey]) {
-            combined.insert(std::string([key UTF8String]));
-        }
-    }
     std::vector<std::string> keys;
-    keys.reserve(combined.size());
-    for (const auto& key : combined) {
-        keys.push_back(key);
+    keys.reserve(entries.count);
+    for (NSString* key in entries) {
+        if (![key isEqualToString:kLegacyDiskKeysRegistryKey] &&
+            ![key isEqualToString:kLegacyDiskMigrationMarkerKey]) {
+            keys.push_back(std::string([key UTF8String]));
+        }
     }
     return keys;
 }
@@ -202,20 +241,11 @@ void IOSStorageAdapterCpp::setDiskBatch(
     const std::vector<std::string>& values
 ) {
     NSUserDefaults* defaults = NitroDiskDefaults();
-    NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
-    NSMutableArray* legacyKeysToRemove = [NSMutableArray array];
     for (size_t i = 0; i < keys.size() && i < values.size(); ++i) {
         NSString* nsKey = [NSString stringWithUTF8String:keys[i].c_str()];
         NSString* nsValue = [NSString stringWithUTF8String:values[i].c_str()];
         [defaults setObject:nsValue forKey:nsKey];
-        if ([standard objectForKey:nsKey] != nil) {
-            [legacyKeysToRemove addObject:nsKey];
-        }
     }
-    for (NSString* key in legacyKeysToRemove) {
-        [standard removeObjectForKey:key];
-    }
-    unregisterLegacyDiskKeys(legacyKeysToRemove);
 }
 
 std::vector<std::optional<std::string>> IOSStorageAdapterCpp::getDiskBatch(
@@ -238,26 +268,13 @@ void IOSStorageAdapterCpp::deleteDiskBatch(const std::vector<std::string>& keys)
 void IOSStorageAdapterCpp::clearDisk() {
     NSUserDefaults* defaults = NitroDiskDefaults();
     NSDictionary<NSString*, id>* entries = [defaults persistentDomainForName:kDiskSuiteName] ?: @{};
-    // Capture the registry before clearing the suite domain, which removes it.
-    NSMutableSet* legacyKeys = [registeredLegacyDiskKeys() mutableCopy];
     for (NSString* key in entries) {
+        if ([key isEqualToString:kLegacyDiskKeysRegistryKey] ||
+            [key isEqualToString:kLegacyDiskMigrationMarkerKey]) {
+            continue;
+        }
         [defaults removeObjectForKey:key];
     }
-    // Clear the standard-defaults copies of every storage-owned key so legacy
-    // values deleted here cannot reappear through the read-time migration path.
-    NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
-    for (NSString* key in entries) {
-        if ([standard objectForKey:key] != nil) {
-            [standard removeObjectForKey:key];
-            [legacyKeys removeObject:key];
-        }
-    }
-    for (NSString* key in legacyKeys) {
-        if ([standard objectForKey:key] != nil) {
-            [standard removeObjectForKey:key];
-        }
-    }
-    [defaults removeObjectForKey:kLegacyDiskKeysRegistryKey];
 }
 
 // --- Secure (Keychain) ---
@@ -272,6 +289,68 @@ static NSMutableDictionary* baseKeychainQuery(NSString* key, NSString* service, 
         query[(__bridge id)kSecAttrAccessGroup] = accessGroup;
     }
     return query;
+}
+
+static void throwIfDeleteFailed(OSStatus status, const std::string& operation) {
+    if (status == errSecSuccess || status == errSecItemNotFound) {
+        return;
+    }
+    if (status == errSecInteractionNotAllowed) {
+        throw taggedStorageError(
+            "keychain_locked",
+            "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). " + operation
+        );
+    }
+    throw keychainStatusError(status, operation);
+}
+
+static BiometricKeychainSnapshot captureBiometricValue(
+    NSString* nsKey,
+    NSString* group
+) {
+    BiometricKeychainSnapshot snapshot;
+    NSMutableDictionary* query = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
+    query[(__bridge id)kSecReturnAttributes] = @YES;
+    query[(__bridge id)kSecReturnData] = @YES;
+    query[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
+    disableKeychainInteraction(query);
+
+    CFTypeRef result = NULL;
+    const OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
+    if (status == errSecItemNotFound) {
+        return snapshot;
+    }
+    if (status == errSecInteractionNotAllowed) {
+        throw taggedStorageError(
+            "keychain_locked",
+            "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
+            "The biometric item is not accessible until the device is unlocked."
+        );
+    }
+    if (status != errSecSuccess || !result) {
+        if (result) CFRelease(result);
+        throw keychainStatusError(status, "Biometric snapshot");
+    }
+
+    NSDictionary* attributes = (__bridge NSDictionary*)result;
+    NSData* data = attributes[(__bridge id)kSecValueData];
+    id accessControl = attributes[(__bridge id)kSecAttrAccessControl];
+    if (!data || !accessControl) {
+        CFRelease(result);
+        throw std::runtime_error(
+            "NitroStorage: Biometric snapshot did not include value data and access control"
+        );
+    }
+    NSString* stringValue = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    if (!stringValue) {
+        CFRelease(result);
+        throw std::runtime_error("NitroStorage: Biometric snapshot value is not UTF-8");
+    }
+    snapshot.present = true;
+    snapshot.value = std::string([stringValue UTF8String]);
+    snapshot.accessControl = (SecAccessControlRef)CFRetain((__bridge CFTypeRef)accessControl);
+    CFRelease(result);
+    return snapshot;
 }
 
 static NSMutableDictionary* allAccountsQuery(NSString* service, NSString* accessGroup) {
@@ -358,29 +437,20 @@ static std::optional<std::string> getSecureValue(NSString* nsKey, NSString* grou
             "The item is not accessible until the device is unlocked."
         );
     }
-    return std::nullopt;
+    if (status == errSecItemNotFound) {
+        return std::nullopt;
+    }
+    throw keychainStatusError(status, "Secure get");
 }
 
 static void deleteSecureValue(NSString* nsKey, NSString* group) {
     NSMutableDictionary* secureQuery = baseKeychainQuery(nsKey, kKeychainService, group);
-    OSStatus secureStatus = SecItemDelete((__bridge CFDictionaryRef)secureQuery);
-    if (secureStatus == errSecInteractionNotAllowed) {
-        throw taggedStorageError(
-            "keychain_locked",
-            "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
-            "The item is not accessible until the device is unlocked."
-        );
-    }
+    const OSStatus secureStatus = SecItemDelete((__bridge CFDictionaryRef)secureQuery);
+    throwIfDeleteFailed(secureStatus, "Secure delete");
 
     NSMutableDictionary* biometricQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
-    OSStatus biometricStatus = SecItemDelete((__bridge CFDictionaryRef)biometricQuery);
-    if (biometricStatus == errSecInteractionNotAllowed) {
-        throw taggedStorageError(
-            "keychain_locked",
-            "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
-            "The item is not accessible until the device is unlocked."
-        );
-    }
+    const OSStatus biometricStatus = SecItemDelete((__bridge CFDictionaryRef)biometricQuery);
+    throwIfDeleteFailed(biometricStatus, "Biometric delete");
 }
 
 // Deletes only the plain (non-biometric) keychain copy. Promotion to biometric
@@ -388,12 +458,41 @@ static void deleteSecureValue(NSString* nsKey, NSString* group) {
 static void deletePlainSecureValue(NSString* nsKey, NSString* group) {
     NSMutableDictionary* secureQuery = baseKeychainQuery(nsKey, kKeychainService, group);
     OSStatus secureStatus = SecItemDelete((__bridge CFDictionaryRef)secureQuery);
-    if (secureStatus == errSecInteractionNotAllowed) {
-        throw taggedStorageError(
-            "keychain_locked",
-            "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
-            "The item is not accessible until the device is unlocked."
+    throwIfDeleteFailed(secureStatus, "Plain secure delete");
+}
+
+static void deleteBiometricValue(NSString* nsKey, NSString* group) {
+    NSMutableDictionary* biometricQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
+    const OSStatus status = SecItemDelete((__bridge CFDictionaryRef)biometricQuery);
+    throwIfDeleteFailed(status, "Biometric delete");
+}
+
+static void restoreBiometricValue(
+    NSString* nsKey,
+    NSString* group,
+    const BiometricKeychainSnapshot& snapshot
+) {
+    deleteBiometricValue(nsKey, group);
+    if (!snapshot.present) {
+        return;
+    }
+    if (!snapshot.accessControl) {
+        throw std::runtime_error(
+            "NitroStorage: Previous biometric item has no access control"
         );
+    }
+    NSMutableDictionary* query = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
+    query[(__bridge id)kSecValueData] = [nsStringFromStdString(snapshot.value) dataUsingEncoding:NSUTF8StringEncoding];
+    query[(__bridge id)kSecAttrAccessControl] = (__bridge id)snapshot.accessControl;
+    const OSStatus status = SecItemAdd((__bridge CFDictionaryRef)query, NULL);
+    if (status != errSecSuccess) {
+        if (status == errSecInteractionNotAllowed) {
+            throw taggedStorageError(
+                "keychain_locked",
+                "NitroStorage: Keychain is locked (errSecInteractionNotAllowed) while restoring biometric storage"
+            );
+        }
+        throw keychainStatusError(status, "Biometric restore");
     }
 }
 
@@ -647,137 +746,116 @@ void IOSStorageAdapterCpp::setSecureBiometric(const std::string& key, const std:
 }
 
 void IOSStorageAdapterCpp::setSecureBiometricWithLevel(const std::string& key, const std::string& value, int level) {
+    if (level < 0 || level > 2) {
+        throw std::runtime_error("NitroStorage: Invalid biometric level");
+    }
     NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
-    NSData* data = [[NSString stringWithUTF8String:value.c_str()] dataUsingEncoding:NSUTF8StringEncoding];
+    NSData* data = nsDataFromStdString(value);
     std::string groupStr;
+    int accessControlLevel;
     {
         std::lock_guard<std::mutex> lock(accessGroupMutex_);
         groupStr = keychainAccessGroup_;
+        accessControlLevel = accessControlLevel_;
     }
     NSString* group = groupStr.empty() ? nil : [NSString stringWithUTF8String:groupStr.c_str()];
 
-    if (level == 0) {
-        // Delete any existing biometric keychain entry for this key
-        NSMutableDictionary* deleteQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
-        SecItemDelete((__bridge CFDictionaryRef)deleteQuery);
-        markBiometricKeyRemoved(key);
+    const BiometricKeychainSnapshot previousBiometric = captureBiometricValue(nsKey, group);
+    const std::optional<std::string> previousPlain = getSecureValue(nsKey, group);
+    std::vector<std::string> rollbackErrors;
 
-        setSecure(key, value);
-        return;
-    }
-
-    // Capture backup before delete — must not prompt for auth
-    std::optional<std::string> backup = std::nullopt;
-    {
-        NSMutableDictionary* backupQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
-        backupQuery[(__bridge id)kSecReturnData] = @YES;
-        backupQuery[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
-        disableKeychainInteraction(backupQuery);
-        CFTypeRef backupResult = NULL;
-        if (SecItemCopyMatching((__bridge CFDictionaryRef)backupQuery, &backupResult) == errSecSuccess && backupResult) {
-            NSData* bData = (__bridge_transfer NSData*)backupResult;
-            NSString* str = [[NSString alloc] initWithData:bData encoding:NSUTF8StringEncoding];
-            if (str) backup = std::string([str UTF8String]);
-        } else if (backupResult) {
-            CFRelease(backupResult);
-        }
-    }
-
-    // Delete existing item first (access control can't be updated in place)
-    NSMutableDictionary* deleteQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
-    SecItemDelete((__bridge CFDictionaryRef)deleteQuery);
-
-    CFErrorRef error = NULL;
-    SecAccessControlCreateFlags flags = kSecAccessControlBiometryCurrentSet;
-    if (level == 1) {
-        flags = kSecAccessControlUserPresence;
-    }
-    SecAccessControlRef access = SecAccessControlCreateWithFlags(
-        kCFAllocatorDefault,
-        kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
-        flags,
-        &error
-    );
-
-    if (error || !access) {
-        if (access) CFRelease(access);
-        if (error) CFRelease(error);
-        throw taggedStorageError(
-            "biometric_unavailable",
-            "NitroStorage: Failed to create biometric access control"
-        );
-    }
-
-    NSMutableDictionary* attrs = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
-    attrs[(__bridge id)kSecValueData] = data;
-    attrs[(__bridge id)kSecAttrAccessControl] = (__bridge_transfer id)access;
-
-    OSStatus addStatus = SecItemAdd((__bridge CFDictionaryRef)attrs, NULL);
-    if (addStatus != errSecSuccess) {
-        if (backup.has_value()) {
-            try {
-                setSecure(key, *backup);
-            } catch (const std::exception& restoreEx) {
-                throw taggedStorageError(
-                    "biometric_unavailable",
-                    std::string("NitroStorage: Biometric set failed with status ") +
-                    std::to_string(addStatus) +
-                    " and previous value restoration also failed: " + restoreEx.what());
-            }
-        }
-        if (addStatus == errSecInteractionNotAllowed) {
-            throw taggedStorageError(
-                "keychain_locked",
-                "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
-                "The item is not accessible until the device is unlocked."
-            );
-        }
-        if (addStatus == errSecNotAvailable) {
-            throw taggedStorageError(
-                "keychain_locked",
-                "NitroStorage: Biometric set failed: keychain is unavailable until the device is unlocked (errSecNotAvailable)."
-            );
-        }
-        throw taggedStorageError(
-            "biometric_unavailable",
-            std::string("NitroStorage: Biometric set failed with status ") +
-            std::to_string(addStatus) +
-            (backup.has_value() ? " (previous value restored to non-biometric keychain)" : " (no previous value)"));
-    }
-
-    // Promotion contract: the plain secure copy must not survive a biometric
-    // write, or plain reads would return a stale value (Android removes it too).
-    // If removing the plain copy fails after the biometric write succeeded,
-    // roll the biometric write back so the promotion either fully succeeds or
-    // leaves the previous state intact, then rethrow the original error.
     try {
-        deletePlainSecureValue(nsKey, group);
-    } catch (const std::exception& plainDeleteError) {
-        if (backup.has_value()) {
-            CFErrorRef restoreError = NULL;
-            SecAccessControlRef restoreAccess = SecAccessControlCreateWithFlags(
-                kCFAllocatorDefault,
-                kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
-                flags,
-                &restoreError
+        if (level == 0) {
+            deleteBiometricValue(nsKey, group);
+            markBiometricKeyRemoved(key);
+            setSecure(key, value);
+            return;
+        }
+
+        // A biometric item's access control cannot be updated in place. Delete
+        // the old item only after its value and ACL have been captured.
+        deleteBiometricValue(nsKey, group);
+
+        CFErrorRef error = NULL;
+        const SecAccessControlCreateFlags flags =
+            level == 1 ? kSecAccessControlUserPresence : kSecAccessControlBiometryCurrentSet;
+        SecAccessControlRef access = SecAccessControlCreateWithFlags(
+            kCFAllocatorDefault,
+            kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
+            flags,
+            &error
+        );
+        if (error || !access) {
+            if (error) CFRelease(error);
+            if (access) CFRelease(access);
+            throw taggedStorageError(
+                "biometric_unavailable",
+                "NitroStorage: Failed to create biometric access control"
             );
-            if (restoreAccess && !restoreError) {
-                NSMutableDictionary* restoreQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
-                restoreQuery[(__bridge id)kSecValueData] = [nsStringFromStdString(*backup) dataUsingEncoding:NSUTF8StringEncoding];
-                restoreQuery[(__bridge id)kSecAttrAccessControl] = (__bridge_transfer id)restoreAccess;
-                SecItemAdd((__bridge CFDictionaryRef)restoreQuery, NULL);
-            } else {
-                if (restoreError) CFRelease(restoreError);
-                if (restoreAccess) CFRelease(restoreAccess);
+        }
+
+        NSMutableDictionary* attrs = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
+        attrs[(__bridge id)kSecValueData] = data;
+        attrs[(__bridge id)kSecAttrAccessControl] = (__bridge_transfer id)access;
+        const OSStatus addStatus = SecItemAdd((__bridge CFDictionaryRef)attrs, NULL);
+        if (addStatus != errSecSuccess) {
+            if (addStatus == errSecInteractionNotAllowed) {
+                throw taggedStorageError(
+                    "keychain_locked",
+                    "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
+                    "The biometric item is not accessible until the device is unlocked."
+                );
             }
-        } else {
-            NSMutableDictionary* rollbackQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
-            SecItemDelete((__bridge CFDictionaryRef)rollbackQuery);
+            throw keychainStatusError(addStatus, "Biometric set");
+        }
+
+        // A successful promotion has exactly one representation. If this
+        // delete fails, compensation restores both prior representations.
+        deletePlainSecureValue(nsKey, group);
+        markBiometricKeySet(key);
+        markSecureKeyRemoved(key);
+    } catch (const std::exception& primary) {
+        try {
+            restoreBiometricValue(nsKey, group, previousBiometric);
+            if (previousBiometric.present) {
+                markBiometricKeySet(key);
+            } else {
+                markBiometricKeyRemoved(key);
+            }
+        } catch (const std::exception& rollbackError) {
+            rollbackErrors.push_back(std::string("biometric: ") + rollbackError.what());
+        }
+
+        try {
+            if (previousPlain.has_value()) {
+                setSecureValue(
+                    nsKey,
+                    nsDataFromStdString(*previousPlain),
+                    group,
+                    accessControlLevel
+                );
+                markSecureKeySet(key);
+            } else {
+                deletePlainSecureValue(nsKey, group);
+                markSecureKeyRemoved(key);
+            }
+        } catch (const std::exception& rollbackError) {
+            rollbackErrors.push_back(std::string("plain: ") + rollbackError.what());
+        }
+        clearSecureKeyCache();
+
+        if (!rollbackErrors.empty()) {
+            const std::string operation =
+                level == 0 ? "Secure demotion" : "Biometric promotion";
+            throw taggedStorageError(
+                "storage_compensation_failed",
+                "NitroStorage: " + operation +
+                    " failed; rollback_error_count=" +
+                    std::to_string(rollbackErrors.size())
+            );
         }
         throw;
     }
-    markBiometricKeySet(key);
-    markSecureKeyRemoved(key);
 }
 
 std::optional<std::string> IOSStorageAdapterCpp::getSecureBiometric(const std::string& key) {
@@ -812,7 +890,10 @@ std::optional<std::string> IOSStorageAdapterCpp::getSecureBiometric(const std::s
             "NitroStorage: Biometric authentication failed"
         );
     }
-    return std::nullopt;
+    if (status == errSecItemNotFound) {
+        return std::nullopt;
+    }
+    throw keychainStatusError(status, "Biometric get");
 }
 
 void IOSStorageAdapterCpp::deleteSecureBiometric(const std::string& key) {
@@ -824,7 +905,8 @@ void IOSStorageAdapterCpp::deleteSecureBiometric(const std::string& key) {
     }
     NSString* group = groupStr.empty() ? nil : [NSString stringWithUTF8String:groupStr.c_str()];
     NSMutableDictionary* query = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
-    SecItemDelete((__bridge CFDictionaryRef)query);
+    const OSStatus status = SecItemDelete((__bridge CFDictionaryRef)query);
+    throwIfDeleteFailed(status, "Biometric delete");
     markBiometricKeyRemoved(key);
 }
 
@@ -838,7 +920,16 @@ bool IOSStorageAdapterCpp::hasSecureBiometric(const std::string& key) {
     NSString* group = groupStr.empty() ? nil : [NSString stringWithUTF8String:groupStr.c_str()];
     NSMutableDictionary* query = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
     disableKeychainInteraction(query);
-    return SecItemCopyMatching((__bridge CFDictionaryRef)query, NULL) == errSecSuccess;
+    const OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, NULL);
+    if (status == errSecSuccess) return true;
+    if (status == errSecItemNotFound) return false;
+    if (status == errSecInteractionNotAllowed) {
+        throw taggedStorageError(
+            "keychain_locked",
+            "NitroStorage: Keychain is locked (errSecInteractionNotAllowed) while inspecting biometric storage"
+        );
+    }
+    throw keychainStatusError(status, "Biometric has");
 }
 
 void IOSStorageAdapterCpp::clearSecureBiometric() {

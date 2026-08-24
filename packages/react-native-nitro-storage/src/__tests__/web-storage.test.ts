@@ -5,6 +5,7 @@ import {
   flushWebStorageBackends,
   getBatch,
   getStorageErrorCode,
+  isStorageError,
   getWebDiskStorageBackend,
   getWebSecureStorageBackend,
   migrateFromMMKV,
@@ -458,6 +459,18 @@ describe("Web Storage", () => {
       getStorageErrorCode(new Error("UserNotAuthenticatedException")),
     ).toBeUndefined();
     expect(getStorageErrorCode(new Error("something else"))).toBe(undefined);
+  });
+
+  it("matches an exact storage error code through the web entrypoint", () => {
+    const locked = new Error(
+      "[nitro-error:keychain_locked] NitroStorage: locked",
+    );
+    const invalidated = new Error(
+      "[nitro-error:key_invalidated] NitroStorage: invalidated",
+    );
+
+    expect(isStorageError(locked, "keychain_locked")).toBe(true);
+    expect(isStorageError(invalidated, "keychain_locked")).toBe(false);
   });
 
   it("supports a custom web secure backend", () => {
@@ -2378,6 +2391,289 @@ describe("Web Storage", () => {
     expect(globalThis.localStorage.getItem("normal")).toBe("z");
   });
 
+  it("reconciles the secure key index after a partial biometric removal failure", () => {
+    const backend = createWebBackendMock("partial-biometric-clear");
+    setWebSecureStorageBackend(backend);
+    backend.setItem("__bio_first", "one");
+    backend.setItem("__bio_second", "two");
+    backend.removeMany.mockImplementationOnce((keys: string[]) => {
+      backend.removeItem(keys[0] as string);
+      throw new Error("partial biometric removal");
+    });
+
+    expect(() => storage.clearBiometric()).toThrow("partial biometric removal");
+
+    expect(storage.has("first", StorageScope.Secure)).toBe(false);
+    expect(storage.has("second", StorageScope.Secure)).toBe(true);
+    expect(storage.getAllKeys(StorageScope.Secure)).toEqual(["second"]);
+    expect(storage.size(StorageScope.Secure)).toBe(1);
+  });
+
+  it("invalidates the biometric index when listing fails during recovery", () => {
+    const backend = createWebBackendMock("recovering-biometric-clear");
+    setWebSecureStorageBackend(backend);
+    backend.setItem("__bio_recover-first", "one");
+    backend.setItem("__bio_recover-second", "two");
+    expect(storage.getAllKeys(StorageScope.Secure)).toEqual([
+      "recover-first",
+      "recover-second",
+    ]);
+    backend.removeMany.mockImplementationOnce((keys: string[]) => {
+      backend.removeItem(keys[0] as string);
+      throw new Error("biometric removal needs reconciliation");
+    });
+    backend.getAllKeys
+      .mockImplementationOnce(() => [
+        "__bio_recover-first",
+        "__bio_recover-second",
+      ])
+      .mockImplementationOnce(() => {
+        throw new Error("biometric list unavailable");
+      });
+
+    let thrown: unknown;
+    try {
+      storage.clearBiometric();
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(getStorageErrorCode(thrown)).toBe("storage_compensation_failed");
+    expect(storage.has("recover-first", StorageScope.Secure)).toBe(false);
+    expect(storage.has("recover-second", StorageScope.Secure)).toBe(true);
+    setWebSecureStorageBackend(undefined);
+  });
+
+  it("invalidates a cached biometric rename source after web cleanup", () => {
+    const sourceKey = "web-cached-biometric-source";
+    const currentKey = "web-cached-biometric-current";
+    const sourceRaw = serializeWithPrimitiveFastPath("cached-legacy");
+    globalThis.localStorage.setItem(`__bio_${sourceKey}`, sourceRaw);
+
+    const source = createStorageItem<string>({
+      key: sourceKey,
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      biometric: true,
+      readCache: true,
+    });
+    expect(source.get()).toBe("cached-legacy");
+
+    const current = createStorageItem<string>({
+      key: currentKey,
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      biometric: true,
+      readCache: true,
+      renameFrom: sourceKey,
+    });
+
+    expect(current.get()).toBe("cached-legacy");
+    expect(source.get()).toBe("default");
+    expect(globalThis.localStorage.getItem(`__bio_${sourceKey}`)).toBeNull();
+  });
+
+  it("reconciles ordinary batch removal after a partial backend failure", () => {
+    const backend = createWebBackendMock("partial-batch-remove");
+    setWebDiskStorageBackend(backend);
+    backend.setItem("first", "one");
+    backend.setItem("second", "two");
+    expect(storage.getAllKeys(StorageScope.Disk)).toEqual(["first", "second"]);
+    const first = createStorageItem({
+      key: "first",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    });
+    const second = createStorageItem({
+      key: "second",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    });
+    backend.removeMany.mockImplementationOnce((keys: string[]) => {
+      backend.removeItem(keys[0] as string);
+      throw new Error("partial batch removal");
+    });
+
+    expect(() => removeBatch([first, second], StorageScope.Disk)).toThrow(
+      "partial batch removal",
+    );
+    expect(storage.has("first", StorageScope.Disk)).toBe(false);
+    expect(storage.has("second", StorageScope.Disk)).toBe(true);
+    expect(storage.getAllKeys(StorageScope.Disk)).toEqual(["second"]);
+    setWebDiskStorageBackend(undefined);
+  });
+
+  it("invalidates the web index when reconciliation listing fails and retries later", () => {
+    const backend = createWebBackendMock("recovering-batch-remove");
+    setWebDiskStorageBackend(backend);
+    backend.setItem("recover-first", "one");
+    backend.setItem("recover-second", "two");
+    expect(storage.getAllKeys(StorageScope.Disk)).toEqual([
+      "recover-first",
+      "recover-second",
+    ]);
+    const first = createStorageItem({
+      key: "recover-first",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    });
+    const second = createStorageItem({
+      key: "recover-second",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    });
+    backend.removeMany.mockImplementationOnce((keys: string[]) => {
+      backend.removeItem(keys[0] as string);
+      throw new Error("batch removal needs reconciliation");
+    });
+    backend.getAllKeys.mockImplementationOnce(() => {
+      throw new Error("list unavailable");
+    });
+
+    let thrown: unknown;
+    try {
+      removeBatch([first, second], StorageScope.Disk);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect((thrown as Error & { cause?: unknown }).cause).toBeInstanceOf(Error);
+    expect((thrown as { errors?: readonly unknown[] }).errors).toHaveLength(2);
+    expect(storage.has("recover-first", StorageScope.Disk)).toBe(false);
+    expect(storage.has("recover-second", StorageScope.Disk)).toBe(true);
+    expect(storage.getAllKeys(StorageScope.Disk)).toEqual(["recover-second"]);
+    setWebDiskStorageBackend(undefined);
+  });
+
+  it("invalidates the hydrated index when biometric enumeration fails and retries later", () => {
+    const backend = createWebBackendMock("biometric-enumeration-retry");
+    setWebSecureStorageBackend(backend);
+    backend.setItem("__bio_retry", "secret");
+    const item = createStorageItem({
+      key: "retry",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+
+    expect(storage.getAllKeys(StorageScope.Secure)).toEqual(["retry"]);
+    backend.removeItem("__bio_retry");
+    const listingFailure = new Error("biometric list unavailable");
+    backend.getAllKeys.mockImplementationOnce(() => {
+      throw listingFailure;
+    });
+
+    let thrown: unknown;
+    try {
+      item.has();
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error & { cause?: unknown }).cause).toBe(listingFailure);
+    backend.getAllKeys.mockImplementation(() => []);
+    expect(item.has()).toBe(false);
+    expect(storage.getAllKeys(StorageScope.Secure)).toEqual([]);
+    expect(storage.size(StorageScope.Secure)).toBe(0);
+    expect(backend.getAllKeys).toHaveBeenCalledTimes(4);
+    setWebSecureStorageBackend(undefined);
+  });
+
+  it("notifies a redacted global observer of biometric clear keys without reading values", () => {
+    const biometricItem = createStorageItem({
+      key: "redacted-clear",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+    biometricItem.set("secret");
+    const getItemSpy = jest.spyOn(globalThis.localStorage, "getItem");
+    const events: unknown[] = [];
+    storage.setEventObserver((event) => {
+      events.push(event);
+    });
+
+    storage.clearBiometric();
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "batch",
+        operation: "clear",
+        changes: [
+          expect.objectContaining({
+            key: "redacted-clear",
+            oldValue: undefined,
+            newValue: undefined,
+          }),
+        ],
+      }),
+    ]);
+    expect(getItemSpy).not.toHaveBeenCalledWith("__bio_redacted-clear");
+  });
+
+  it("preserves biometric clear values for a value-enabled global observer", () => {
+    const biometricItem = createStorageItem({
+      key: "raw-clear",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+    biometricItem.set("secret");
+    const events: unknown[] = [];
+    storage.setEventObserver(
+      (event) => {
+        events.push(event);
+      },
+      { redactSecureValues: false },
+    );
+
+    storage.clearBiometric();
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "batch",
+        operation: "clear",
+        changes: [
+          expect.objectContaining({
+            key: "raw-clear",
+            oldValue: serializeWithPrimitiveFastPath("secret"),
+            newValue: undefined,
+          }),
+        ],
+      }),
+    ]);
+  });
+
+  it("invalidates the secure raw cache before a shared-key listener reads after clear", () => {
+    const item = createStorageItem({
+      key: "shared-clear-key",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      readCache: true,
+    });
+    const biometricItem = createStorageItem({
+      key: "shared-clear-key",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      biometric: true,
+    });
+    const reads: string[] = [];
+
+    item.set("plain-value");
+    item.subscribe(() => {
+      reads.push(item.get());
+    });
+    biometricItem.set("biometric-value");
+    expect(
+      globalThis.localStorage.getItem("__secure_shared-clear-key"),
+    ).toBeNull();
+
+    storage.clearBiometric();
+
+    expect(reads.at(-1)).toBe("default");
+  });
+
   // --- createSecureAuthStorage ---
 
   it("creates multiple secure storage items with shared namespace", () => {
@@ -3173,6 +3469,7 @@ describe("cross-tab StorageEvent handling", () => {
 
 describe("biometric web storage", () => {
   beforeEach(() => {
+    jest.spyOn(console, "warn").mockImplementation(() => {});
     Object.defineProperty(globalThis, "localStorage", {
       value: createStorageMock(),
       configurable: true,
@@ -3196,6 +3493,150 @@ describe("biometric web storage", () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it("isolates plain and biometric caches across promotion and plain overwrite", () => {
+    const plainItem = createStorageItem({
+      key: "shared-cache-key",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      readCache: true,
+    });
+    const biometricItem = createStorageItem({
+      key: "shared-cache-key",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      biometric: true,
+      readCache: true,
+    });
+
+    plainItem.set("plain-old");
+    expect(plainItem.get()).toBe("plain-old");
+
+    biometricItem.set("bio-new");
+    expect(biometricItem.get()).toBe("bio-new");
+    expect(plainItem.get()).toBe("default");
+
+    let listenerValue = "";
+    biometricItem.subscribe(() => {
+      listenerValue = biometricItem.get();
+    });
+    globalThis.localStorage.setItem(
+      "__bio_shared-cache-key",
+      serializeWithPrimitiveFastPath("bio-fresh"),
+    );
+    plainItem.set("plain-new");
+
+    expect(plainItem.get()).toBe("plain-new");
+    expect(listenerValue).toBe("bio-fresh");
+    expect(biometricItem.get()).toBe("bio-fresh");
+  });
+
+  it("compensates a failed biometric write and preserves the plain value", () => {
+    const backend = createWebBackendMock("promotion-write-failure");
+    setWebSecureStorageBackend(backend);
+    backend.setItem("__secure_promotion-write-failure", "plain-before");
+    backend.setItem.mockImplementationOnce(() => {
+      throw new Error("biometric write failed");
+    });
+    const plainItem = createStorageItem({
+      key: "promotion-write-failure",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+    });
+    const biometricItem = createStorageItem({
+      key: "promotion-write-failure",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+
+    expect(() => biometricItem.set("bio-after")).toThrow(
+      "biometric write failed",
+    );
+    expect(backend.getItem("__secure_promotion-write-failure")).toBe(
+      "plain-before",
+    );
+    expect(backend.getItem("__bio_promotion-write-failure")).toBeNull();
+    expect(plainItem.get()).toBe("plain-before");
+    expect(biometricItem.get()).toBe("");
+  });
+
+  it("compensates a failed plain removal after biometric promotion", () => {
+    const backend = createWebBackendMock("promotion-remove-failure");
+    setWebSecureStorageBackend(backend);
+    backend.setItem("__secure_promotion-remove-failure", "plain-before");
+    backend.removeItem.mockImplementationOnce(() => {
+      throw new Error("plain removal failed");
+    });
+    const plainItem = createStorageItem({
+      key: "promotion-remove-failure",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+    });
+    const biometricItem = createStorageItem({
+      key: "promotion-remove-failure",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+
+    let thrown: unknown;
+    try {
+      biometricItem.set("bio-after");
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect((thrown as Error).message).toContain("plain removal failed");
+    expect((thrown as Error).cause).toBeInstanceOf(Error);
+    expect(backend.getItem("__secure_promotion-remove-failure")).toBe(
+      "plain-before",
+    );
+    expect(backend.getItem("__bio_promotion-remove-failure")).toBeNull();
+    expect(plainItem.get()).toBe("plain-before");
+    expect(biometricItem.get()).toBe("");
+  });
+
+  it("surfaces rollback failure with the promotion error as cause", () => {
+    const backend = createWebBackendMock("promotion-rollback-failure");
+    setWebSecureStorageBackend(backend);
+    backend.setItem("__secure_promotion-rollback-failure", "plain-before");
+    backend.setItem("__bio_promotion-rollback-failure", "bio-before");
+    const originalSetItem = backend.setItem.getMockImplementation();
+    backend.setItem.mockImplementation((key: string, value: string) => {
+      if (
+        key === "__bio_promotion-rollback-failure" &&
+        value === "bio-before"
+      ) {
+        throw new Error("biometric rollback failed");
+      }
+      originalSetItem?.(key, value);
+    });
+    backend.removeItem.mockImplementationOnce(() => {
+      throw new Error("plain removal failed");
+    });
+    const biometricItem = createStorageItem({
+      key: "promotion-rollback-failure",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+
+    let thrown: unknown;
+    try {
+      biometricItem.set("bio-after");
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect((thrown as Error & { cause?: unknown }).cause).toBeInstanceOf(Error);
+    expect((thrown as { errors?: readonly unknown[] }).errors).toHaveLength(2);
+    expect(getStorageErrorCode(thrown)).toBe("storage_compensation_failed");
+    expect((thrown as Error).message).toContain("biometric rollback failed");
+    expect(backend.getItem("__secure_promotion-rollback-failure")).toBe(
+      "plain-before",
+    );
   });
 
   it("setSecureBiometric stores value with biometric prefix", () => {
@@ -3270,6 +3711,8 @@ describe("biometric web storage", () => {
     expect(globalThis.localStorage.getItem("__bio_bio-b")).toBeNull();
     expect(item1.get()).toBe("");
     expect(item2.get()).toBe("");
+    expect(storage.has("bio-a", StorageScope.Secure)).toBe(false);
+    expect(storage.has("bio-b", StorageScope.Secure)).toBe(false);
   });
 });
 

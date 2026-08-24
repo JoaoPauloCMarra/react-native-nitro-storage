@@ -43,6 +43,9 @@ function createFailureBackend(): FailureBackend {
     },
     remove: (key, scope) => {
       stores.get(scope)?.delete(key);
+      if (scope === StorageScope.Secure) {
+        biometricStore.delete(key);
+      }
     },
     clear: (scope) => {
       stores.get(scope)?.clear();
@@ -74,6 +77,9 @@ function createFailureBackend(): FailureBackend {
     removeBatch: (keys, scope) => {
       const store = stores.get(scope);
       keys.forEach((key) => store?.delete(key));
+      if (scope === StorageScope.Secure) {
+        keys.forEach((key) => biometricStore.delete(key));
+      }
     },
     removeByPrefix: (prefix, scope) => {
       const store = stores.get(scope);
@@ -100,6 +106,7 @@ function createFailureBackend(): FailureBackend {
         corruptionFailure();
       }
       biometricStore.set(key, value);
+      stores.get(StorageScope.Secure)?.delete(key);
     },
     deleteSecureBiometric: (key) => {
       biometricStore.delete(key);
@@ -217,6 +224,68 @@ describe("native adapter failure injection", () => {
     expect(getStorageErrorCode(thrown)).toBe("storage_corruption");
   });
 
+  it("normalizes a native compensation marker without reclassifying it as biometric unavailable", () => {
+    const backend = createFailureBackend();
+    const core = buildCore(backend);
+    const item = core.createStorageItem<string>({
+      key: "native-compensation",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+      serialize: (value) => value,
+      deserialize: (value) => value,
+    });
+    const nativeCompensation = new Error(
+      "[nitro-error:storage_compensation_failed] NitroStorage: Biometric promotion failed; rollback_error_count=2",
+    );
+    backend.setSecureBiometricWithLevel = () => {
+      throw nativeCompensation;
+    };
+
+    let thrown: unknown;
+    try {
+      item.set("secret");
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(getStorageErrorCode(thrown)).toBe("storage_compensation_failed");
+    expect((thrown as { cause?: unknown }).cause).toBe(nativeCompensation);
+    expect((thrown as { errors?: readonly unknown[] }).errors).toHaveLength(3);
+    expect(
+      (thrown as { errors?: readonly unknown[] }).errors
+        ?.slice(1)
+        .every((error) => error instanceof Error),
+    ).toBe(true);
+  });
+
+  it("leaves ordinary native biometric errors unchanged", () => {
+    const backend = createFailureBackend();
+    const core = buildCore(backend);
+    const item = core.createStorageItem<string>({
+      key: "native-ordinary-error",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+      serialize: (value) => value,
+      deserialize: (value) => value,
+    });
+    const ordinaryError = new Error("ordinary native failure");
+    backend.setSecureBiometricWithLevel = () => {
+      throw ordinaryError;
+    };
+
+    let thrown: unknown;
+    try {
+      item.set("secret");
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBe(ordinaryError);
+    expect(getStorageErrorCode(thrown)).toBeUndefined();
+  });
+
   it("rolls back the biometric write when the plain delete fails mid-promotion", () => {
     const backend = createFailureBackend();
     const core = buildCore(backend);
@@ -287,6 +356,103 @@ describe("native adapter failure injection", () => {
     expect(getStorageErrorCode(thrown)).toBe("keychain_locked");
     expect(item.get()).toBe("before");
     expect(rollbackEvents).toEqual(["rollback"]);
+  });
+
+  it.each([
+    ["plain then biometric", false],
+    ["biometric then plain", true],
+  ])(
+    "rolls back separate representations for the same key (%s)",
+    (_label, biometricFirst) => {
+      const backend = createFailureBackend();
+      const core = buildCore(backend);
+      const plain = core.createStorageItem<string>({
+        key: "shared-transaction-key",
+        scope: StorageScope.Secure,
+        defaultValue: "",
+        serialize: (value) => value,
+        deserialize: (value) => value,
+      });
+      const biometric = core.createStorageItem<string>({
+        key: "shared-transaction-key",
+        scope: StorageScope.Secure,
+        defaultValue: "",
+        biometric: true,
+        serialize: (value) => value,
+        deserialize: (value) => value,
+      });
+      biometric.set("biometric-before");
+      plain.set("plain-before");
+      const rollbackChanges: string[] = [];
+      core.storage.setEventObserver(
+        (event) => {
+          if (event.type !== "batch" || event.operation !== "rollback") {
+            return;
+          }
+          rollbackChanges.push(
+            ...event.changes.map(
+              (change) =>
+                `${change.key}:${change.oldValue}->${change.newValue}`,
+            ),
+          );
+        },
+        { redactSecureValues: false },
+      );
+
+      expect(() =>
+        core.runTransaction(StorageScope.Secure, (tx) => {
+          if (biometricFirst) {
+            tx.setItem(biometric, "biometric-during");
+            tx.setItem(plain, "plain-during");
+          } else {
+            tx.setItem(plain, "plain-during");
+            tx.setItem(biometric, "biometric-during");
+          }
+          throw new Error("shared rollback");
+        }),
+      ).toThrow("shared rollback");
+
+      expect(plain.get()).toBe("plain-before");
+      expect(biometric.get()).toBe("biometric-before");
+      expect(rollbackChanges).toEqual([
+        "shared-transaction-key:biometric-during->biometric-before",
+        biometricFirst
+          ? "shared-transaction-key:plain-during->plain-before"
+          : "shared-transaction-key:undefined->plain-before",
+      ]);
+    },
+  );
+
+  it("restores both secure representations after raw removal", () => {
+    const backend = createFailureBackend();
+    const core = buildCore(backend);
+    const plain = core.createStorageItem<string>({
+      key: "raw-shared-transaction-key",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      serialize: (value) => value,
+      deserialize: (value) => value,
+    });
+    const biometric = core.createStorageItem<string>({
+      key: "raw-shared-transaction-key",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+      serialize: (value) => value,
+      deserialize: (value) => value,
+    });
+    biometric.set("biometric-before");
+    plain.set("plain-before");
+
+    expect(() =>
+      core.runTransaction(StorageScope.Secure, (tx) => {
+        tx.removeRaw("raw-shared-transaction-key");
+        throw new Error("raw rollback");
+      }),
+    ).toThrow("raw rollback");
+
+    expect(plain.get()).toBe("plain-before");
+    expect(biometric.get()).toBe("biometric-before");
   });
 
   it("writes the native batch sentinel for missing values and decodes it", () => {

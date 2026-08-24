@@ -15,29 +15,59 @@ export type DurabilityCoordinator = {
   hasPendingSecureWrite(key: string): boolean;
   readPendingDiskWrite(key: string): string | undefined;
   readPendingSecureWrite(key: string): string | undefined;
+  readPendingSecureAccessControl(key: string): AccessControl | undefined;
   clearPendingDiskWrite(key: string): void;
   clearPendingSecureWrite(key: string): void;
+  clearPendingDiskWriteIf(write: PendingDiskWrite): void;
+  clearPendingSecureWriteIf(write: PendingSecureWrite): void;
   clearAllPendingDiskWrites(): void;
   clearAllPendingSecureWrites(): void;
-  scheduleDiskWrite(key: string, value: string | undefined): void;
+  scheduleDiskWrite(key: string, value: string | undefined): PendingDiskWrite;
   scheduleSecureWrite(
     key: string,
     value: string | undefined,
     accessControl?: AccessControl,
-  ): void;
+  ): PendingSecureWrite;
   flushDiskWrites(): void;
   flushSecureWrites(): void;
+  runSecurePromotion<T>(key: string, promotion: () => T): T;
 };
 
 export function createDurabilityCoordinator(options: {
   backend: DurabilityBackend;
   resolveSecureDefaultAccessControl(): AccessControl;
 }): DurabilityCoordinator {
+  type PendingWrite = PendingDiskWrite | PendingSecureWrite;
+
   const pendingDiskWrites = new Map<string, PendingDiskWrite>();
+  let nextGeneration = 0;
   let diskFlushScheduled = false;
   let diskWritesAsync = false;
   const pendingSecureWrites = new Map<string, PendingSecureWrite>();
   let secureFlushScheduled = false;
+  const securePromotionsInProgress = new Set<string>();
+
+  function clearPendingWrites<T extends PendingWrite>(
+    pendingWrites: Map<string, T>,
+    writes: readonly T[],
+  ): void {
+    writes.forEach((write) => {
+      if (pendingWrites.get(write.key) === write) {
+        pendingWrites.delete(write.key);
+      }
+    });
+  }
+
+  function restorePendingWrites<T extends PendingWrite>(
+    pendingWrites: Map<string, T>,
+    writes: readonly T[],
+  ): void {
+    writes.forEach((write) => {
+      if (!pendingWrites.has(write.key)) {
+        pendingWrites.set(write.key, write);
+      }
+    });
+  }
 
   function flushDiskWrites(): void {
     diskFlushScheduled = false;
@@ -47,27 +77,35 @@ export function createDurabilityCoordinator(options: {
     }
 
     const writes = Array.from(pendingDiskWrites.values());
-    pendingDiskWrites.clear();
 
-    const keysToSet: string[] = [];
-    const valuesToSet: string[] = [];
-    const keysToRemove: string[] = [];
+    const setWrites = writes.filter((write) => write.value !== undefined);
+    const removeWrites = writes.filter((write) => write.value === undefined);
 
-    writes.forEach(({ key, value }) => {
-      if (value === undefined) {
-        keysToRemove.push(key);
-        return;
+    if (setWrites.length > 0) {
+      try {
+        options.backend.setBatch(
+          setWrites.map(({ key }) => key),
+          setWrites.map(({ value }) => value as string),
+          StorageScope.Disk,
+        );
+      } catch (error) {
+        restorePendingWrites(pendingDiskWrites, setWrites);
+        throw error;
       }
-
-      keysToSet.push(key);
-      valuesToSet.push(value);
-    });
-
-    if (keysToSet.length > 0) {
-      options.backend.setBatch(keysToSet, valuesToSet, StorageScope.Disk);
+      clearPendingWrites(pendingDiskWrites, setWrites);
     }
-    if (keysToRemove.length > 0) {
-      options.backend.removeBatch(keysToRemove, StorageScope.Disk);
+
+    if (removeWrites.length > 0) {
+      try {
+        options.backend.removeBatch(
+          removeWrites.map(({ key }) => key),
+          StorageScope.Disk,
+        );
+      } catch (error) {
+        restorePendingWrites(pendingDiskWrites, removeWrites);
+        throw error;
+      }
+      clearPendingWrites(pendingDiskWrites, removeWrites);
     }
   }
 
@@ -79,63 +117,112 @@ export function createDurabilityCoordinator(options: {
     }
 
     const writes = Array.from(pendingSecureWrites.values());
-    pendingSecureWrites.clear();
 
     const groupedSetWrites = new Map<
       AccessControl,
-      { keys: string[]; values: string[] }
+      { writes: PendingSecureWrite[] }
     >();
-    const keysToRemove: string[] = [];
+    const removeWrites: PendingSecureWrite[] = [];
 
-    writes.forEach(({ key, value, accessControl }) => {
+    writes.forEach((write) => {
+      const { value, accessControl } = write;
       if (value === undefined) {
-        keysToRemove.push(key);
+        removeWrites.push(write);
       } else {
         const resolvedAccessControl =
           accessControl ?? options.resolveSecureDefaultAccessControl();
         const existingGroup = groupedSetWrites.get(resolvedAccessControl);
-        const group = existingGroup ?? { keys: [], values: [] };
-        group.keys.push(key);
-        group.values.push(value);
+        const group = existingGroup ?? { writes: [] };
+        group.writes.push(write);
         if (!existingGroup) {
           groupedSetWrites.set(resolvedAccessControl, group);
         }
       }
     });
 
-    groupedSetWrites.forEach((group, accessControl) => {
-      options.backend.setSecureAccessControl(accessControl);
-      options.backend.setBatch(group.keys, group.values, StorageScope.Secure);
-    });
-    if (keysToRemove.length > 0) {
-      options.backend.removeBatch(keysToRemove, StorageScope.Secure);
+    for (const [accessControl, group] of groupedSetWrites) {
+      try {
+        options.backend.setSecureAccessControl(accessControl);
+        options.backend.setBatch(
+          group.writes.map(({ key }) => key),
+          group.writes.map(({ value }) => value as string),
+          StorageScope.Secure,
+        );
+      } catch (error) {
+        restorePendingWrites(pendingSecureWrites, group.writes);
+        throw error;
+      }
+      clearPendingWrites(pendingSecureWrites, group.writes);
+    }
+
+    if (removeWrites.length > 0) {
+      try {
+        options.backend.removeBatch(
+          removeWrites.map(({ key }) => key),
+          StorageScope.Secure,
+        );
+      } catch (error) {
+        restorePendingWrites(pendingSecureWrites, removeWrites);
+        throw error;
+      }
+      clearPendingWrites(pendingSecureWrites, removeWrites);
     }
   }
 
-  function scheduleDiskWrite(key: string, value: string | undefined): void {
-    pendingDiskWrites.set(key, { key, value });
+  function scheduleDiskWrite(
+    key: string,
+    value: string | undefined,
+  ): PendingDiskWrite {
+    const pendingWrite: PendingDiskWrite = {
+      key,
+      value,
+      generation: ++nextGeneration,
+    };
+    pendingDiskWrites.set(key, pendingWrite);
     if (diskFlushScheduled) {
-      return;
+      return pendingWrite;
     }
     diskFlushScheduled = true;
     runMicrotask(flushDiskWrites);
+    return pendingWrite;
   }
 
   function scheduleSecureWrite(
     key: string,
     value: string | undefined,
     accessControl?: AccessControl,
-  ): void {
-    const pendingWrite: PendingSecureWrite = { key, value };
+  ): PendingSecureWrite {
+    const pendingWrite: PendingSecureWrite = {
+      key,
+      value,
+      generation: ++nextGeneration,
+    };
     if (accessControl !== undefined) {
       pendingWrite.accessControl = accessControl;
     }
     pendingSecureWrites.set(key, pendingWrite);
     if (secureFlushScheduled) {
-      return;
+      return pendingWrite;
     }
     secureFlushScheduled = true;
     runMicrotask(flushSecureWrites);
+    return pendingWrite;
+  }
+
+  function runSecurePromotion<T>(key: string, promotion: () => T): T {
+    if (securePromotionsInProgress.has(key)) {
+      throw new Error("NitroStorage: Reentrant secure promotion");
+    }
+
+    securePromotionsInProgress.add(key);
+    try {
+      if (pendingSecureWrites.has(key)) {
+        flushSecureWrites();
+      }
+      return promotion();
+    } finally {
+      securePromotionsInProgress.delete(key);
+    }
   }
 
   return {
@@ -150,11 +237,23 @@ export function createDurabilityCoordinator(options: {
     hasPendingSecureWrite: (key) => pendingSecureWrites.has(key),
     readPendingDiskWrite: (key) => pendingDiskWrites.get(key)?.value,
     readPendingSecureWrite: (key) => pendingSecureWrites.get(key)?.value,
+    readPendingSecureAccessControl: (key) =>
+      pendingSecureWrites.get(key)?.accessControl,
     clearPendingDiskWrite: (key) => {
       pendingDiskWrites.delete(key);
     },
     clearPendingSecureWrite: (key) => {
       pendingSecureWrites.delete(key);
+    },
+    clearPendingDiskWriteIf: (write) => {
+      if (pendingDiskWrites.get(write.key) === write) {
+        pendingDiskWrites.delete(write.key);
+      }
+    },
+    clearPendingSecureWriteIf: (write) => {
+      if (pendingSecureWrites.get(write.key) === write) {
+        pendingSecureWrites.delete(write.key);
+      }
     },
     clearAllPendingDiskWrites: () => {
       pendingDiskWrites.clear();
@@ -166,5 +265,6 @@ export function createDurabilityCoordinator(options: {
     scheduleSecureWrite,
     flushDiskWrites,
     flushSecureWrites,
+    runSecurePromotion,
   };
 }

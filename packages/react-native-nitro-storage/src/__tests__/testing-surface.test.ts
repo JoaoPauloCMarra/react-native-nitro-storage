@@ -2,7 +2,9 @@ import {
   createSecureAuthStorage,
   createSetItem,
   createStorageItem,
+  diskItem,
   getBatch,
+  isStorageError,
   memoryItem,
   migrateToLatest,
   registerMigration,
@@ -20,6 +22,14 @@ beforeEach(() => {
 });
 
 describe("testing module default singleton surface", () => {
+  it("matches exact storage error codes through the testing entrypoint", () => {
+    const locked = new Error(
+      "[nitro-error:keychain_locked] NitroStorage: locked",
+    );
+    expect(isStorageError(locked, "keychain_locked")).toBe(true);
+    expect(isStorageError(locked, "key_invalidated")).toBe(false);
+  });
+
   it("supports batch operations and prefix/size queries on disk", () => {
     const a = createStorageItem<string>({
       key: "b:a",
@@ -96,6 +106,51 @@ describe("testing module default singleton surface", () => {
     flags.clear();
     expect(flags.size()).toBe(0);
   });
+
+  it("matches native secure batch removal across plain and biometric storage", () => {
+    const plain = secureItem<string>({
+      key: "parallel-secure",
+      defaultValue: "",
+    });
+    const biometric = secureItem<string>({
+      key: "parallel-secure",
+      defaultValue: "",
+      biometric: true,
+    });
+    biometric.set("biometric");
+    plain.set("plain");
+
+    removeBatch([plain], StorageScope.Secure);
+
+    expect(plain.has()).toBe(false);
+    expect(biometric.has()).toBe(false);
+  });
+
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "cleans rename aliases when removing a recreated item in scope %s",
+    (scope) => {
+      const createItem = scope === StorageScope.Disk ? diskItem : secureItem;
+      const legacyKey = `batch-remove-legacy-${scope}`;
+      const currentKey = `batch-remove-current-${scope}`;
+      const current = createItem<string>({
+        key: currentKey,
+        defaultValue: "",
+        renameFrom: legacyKey,
+      });
+      current.set("current");
+      storage.setString(legacyKey, "stale", scope);
+
+      removeBatch([current], scope);
+
+      const recreated = createItem<string>({
+        key: currentKey,
+        defaultValue: "default",
+        renameFrom: legacyKey,
+      });
+      expect(recreated.get()).toBe("default");
+      expect(storage.has(legacyKey, scope)).toBe(false);
+    },
+  );
 
   it("removes keys by prefix via clearNamespace on disk", () => {
     storage.setString("ns:1", "a", StorageScope.Disk);

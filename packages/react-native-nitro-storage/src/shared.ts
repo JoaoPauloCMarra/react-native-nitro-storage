@@ -75,6 +75,7 @@ export type KeyListenerRegistry = Map<string, Set<() => void>>;
 export type RawBatchPathItem = {
   _hasValidation?: boolean;
   _hasExpiration?: boolean;
+  _hasRenameFrom?: boolean;
   _isBiometric?: boolean;
   _biometricLevel?: BiometricLevel;
   _secureAccessControl?: AccessControl;
@@ -84,6 +85,7 @@ export type RollbackRecord =
   | {
       kind: "memory";
       value: unknown;
+      expiresAt?: number;
     }
   | {
       kind: "raw";
@@ -95,6 +97,81 @@ export type RollbackRecord =
       value: string | undefined;
       level: BiometricLevel;
     };
+
+export type StorageCompositeError = Error & {
+  readonly cause: unknown;
+  readonly errors: readonly unknown[];
+  readonly code: "storage_compensation_failed";
+};
+
+export type StorageCompensationError = StorageCompositeError;
+
+export function createStorageCompositeError(
+  operation: string,
+  primary: unknown,
+  contexts: readonly { label: string; error: unknown }[],
+): StorageCompositeError {
+  const primaryMessage =
+    primary instanceof Error ? primary.message : String(primary);
+  const contextMessage = contexts
+    .map(({ label, error }) => {
+      const message = error instanceof Error ? error.message : String(error);
+      return `${label}: ${message}`;
+    })
+    .join("; ");
+  const composite = new Error(
+    `[nitro-error:storage_compensation_failed] NitroStorage: ${operation} failed; primary error: ${primaryMessage}${
+      contextMessage.length > 0 ? `; ${contextMessage}` : ""
+    }`,
+  ) as StorageCompositeError;
+  Object.defineProperties(composite, {
+    cause: {
+      configurable: true,
+      enumerable: false,
+      value: primary,
+      writable: false,
+    },
+    errors: {
+      configurable: true,
+      enumerable: false,
+      value: Object.freeze([primary, ...contexts.map(({ error }) => error)]),
+      writable: false,
+    },
+    code: {
+      configurable: false,
+      enumerable: false,
+      value: "storage_compensation_failed",
+      writable: false,
+    },
+  });
+  return composite;
+}
+
+export function normalizeStorageError(error: unknown): unknown {
+  if (!(error instanceof Error)) {
+    return error;
+  }
+
+  const code = getStorageErrorCode(error);
+  if (
+    code !== "storage_compensation_failed" ||
+    ("cause" in error && "errors" in error && "code" in error)
+  ) {
+    return error;
+  }
+
+  const operationMatch = error.message.match(
+    /NitroStorage: ([^;]+?) failed(?:;|$)/,
+  );
+  const countMatch = error.message.match(/rollback_error_count=(\d+)/);
+  const rollbackErrorCount = countMatch ? Number(countMatch[1]) : 0;
+  const operation = operationMatch?.[1] ?? "native storage compensation";
+  const contexts = Array.from({ length: rollbackErrorCount }, (_, index) => ({
+    label: `native rollback ${index + 1}`,
+    error: new Error("Native storage rollback failed"),
+  }));
+  return createStorageCompositeError(operation, error, contexts);
+}
 
 export function isUpdater<T>(
   valueOrFn: T | ((prev: T) => T),
@@ -133,12 +210,14 @@ export type NonMemoryScope = StorageScope.Disk | StorageScope.Secure;
 export type PendingDiskWrite = {
   key: string;
   value: string | undefined;
+  generation: number;
 };
 
 export type PendingSecureWrite = {
   key: string;
   value: string | undefined;
   accessControl?: AccessControl;
+  generation: number;
 };
 
 export const runMicrotask =
@@ -214,6 +293,7 @@ export function canUseRawBatchPath(item: RawBatchPathItem): boolean {
   return (
     item._hasExpiration === false &&
     item._hasValidation === false &&
+    item._hasRenameFrom !== true &&
     item._isBiometric !== true &&
     item._secureAccessControl === undefined
   );
@@ -223,6 +303,7 @@ export function canUseSecureRawBatchPath(item: RawBatchPathItem): boolean {
   return (
     item._hasExpiration === false &&
     item._hasValidation === false &&
+    item._hasRenameFrom !== true &&
     item._isBiometric !== true
   );
 }
@@ -246,6 +327,10 @@ export type SecureAuthStorageConfig<K extends string = string> = Record<
   }
 >;
 
+/**
+ * @deprecated Use isStorageError(error, code) to distinguish temporary lock,
+ * authentication, and invalidated-key recovery paths.
+ */
 export function isKeychainLockedError(err: unknown): boolean {
   return isLockedStorageErrorCode(getStorageErrorCode(err));
 }

@@ -1,8 +1,6 @@
 import { StorageScope } from "./Storage.types";
 
 export const MIGRATION_VERSION_KEY = "__nitro_storage_migration_version__";
-export const NATIVE_BATCH_MISSING_SENTINEL =
-  "__nitro_storage_batch_missing__::v1";
 const PRIMITIVE_FAST_PATH_PREFIX = "__nitro_storage_primitive__:";
 const PRIM_NULL = "__nitro_storage_primitive__:l";
 const PRIM_UNDEFINED = "__nitro_storage_primitive__:u";
@@ -26,7 +24,6 @@ const RESERVED_RAW_TOKENS = new Set<string>([
   PRIM_INFINITY,
   PRIM_NEG_INFINITY,
   PRIM_NAN,
-  NATIVE_BATCH_MISSING_SENTINEL,
 ]);
 
 export function escapeCollidingRawValue(value: string): string {
@@ -98,16 +95,6 @@ export function assertBatchScope(
   );
 }
 
-export function decodeNativeBatchValue(
-  value: string | undefined,
-): string | undefined {
-  if (value === undefined || value === NATIVE_BATCH_MISSING_SENTINEL) {
-    return undefined;
-  }
-
-  return value;
-}
-
 export function prefixKey(namespace: string | undefined, key: string): string {
   if (!namespace) return key;
   return `${namespace}${NAMESPACE_SEPARATOR}${key}`;
@@ -126,7 +113,6 @@ export function serializeWithPrimitiveFastPath<T>(value: T): string {
     case "string": {
       const stringValue = value as string;
       if (
-        stringValue === NATIVE_BATCH_MISSING_SENTINEL ||
         stringValue.startsWith(PRIMITIVE_FAST_PATH_PREFIX) ||
         stringValue.startsWith(ESCAPE_PREFIX)
       ) {

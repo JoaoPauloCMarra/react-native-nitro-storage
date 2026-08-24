@@ -17,11 +17,13 @@ import {
   assertBiometricLevel,
   canUseRawBatchPath,
   canUseSecureRawBatchPath,
+  createStorageCompositeError,
   createKeyChange,
   defaultDeserialize,
   defaultSerialize,
   isKeychainLockedError,
   isUpdater,
+  normalizeStorageError,
   notifyAllListeners,
   notifyKeyListeners,
   redactSecureKeyChange,
@@ -30,6 +32,8 @@ import {
   type KeyListenerRegistry,
   type Migration,
   type NonMemoryScope,
+  type PendingDiskWrite,
+  type PendingSecureWrite,
   type RollbackRecord,
   type SecureAuthStorageConfig,
   type StorageEventObserverOptions,
@@ -124,6 +128,10 @@ type StorageItemInternal<T> = StorageItem<T> & {
   _deleteMemoryEntry: () => void;
   _hasValidation: boolean;
   _hasExpiration: boolean;
+  _hasRenameFrom: boolean;
+  _renameFromKeys: readonly string[];
+  _getRenameMigrationState: () => boolean;
+  _setRenameMigrationState: (migrated: boolean) => void;
   _readCacheEnabled: boolean;
   _isBiometric: boolean;
   _biometricLevel: BiometricLevel;
@@ -138,6 +146,7 @@ export type BatchReadItem<T> = Pick<
 > & {
   _hasValidation?: boolean;
   _hasExpiration?: boolean;
+  _hasRenameFrom?: boolean;
   _readCacheEnabled?: boolean;
   _isBiometric?: boolean;
   _defaultValue?: unknown;
@@ -146,7 +155,10 @@ export type BatchReadItem<T> = Pick<
 export type BatchRemoveItem = Pick<
   StorageItem<unknown>,
   "key" | "scope" | "delete"
->;
+> & {
+  _hasRenameFrom?: boolean;
+  _isBiometric?: boolean;
+};
 export type BatchValues<TItems extends readonly BatchReadItem<unknown>[]> = {
   [Index in keyof TItems]: TItems[Index] extends BatchReadItem<infer Value>
     ? Value
@@ -225,6 +237,8 @@ export type StorageCoreBackend = {
   clearSecureBiometric(): void;
 };
 
+export type StorageRawCacheRepresentation = "plain" | "biometric";
+
 export type StorageCoreAdapter = {
   backend: StorageCoreBackend;
   changeSource: StorageChangeSource;
@@ -249,8 +263,14 @@ export type StorageCoreInternals = {
     scope: NonMemoryScope,
     key: string,
     value: string | undefined,
+    representation?: StorageRawCacheRepresentation,
   ): void;
-  readCachedRawValue(scope: NonMemoryScope, key: string): string | undefined;
+  readCachedRawValue(
+    scope: NonMemoryScope,
+    key: string,
+    representation?: StorageRawCacheRepresentation,
+  ): string | undefined;
+  invalidateRawCache(scope: NonMemoryScope, key: string): void;
   clearScopeRawCache(scope: NonMemoryScope): void;
   clearPendingDiskWrite(key: string): void;
   clearPendingSecureWrite(key: string): void;
@@ -297,15 +317,15 @@ export function createStorageCore(
   const itemGroups = new Map<string, Set<StorageItemInternal<unknown>>>();
   const registeredKeyCounts = new Map<string, number>();
   const memoryStore = new Map<string, unknown>();
+  const memoryExpirationDeadlines = new Map<string, number>();
+  const memoryItemsByKey = new Map<string, Set<StorageItemInternal<unknown>>>();
   const memoryListeners: KeyListenerRegistry = new Map();
   const scopedListeners: Record<NonMemoryScope, KeyListenerRegistry> = {
     [StorageScope.Disk]: new Map(),
     [StorageScope.Secure]: new Map(),
   };
-  const scopedRawCache: Record<
-    NonMemoryScope,
-    Map<string, string | undefined>
-  > = {
+  type RawCacheEntry = Map<StorageRawCacheRepresentation, string | undefined>;
+  const scopedRawCache: Record<NonMemoryScope, Map<string, RawCacheEntry>> = {
     [StorageScope.Disk]: new Map(),
     [StorageScope.Secure]: new Map(),
   };
@@ -333,29 +353,63 @@ export function createStorageCore(
     return scopedListeners[scope];
   }
 
-  function getScopeRawCache(
-    scope: NonMemoryScope,
-  ): Map<string, string | undefined> {
+  function getScopeRawCache(scope: NonMemoryScope): Map<string, RawCacheEntry> {
     return scopedRawCache[scope];
+  }
+
+  function getCachedRawValueEntry(
+    scope: NonMemoryScope,
+    key: string,
+    create = false,
+  ): RawCacheEntry | undefined {
+    const scopeCache = getScopeRawCache(scope);
+    const existing = scopeCache.get(key);
+    if (existing || !create) {
+      return existing;
+    }
+
+    const entry: RawCacheEntry = new Map();
+    scopeCache.set(key, entry);
+    return entry;
   }
 
   function cacheRawValue(
     scope: NonMemoryScope,
     key: string,
     value: string | undefined,
+    representation: StorageRawCacheRepresentation = "plain",
   ): void {
-    getScopeRawCache(scope).set(key, value);
+    getCachedRawValueEntry(scope, key, true)?.set(representation, value);
   }
 
   function readCachedRawValue(
     scope: NonMemoryScope,
     key: string,
+    representation: StorageRawCacheRepresentation = "plain",
   ): string | undefined {
-    return getScopeRawCache(scope).get(key);
+    return getCachedRawValueEntry(scope, key)?.get(representation);
+  }
+
+  function hasCachedRawValue(
+    scope: NonMemoryScope,
+    key: string,
+    representation: StorageRawCacheRepresentation = "plain",
+  ): boolean {
+    return getCachedRawValueEntry(scope, key)?.has(representation) ?? false;
+  }
+
+  function invalidateRawCache(scope: NonMemoryScope, key: string): void {
+    getScopeRawCache(scope).delete(key);
   }
 
   function clearScopeRawCache(scope: NonMemoryScope): void {
     getScopeRawCache(scope).clear();
+  }
+
+  function invalidateMemoryItemCaches(key: string): void {
+    memoryItemsByKey.get(key)?.forEach((item) => {
+      item._invalidateParsedCacheOnly();
+    });
   }
 
   function addKeyListener(
@@ -394,6 +448,18 @@ export function createStorageCore(
     }
 
     return getRawValue(key, scope);
+  }
+
+  function getEventRawValueForRepresentation(
+    scope: StorageScope,
+    key: string,
+    representation: StorageRawCacheRepresentation,
+  ): string | undefined {
+    if (representation === "plain") {
+      return getEventRawValue(scope, key);
+    }
+    const raw = adapter.backend.getSecureBiometric(key);
+    return raw === undefined ? undefined : unescapeCollidingRawValue(raw);
   }
 
   function shouldReadPreviousEventValues(scope: StorageScope): boolean {
@@ -525,16 +591,23 @@ export function createStorageCore(
     durability.flushSecureWrites();
   }
 
-  function scheduleDiskWrite(key: string, value: string | undefined): void {
-    durability.scheduleDiskWrite(key, value);
+  function runSecurePromotion<T>(key: string, promotion: () => T): T {
+    return durability.runSecurePromotion(key, promotion);
+  }
+
+  function scheduleDiskWrite(
+    key: string,
+    value: string | undefined,
+  ): PendingDiskWrite {
+    return durability.scheduleDiskWrite(key, value);
   }
 
   function scheduleSecureWrite(
     key: string,
     value: string | undefined,
     accessControl?: AccessControl,
-  ): void {
-    durability.scheduleSecureWrite(key, value, accessControl);
+  ): PendingSecureWrite {
+    return durability.scheduleSecureWrite(key, value, accessControl);
   }
 
   function setDiskWritesAsyncMode(enabled: boolean): void {
@@ -563,6 +636,17 @@ export function createStorageCore(
     }
 
     return adapter.backend.get(key, scope);
+  }
+
+  function getStoredRawValueForRepresentation(
+    key: string,
+    scope: StorageScope,
+    representation: StorageRawCacheRepresentation,
+  ): string | undefined {
+    if (representation === "plain") {
+      return getStoredRawValue(key, scope);
+    }
+    return adapter.backend.getSecureBiometric(key);
   }
 
   function getRawValue(key: string, scope: StorageScope): string | undefined {
@@ -617,6 +701,7 @@ export function createStorageCore(
     }
 
     if (scope === StorageScope.Secure) {
+      invalidateRawCache(scope, key);
       flushSecureWrites();
       clearPendingSecureWrite(key);
       if (adapter.applyAccessControlOnSecureRawWrite) {
@@ -659,6 +744,7 @@ export function createStorageCore(
     }
 
     if (scope === StorageScope.Secure) {
+      invalidateRawCache(scope, key);
       flushSecureWrites();
       clearPendingSecureWrite(key);
     }
@@ -689,6 +775,7 @@ export function createStorageCore(
     getScopedListeners,
     cacheRawValue,
     readCachedRawValue,
+    invalidateRawCache,
     clearScopeRawCache,
     clearPendingDiskWrite,
     clearPendingSecureWrite,
@@ -779,6 +866,11 @@ export function createStorageCore(
                 : unescapeCollidingRawValue(value),
             )
         : [];
+      if (scope === StorageScope.Secure) {
+        removeKeys.forEach((key) => {
+          invalidateRawCache(scope, key);
+        });
+      }
       adapter.backend.removeBatch(removeKeys, scope);
       removeKeys.forEach((key) => {
         cacheRawValue(scope, key, undefined);
@@ -885,6 +977,7 @@ export function createStorageCore(
           : {};
         if (scope === StorageScope.Memory) {
           memoryStore.clear();
+          memoryExpirationDeadlines.clear();
           notifyAllListeners(memoryListeners);
           emitBatchChange(
             scope,
@@ -1044,6 +1137,7 @@ export function createStorageCore(
 
           affectedKeys.forEach((key) => {
             memoryStore.delete(key);
+            memoryExpirationDeadlines.delete(key);
           });
           affectedKeys.forEach((key) => {
             notifyKeyListeners(memoryListeners, key);
@@ -1103,7 +1197,48 @@ export function createStorageCore(
     },
     clearBiometric: () => {
       measureOperation("storage:clearBiometric", StorageScope.Secure, () => {
-        adapter.backend.clearSecureBiometric();
+        flushSecureWrites();
+        const readEventValues = shouldReadPreviousEventValues(
+          StorageScope.Secure,
+        );
+        const shouldEmitChanges =
+          storageEvents.hasListeners(StorageScope.Secure) ||
+          eventObserver !== undefined;
+        const biometricKeys = shouldEmitChanges
+          ? adapter.backend
+              .getAllKeys(StorageScope.Secure)
+              .filter((key) => adapter.backend.hasSecureBiometric(key))
+          : [];
+        const previousValues = readEventValues
+          ? biometricKeys.map((key) => {
+              const raw = adapter.backend.getSecureBiometric(key);
+              return raw === undefined
+                ? undefined
+                : unescapeCollidingRawValue(raw);
+            })
+          : [];
+
+        clearScopeRawCache(StorageScope.Secure);
+        try {
+          adapter.backend.clearSecureBiometric();
+        } finally {
+          clearScopeRawCache(StorageScope.Secure);
+        }
+        emitBatchChange(
+          StorageScope.Secure,
+          "clear",
+          adapter.changeSource,
+          biometricKeys.map((key, index) =>
+            createKeyChange(
+              StorageScope.Secure,
+              key,
+              readEventValues ? previousValues[index] : undefined,
+              undefined,
+              "clear",
+              adapter.changeSource,
+            ),
+          ),
+        );
       });
     },
     has: (key: string, scope: StorageScope): boolean => {
@@ -1376,6 +1511,9 @@ export function createStorageCore(
           if (scope === StorageScope.Secure) {
             flushSecureWrites();
             adapter.backend.setSecureAccessControl(secureDefaultAccessControl);
+            keys.forEach((key) => {
+              invalidateRawCache(scope, key);
+            });
           }
           if (scope === StorageScope.Disk) {
             flushDiskWrites();
@@ -1414,8 +1552,11 @@ export function createStorageCore(
     const onExpired = config.onExpired;
     const expirationTtlMs = expiration?.ttlMs;
     const memoryExpiration =
-      expiration && isMemory ? new Map<string, number>() : null;
+      expiration && isMemory ? memoryExpirationDeadlines : null;
     const readCache = !isMemory && config.readCache === true;
+    const rawCacheRepresentation: StorageRawCacheRepresentation = isBiometric
+      ? "biometric"
+      : "plain";
     const coalesceDiskWrites =
       config.scope === StorageScope.Disk && config.coalesceDiskWrites === true;
     const coalesceSecureWrites =
@@ -1527,34 +1668,57 @@ export function createStorageCore(
           : memoryStored;
       }
 
-      migrateRenamesIfNeeded();
-
       if (nonMemoryScope === StorageScope.Disk) {
-        const pending = durability.readPendingDiskWrite(storageKey);
-        if (pending !== undefined) {
-          return pending;
+        if (durability.hasPendingDiskWrite(storageKey)) {
+          return durability.readPendingDiskWrite(storageKey);
         }
       }
 
       if (nonMemoryScope === StorageScope.Secure && !isBiometric) {
-        const pending = durability.readPendingSecureWrite(storageKey);
-        if (pending !== undefined) {
-          return pending;
+        if (durability.hasPendingSecureWrite(storageKey)) {
+          return durability.readPendingSecureWrite(storageKey);
+        }
+      }
+
+      migrateRenamesIfNeeded();
+
+      if (nonMemoryScope === StorageScope.Disk) {
+        if (durability.hasPendingDiskWrite(storageKey)) {
+          return durability.readPendingDiskWrite(storageKey);
+        }
+      }
+
+      if (nonMemoryScope === StorageScope.Secure && !isBiometric) {
+        if (durability.hasPendingSecureWrite(storageKey)) {
+          return durability.readPendingSecureWrite(storageKey);
         }
       }
 
       if (readCache) {
-        const cache = getScopeRawCache(resolveNonMemoryScope());
-        const cached = cache.get(storageKey);
-        if (cached !== undefined || cache.has(storageKey)) {
+        const scope = resolveNonMemoryScope();
+        const cached = readCachedRawValue(
+          scope,
+          storageKey,
+          rawCacheRepresentation,
+        );
+        if (hasCachedRawValue(scope, storageKey, rawCacheRepresentation)) {
           return cached;
         }
       }
 
       if (isBiometric) {
-        return readBackendRaw(() =>
+        const raw = readBackendRaw(() =>
           adapter.backend.getSecureBiometric(storageKey),
         );
+        if (readCache) {
+          cacheRawValue(
+            resolveNonMemoryScope(),
+            storageKey,
+            raw,
+            rawCacheRepresentation,
+          );
+        }
+        return raw;
       }
 
       const raw = readBackendRaw(() =>
@@ -1572,8 +1736,11 @@ export function createStorageCore(
       } catch (error) {
         onReadError?.(error);
         if (fallbackToCacheOnReadError) {
-          const cached = getScopeRawCache(resolveNonMemoryScope()).get(
+          const scope = resolveNonMemoryScope();
+          const cached = readCachedRawValue(
+            scope,
             storageKey,
+            rawCacheRepresentation,
           );
           if (cached !== undefined) {
             return cached;
@@ -1584,14 +1751,446 @@ export function createStorageCore(
       }
     };
 
-    const writeStoredRaw = (rawValue: string): void => {
+    type StoredRawWriteOptions = {
+      cleanupRenameSources?: boolean;
+    };
+    type RenameSnapshot = {
+      key: string;
+      plainValue?: string;
+      biometricValue?: string;
+    };
+
+    function getRenameSourceKeys(): string[] {
+      return renameFromKeys.filter((key) => key !== storageKey);
+    }
+
+    function getRenameSourceRaw(key: string): string | undefined {
+      return isBiometric
+        ? adapter.backend.getSecureBiometric(key)
+        : adapter.backend.get(key, config.scope);
+    }
+
+    function invalidateRenameSourceCache(key: string): void {
+      if (nonMemoryScope !== null) {
+        invalidateRawCache(nonMemoryScope, key);
+      }
+    }
+
+    function removeRenameSource(key: string): void {
+      invalidateRenameSourceCache(key);
+      if (isBiometric) {
+        adapter.backend.deleteSecureBiometric(key);
+        invalidateRenameSourceCache(key);
+        return;
+      }
+      adapter.backend.remove(key, config.scope);
+      invalidateRenameSourceCache(key);
+    }
+
+    function restoreRenameSource(snapshot: RenameSnapshot): void {
+      invalidateRenameSourceCache(snapshot.key);
+      if (nonMemoryScope === StorageScope.Secure) {
+        if (snapshot.biometricValue !== undefined) {
+          adapter.backend.setSecureBiometricWithLevel(
+            snapshot.key,
+            snapshot.biometricValue,
+            resolvedBiometricLevel === BiometricLevel.None
+              ? BiometricLevel.BiometryOnly
+              : resolvedBiometricLevel,
+          );
+        } else {
+          adapter.backend.deleteSecureBiometric(snapshot.key);
+        }
+        if (snapshot.plainValue !== undefined) {
+          if (adapter.applyAccessControlOnSecureRawWrite) {
+            adapter.backend.setSecureAccessControl(
+              secureAccessControl ?? secureDefaultAccessControl,
+            );
+          }
+          adapter.backend.set(snapshot.key, snapshot.plainValue, config.scope);
+        } else if (snapshot.biometricValue === undefined) {
+          adapter.backend.remove(snapshot.key, config.scope);
+        }
+        invalidateRenameSourceCache(snapshot.key);
+        return;
+      }
+      if (snapshot.plainValue !== undefined) {
+        adapter.backend.set(snapshot.key, snapshot.plainValue, config.scope);
+      } else {
+        adapter.backend.remove(snapshot.key, config.scope);
+      }
+      invalidateRenameSourceCache(snapshot.key);
+    }
+
+    function readRenameSnapshots(): RenameSnapshot[] {
+      return getRenameSourceKeys().flatMap((key) => {
+        const plainValue =
+          nonMemoryScope === StorageScope.Secure
+            ? adapter.backend.get(key, config.scope)
+            : getRenameSourceRaw(key);
+        const biometricValue =
+          nonMemoryScope === StorageScope.Secure
+            ? adapter.backend.getSecureBiometric(key)
+            : undefined;
+        if (plainValue === undefined && biometricValue === undefined) {
+          return [];
+        }
+        return [
+          {
+            key,
+            ...(plainValue === undefined ? {} : { plainValue }),
+            ...(biometricValue === undefined ? {} : { biometricValue }),
+          },
+        ];
+      });
+    }
+
+    function selectedRenameValue(snapshot: RenameSnapshot): string | undefined {
+      return isBiometric ? snapshot.biometricValue : snapshot.plainValue;
+    }
+
+    function hasPendingCurrentWrite(): boolean {
+      if (nonMemoryScope === StorageScope.Disk) {
+        return durability.hasPendingDiskWrite(storageKey);
+      }
+      if (nonMemoryScope === StorageScope.Secure && !isBiometric) {
+        return durability.hasPendingSecureWrite(storageKey);
+      }
+      return false;
+    }
+
+    function hasPendingRenameSourceWrite(): boolean {
+      if (isBiometric || nonMemoryScope === null) {
+        return false;
+      }
+      return getRenameSourceKeys().some((key) =>
+        nonMemoryScope === StorageScope.Disk
+          ? durability.hasPendingDiskWrite(key)
+          : durability.hasPendingSecureWrite(key),
+      );
+    }
+
+    function flushPendingRenameSourceWrites(): void {
+      if (!hasPendingRenameSourceWrite()) {
+        return;
+      }
+      if (nonMemoryScope === StorageScope.Disk) {
+        flushDiskWrites();
+        return;
+      }
+      flushSecureWrites();
+    }
+
+    function clearPendingCurrentWriteIf(
+      write: PendingDiskWrite | PendingSecureWrite | undefined,
+    ): void {
+      if (write === undefined) {
+        return;
+      }
+      if (nonMemoryScope === StorageScope.Disk && "generation" in write) {
+        durability.clearPendingDiskWriteIf(write);
+        return;
+      }
+      if (nonMemoryScope === StorageScope.Secure && !isBiometric) {
+        durability.clearPendingSecureWriteIf(write);
+      }
+    }
+
+    function flushPendingCurrentWrite(): void {
+      if (nonMemoryScope === StorageScope.Disk) {
+        flushDiskWrites();
+        return;
+      }
+      if (nonMemoryScope === StorageScope.Secure && !isBiometric) {
+        flushSecureWrites();
+      }
+    }
+
+    function removeCurrentBackendValue(): void {
+      invalidateRawCache(resolveNonMemoryScope(), storageKey);
+      if (isBiometric) {
+        adapter.backend.deleteSecureBiometric(storageKey);
+        return;
+      }
+      adapter.backend.remove(storageKey, config.scope);
+    }
+
+    function scheduleRenameSourceCleanup(): void {
+      const sourceKeys = getRenameSourceKeys();
+      sourceKeys.forEach(invalidateRenameSourceCache);
+
+      if (isBiometric) {
+        sourceKeys.forEach(removeRenameSource);
+        return;
+      }
+
+      if (
+        nonMemoryScope === StorageScope.Disk &&
+        (coalesceDiskWrites || isDiskWritesAsync())
+      ) {
+        sourceKeys.forEach((key) => {
+          scheduleDiskWrite(key, undefined);
+        });
+        return;
+      }
+
+      if (nonMemoryScope === StorageScope.Secure && coalesceSecureWrites) {
+        sourceKeys.forEach((key) => {
+          scheduleSecureWrite(
+            key,
+            undefined,
+            secureAccessControl ?? secureDefaultAccessControl,
+          );
+        });
+        return;
+      }
+
+      sourceKeys.forEach(removeRenameSource);
+    }
+
+    type ItemPendingSnapshot = {
+      value: string | undefined;
+      accessControl?: AccessControl;
+    };
+    type ItemStateRecord = {
+      key: string;
+      plainValue: string | undefined;
+      biometricValue: string | undefined;
+      pending?: ItemPendingSnapshot;
+    };
+    type ItemStateSnapshot = {
+      records: readonly ItemStateRecord[];
+      renamesMigrated: boolean;
+    };
+
+    let atomicMutationDepth = 0;
+
+    function getItemStateKeys(): string[] {
+      return Array.from(new Set([storageKey, ...getRenameSourceKeys()]));
+    }
+
+    function captureItemState(): ItemStateSnapshot {
+      const records = getItemStateKeys().map((key) => {
+        let pending: ItemPendingSnapshot | undefined;
+        if (nonMemoryScope === StorageScope.Disk) {
+          if (durability.hasPendingDiskWrite(key)) {
+            pending = {
+              value: durability.readPendingDiskWrite(key),
+            };
+          }
+        } else if (
+          nonMemoryScope === StorageScope.Secure &&
+          !isBiometric &&
+          durability.hasPendingSecureWrite(key)
+        ) {
+          const accessControl = durability.readPendingSecureAccessControl(key);
+          pending = {
+            value: durability.readPendingSecureWrite(key),
+            ...(accessControl === undefined ? {} : { accessControl }),
+          };
+        }
+
+        return {
+          key,
+          plainValue:
+            nonMemoryScope === null
+              ? undefined
+              : adapter.backend.get(key, config.scope),
+          biometricValue:
+            nonMemoryScope === StorageScope.Secure
+              ? adapter.backend.getSecureBiometric(key)
+              : undefined,
+          ...(pending === undefined ? {} : { pending }),
+        };
+      });
+      return { records, renamesMigrated };
+    }
+
+    function clearPendingItemWrite(key: string): void {
+      if (nonMemoryScope === StorageScope.Disk) {
+        durability.clearPendingDiskWrite(key);
+      } else if (nonMemoryScope === StorageScope.Secure && !isBiometric) {
+        durability.clearPendingSecureWrite(key);
+      }
+    }
+
+    function restoreItemState(snapshot: ItemStateSnapshot): {
+      label: string;
+      error: unknown;
+    }[] {
+      const rollbackErrors: { label: string; error: unknown }[] = [];
+      const recordsByKey = new Map(
+        snapshot.records.map((record) => [record.key, record]),
+      );
+      snapshot.records.forEach(({ key }) => {
+        clearPendingItemWrite(key);
+        if (nonMemoryScope !== null) {
+          invalidateRawCache(nonMemoryScope, key);
+        }
+      });
+
+      const biometricRecords = snapshot.records.filter(
+        ({ biometricValue }) => biometricValue !== undefined,
+      );
+      if (nonMemoryScope === StorageScope.Secure) {
+        biometricRecords.forEach(({ key, biometricValue }) => {
+          try {
+            adapter.backend.setSecureBiometricWithLevel(
+              key,
+              biometricValue as string,
+              resolvedBiometricLevel === BiometricLevel.None
+                ? BiometricLevel.BiometryOnly
+                : resolvedBiometricLevel,
+            );
+            cacheRawValue(
+              StorageScope.Secure,
+              key,
+              biometricValue,
+              "biometric",
+            );
+          } catch (error) {
+            rollbackErrors.push({ label: "rollback biometric", error });
+          }
+        });
+      }
+
+      const plainSets = new Map<
+        AccessControl,
+        { keys: string[]; values: string[] }
+      >();
+      const plainRemoves: string[] = [];
+      snapshot.records.forEach(({ key, plainValue, biometricValue }) => {
+        if (plainValue === undefined) {
+          if (biometricValue === undefined) {
+            plainRemoves.push(key);
+          }
+          return;
+        }
+        const accessControl = secureAccessControl ?? secureDefaultAccessControl;
+        const group = plainSets.get(accessControl) ?? { keys: [], values: [] };
+        group.keys.push(key);
+        group.values.push(plainValue);
+        plainSets.set(accessControl, group);
+      });
+
+      plainSets.forEach((group, accessControl) => {
+        try {
+          if (nonMemoryScope === StorageScope.Secure) {
+            adapter.backend.setSecureAccessControl(accessControl);
+          }
+          adapter.backend.setBatch(group.keys, group.values, config.scope);
+          group.keys.forEach((key, index) => {
+            cacheRawValue(
+              resolveNonMemoryScope(),
+              key,
+              group.values[index],
+              "plain",
+            );
+          });
+        } catch (error) {
+          rollbackErrors.push({ label: "rollback plain set", error });
+        }
+      });
+
+      if (plainRemoves.length > 0) {
+        try {
+          adapter.backend.removeBatch(plainRemoves, config.scope);
+          plainRemoves.forEach((key) => {
+            cacheRawValue(resolveNonMemoryScope(), key, undefined, "plain");
+          });
+        } catch (error) {
+          rollbackErrors.push({ label: "rollback plain remove", error });
+        }
+      }
+
+      if (nonMemoryScope === StorageScope.Secure) {
+        snapshot.records.forEach(({ key, biometricValue }) => {
+          if (biometricValue !== undefined) {
+            return;
+          }
+          try {
+            adapter.backend.deleteSecureBiometric(key);
+            cacheRawValue(StorageScope.Secure, key, undefined, "biometric");
+          } catch (error) {
+            rollbackErrors.push({ label: "rollback biometric remove", error });
+          }
+        });
+      }
+
+      snapshot.records.forEach(({ key, pending }) => {
+        if (pending === undefined || nonMemoryScope === null) {
+          return;
+        }
+        if (nonMemoryScope === StorageScope.Disk) {
+          scheduleDiskWrite(key, pending.value);
+        } else if (!isBiometric) {
+          scheduleSecureWrite(
+            key,
+            pending.value,
+            pending.accessControl ??
+              secureAccessControl ??
+              secureDefaultAccessControl,
+          );
+        }
+      });
+
+      recordsByKey.forEach(({ key }) => {
+        if (nonMemoryScope !== null) {
+          invalidateRawCache(nonMemoryScope, key);
+        }
+      });
+      renamesMigrated = snapshot.renamesMigrated;
+      invalidateParsedCache();
+      return rollbackErrors;
+    }
+
+    function runAtomicItemMutation(mutation: () => void): void {
+      if (isMemory || renameFromKeys.length === 0 || atomicMutationDepth > 0) {
+        mutation();
+        return;
+      }
+
+      const snapshot = captureItemState();
+      atomicMutationDepth += 1;
+      try {
+        mutation();
+      } catch (primaryError) {
+        const rollbackErrors = restoreItemState(snapshot);
+        if (rollbackErrors.length > 0) {
+          throw createStorageCompositeError(
+            "item mutation rollback",
+            primaryError,
+            rollbackErrors,
+          );
+        }
+        throw primaryError;
+      } finally {
+        atomicMutationDepth -= 1;
+      }
+    }
+
+    const writeStoredRaw = (
+      rawValue: string,
+      options: StoredRawWriteOptions = {},
+    ): PendingDiskWrite | PendingSecureWrite | undefined => {
+      const cleanupRenameSources = options.cleanupRenameSources !== false;
       const oldValue = undefined;
       if (isBiometric) {
-        adapter.backend.setSecureBiometricWithLevel(
-          storageKey,
-          rawValue,
-          resolvedBiometricLevel,
-        );
+        invalidateRawCache(StorageScope.Secure, storageKey);
+        runSecurePromotion(storageKey, () => {
+          try {
+            adapter.backend.setSecureBiometricWithLevel(
+              storageKey,
+              rawValue,
+              resolvedBiometricLevel,
+            );
+          } catch (error) {
+            throw normalizeStorageError(error);
+          }
+        });
+        if (cleanupRenameSources) {
+          scheduleRenameSourceCleanup();
+        }
         emitKeyChange(
           config.scope,
           storageKey,
@@ -1600,14 +2199,20 @@ export function createStorageCore(
           "set",
           adapter.changeSource,
         );
-        return;
+        return undefined;
       }
 
+      if (nonMemoryScope === StorageScope.Secure) {
+        invalidateRawCache(StorageScope.Secure, storageKey);
+      }
       cacheRawValue(resolveNonMemoryScope(), storageKey, rawValue);
 
       if (nonMemoryScope === StorageScope.Disk) {
         if (coalesceDiskWrites || isDiskWritesAsync()) {
-          scheduleDiskWrite(storageKey, rawValue);
+          const pendingWrite = scheduleDiskWrite(storageKey, rawValue);
+          if (cleanupRenameSources) {
+            scheduleRenameSourceCleanup();
+          }
           emitKeyChange(
             config.scope,
             storageKey,
@@ -1616,18 +2221,21 @@ export function createStorageCore(
             "set",
             adapter.changeSource,
           );
-          return;
+          return pendingWrite;
         }
 
         clearPendingDiskWrite(storageKey);
       }
 
       if (coalesceSecureWrites) {
-        scheduleSecureWrite(
+        const pendingWrite = scheduleSecureWrite(
           storageKey,
           rawValue,
           secureAccessControl ?? secureDefaultAccessControl,
         );
+        if (cleanupRenameSources) {
+          scheduleRenameSourceCleanup();
+        }
         emitKeyChange(
           config.scope,
           storageKey,
@@ -1636,7 +2244,7 @@ export function createStorageCore(
           "set",
           adapter.changeSource,
         );
-        return;
+        return pendingWrite;
       }
 
       if (nonMemoryScope === StorageScope.Secure) {
@@ -1649,6 +2257,9 @@ export function createStorageCore(
       }
 
       adapter.backend.set(storageKey, rawValue, config.scope);
+      if (cleanupRenameSources) {
+        scheduleRenameSourceCleanup();
+      }
       emitKeyChange(
         config.scope,
         storageKey,
@@ -1657,6 +2268,7 @@ export function createStorageCore(
         "set",
         adapter.changeSource,
       );
+      return undefined;
     };
 
     const migrateRenamesIfNeeded = (): void => {
@@ -1665,42 +2277,101 @@ export function createStorageCore(
       }
 
       try {
+        flushPendingRenameSourceWrites();
         const hasCurrent = isBiometric
           ? adapter.backend.hasSecureBiometric(storageKey)
           : adapter.backend.has(storageKey, config.scope);
+        const snapshots = readRenameSnapshots();
 
         if (hasCurrent) {
-          for (const legacyKey of renameFromKeys) {
-            if (isBiometric) {
-              if (adapter.backend.hasSecureBiometric(legacyKey)) {
-                adapter.backend.deleteSecureBiometric(legacyKey);
+          try {
+            snapshots.forEach(({ key }) => {
+              removeRenameSource(key);
+            });
+          } catch (primaryError) {
+            const rollbackErrors: { label: string; error: unknown }[] = [];
+            snapshots.forEach((snapshot) => {
+              try {
+                restoreRenameSource(snapshot);
+              } catch (error) {
+                rollbackErrors.push({
+                  label: "rollback rename source",
+                  error,
+                });
               }
-            } else if (adapter.backend.has(legacyKey, config.scope)) {
-              adapter.backend.remove(legacyKey, config.scope);
+            });
+            if (rollbackErrors.length > 0) {
+              throw createStorageCompositeError(
+                "rename cleanup",
+                primaryError,
+                rollbackErrors,
+              );
             }
+            throw primaryError;
           }
           renamesMigrated = true;
           return;
         }
 
-        for (const legacyKey of renameFromKeys) {
-          const legacyRaw = isBiometric
-            ? adapter.backend.getSecureBiometric(legacyKey)
-            : adapter.backend.get(legacyKey, config.scope);
-          if (legacyRaw === undefined) {
-            continue;
-          }
-
-          writeStoredRaw(legacyRaw);
-          if (isBiometric) {
-            adapter.backend.deleteSecureBiometric(legacyKey);
-          } else {
-            adapter.backend.remove(legacyKey, config.scope);
-          }
-          break;
+        const snapshot = snapshots.find(
+          (candidate) => selectedRenameValue(candidate) !== undefined,
+        );
+        if (snapshot === undefined) {
+          renamesMigrated = true;
+          return;
         }
 
-        renamesMigrated = true;
+        let writeAttempted = false;
+        let pendingCurrentWrite:
+          PendingDiskWrite | PendingSecureWrite | undefined;
+        try {
+          writeAttempted = true;
+          pendingCurrentWrite = writeStoredRaw(
+            selectedRenameValue(snapshot) as string,
+            {
+              cleanupRenameSources: false,
+            },
+          );
+          if (hasPendingCurrentWrite()) {
+            flushPendingCurrentWrite();
+          }
+          snapshots.forEach(({ key }) => {
+            removeRenameSource(key);
+          });
+          renamesMigrated = true;
+        } catch (primaryError) {
+          const rollbackErrors: { label: string; error: unknown }[] = [];
+          clearPendingCurrentWriteIf(pendingCurrentWrite);
+          if (writeAttempted) {
+            try {
+              removeCurrentBackendValue();
+            } catch (error) {
+              rollbackErrors.push({ label: "rollback current value", error });
+            }
+          }
+          snapshots.forEach((renameSnapshot) => {
+            try {
+              restoreRenameSource(renameSnapshot);
+            } catch (error) {
+              rollbackErrors.push({
+                label: "rollback rename source",
+                error,
+              });
+            }
+          });
+          invalidateRawCache(resolveNonMemoryScope(), storageKey);
+          snapshots.forEach(({ key }) => {
+            invalidateRenameSourceCache(key);
+          });
+          if (rollbackErrors.length > 0) {
+            throw createStorageCompositeError(
+              "rename migration",
+              primaryError,
+              rollbackErrors,
+            );
+          }
+          throw primaryError;
+        }
       } catch (error) {
         if (isKeychainLockedError(error)) {
           onReadError?.(error);
@@ -1713,8 +2384,16 @@ export function createStorageCore(
     const removeStoredRaw = (
       operation: StorageChangeOperation = "remove",
     ): void => {
-      const oldValue = getEventRawValue(config.scope, storageKey);
+      const oldValue = isBiometric
+        ? getEventRawValueForRepresentation(
+            config.scope,
+            storageKey,
+            "biometric",
+          )
+        : getEventRawValue(config.scope, storageKey);
       if (isBiometric) {
+        invalidateRawCache(StorageScope.Secure, storageKey);
+        scheduleRenameSourceCleanup();
         adapter.backend.deleteSecureBiometric(storageKey);
         emitKeyChange(
           config.scope,
@@ -1727,11 +2406,15 @@ export function createStorageCore(
         return;
       }
 
+      if (nonMemoryScope === StorageScope.Secure) {
+        invalidateRawCache(StorageScope.Secure, storageKey);
+      }
       cacheRawValue(resolveNonMemoryScope(), storageKey, undefined);
 
       if (nonMemoryScope === StorageScope.Disk) {
         if (coalesceDiskWrites || isDiskWritesAsync()) {
           scheduleDiskWrite(storageKey, undefined);
+          scheduleRenameSourceCleanup();
           emitKeyChange(
             config.scope,
             storageKey,
@@ -1752,6 +2435,7 @@ export function createStorageCore(
           undefined,
           secureAccessControl ?? secureDefaultAccessControl,
         );
+        scheduleRenameSourceCleanup();
         emitKeyChange(
           config.scope,
           storageKey,
@@ -1767,6 +2451,7 @@ export function createStorageCore(
         clearPendingSecureWrite(storageKey);
       }
 
+      scheduleRenameSourceCleanup();
       adapter.backend.remove(storageKey, config.scope);
       emitKeyChange(
         config.scope,
@@ -1783,6 +2468,8 @@ export function createStorageCore(
         const oldValue = getEventRawValue(config.scope, storageKey);
         if (memoryExpiration) {
           memoryExpiration.set(storageKey, Date.now() + (expirationTtlMs ?? 0));
+        } else {
+          memoryExpirationDeadlines.delete(storageKey);
         }
         const storedValue =
           typeof value === "string" ? escapeCollidingRawValue(value) : value;
@@ -1852,7 +2539,9 @@ export function createStorageCore(
             return lastValue as T;
           }
 
-          removeStoredRaw("expire");
+          runAtomicItemMutation(() => {
+            removeStoredRaw("expire");
+          });
           invalidateParsedCache();
           onExpired?.(storageKey);
           lastValue = ensureValidatedValue(defaultValue, false);
@@ -1896,7 +2585,9 @@ export function createStorageCore(
           if (isStoredEnvelope(parsed)) {
             envelopeExpiresAt = parsed.expiresAt;
             if (parsed.expiresAt <= Date.now()) {
-              removeStoredRaw("expire");
+              runAtomicItemMutation(() => {
+                removeStoredRaw("expire");
+              });
               invalidateParsedCache();
               onExpired?.(storageKey);
               lastValue = ensureValidatedValue(defaultValue, false);
@@ -1943,18 +2634,20 @@ export function createStorageCore(
 
     const set = (valueOrFn: T | ((prev: T) => T)): void => {
       measureOperation("item:set", config.scope, () => {
-        const newValue = isUpdater(valueOrFn)
-          ? valueOrFn(getInternal())
-          : valueOrFn;
+        runAtomicItemMutation(() => {
+          const newValue = isUpdater(valueOrFn)
+            ? valueOrFn(getInternal())
+            : valueOrFn;
 
-        if (validate && !validate(newValue)) {
-          throw new Error(
-            `Validation failed for key "${storageKey}" in scope "${StorageScope[config.scope]}".`,
-          );
-        }
+          if (validate && !validate(newValue)) {
+            throw new Error(
+              `Validation failed for key "${storageKey}" in scope "${StorageScope[config.scope]}".`,
+            );
+          }
 
-        invalidateParsedCache();
-        writeValueWithoutValidation(newValue);
+          invalidateParsedCache();
+          writeValueWithoutValidation(newValue);
+        });
       });
     };
 
@@ -1963,37 +2656,44 @@ export function createStorageCore(
       valueOrFn: T | ((prev: T) => T),
     ): boolean =>
       measureOperation("item:setIfVersion", config.scope, () => {
-        const currentVersion = getCurrentVersion();
-        if (currentVersion !== version) {
-          return false;
-        }
-        set(valueOrFn);
-        return true;
+        let didSet = false;
+        runAtomicItemMutation(() => {
+          const currentVersion = getCurrentVersion();
+          if (currentVersion !== version) {
+            return;
+          }
+          set(valueOrFn);
+          didSet = true;
+        });
+        return didSet;
       });
 
     const deleteItem = (): void => {
       measureOperation("item:delete", config.scope, () => {
-        invalidateParsedCache();
+        runAtomicItemMutation(() => {
+          invalidateParsedCache();
 
-        if (isMemory) {
-          const oldValue = getEventRawValue(config.scope, storageKey);
-          if (memoryExpiration) {
-            memoryExpiration.delete(storageKey);
+          if (isMemory) {
+            const oldValue = getEventRawValue(config.scope, storageKey);
+            if (memoryExpiration) {
+              memoryExpiration.delete(storageKey);
+            }
+            memoryExpirationDeadlines.delete(storageKey);
+            memoryStore.delete(storageKey);
+            notifyKeyListeners(memoryListeners, storageKey);
+            emitKeyChange(
+              config.scope,
+              storageKey,
+              oldValue,
+              undefined,
+              "remove",
+              "memory",
+            );
+            return;
           }
-          memoryStore.delete(storageKey);
-          notifyKeyListeners(memoryListeners, storageKey);
-          emitKeyChange(
-            config.scope,
-            storageKey,
-            oldValue,
-            undefined,
-            "remove",
-            "memory",
-          );
-          return;
-        }
 
-        removeStoredRaw();
+          removeStoredRaw();
+        });
       });
     };
 
@@ -2098,14 +2798,18 @@ export function createStorageCore(
         invalidateParsedCache();
       },
       _deleteMemoryEntry: () => {
-        if (memoryExpiration) {
-          memoryExpiration.delete(storageKey);
-        }
+        memoryExpirationDeadlines.delete(storageKey);
         memoryStore.delete(storageKey);
         invalidateParsedCache();
       },
       _hasValidation: validate !== undefined,
       _hasExpiration: expiration !== undefined,
+      _hasRenameFrom: renameFromKeys.length > 0,
+      _renameFromKeys: renameFromKeys,
+      _getRenameMigrationState: () => renamesMigrated,
+      _setRenameMigrationState: (migrated) => {
+        renamesMigrated = migrated;
+      },
       _readCacheEnabled: readCache,
       _isBiometric: isBiometric,
       _biometricLevel: resolvedBiometricLevel,
@@ -2125,6 +2829,15 @@ export function createStorageCore(
         itemGroups.set(config.group, groupSet);
       }
       groupSet.add(storageItem as StorageItemInternal<unknown>);
+    }
+
+    if (isMemory) {
+      let items = memoryItemsByKey.get(storageKey);
+      if (!items) {
+        items = new Set();
+        memoryItemsByKey.set(storageKey, items);
+      }
+      items.add(storageItem as StorageItemInternal<unknown>);
     }
 
     const registryKey = `${config.scope}:${storageKey}`;
@@ -2165,25 +2878,22 @@ export function createStorageCore(
 
         items.forEach((item, index) => {
           if (scope === StorageScope.Disk) {
-            const pending = durability.readPendingDiskWrite(item.key);
-            if (pending !== undefined) {
-              rawValues[index] = pending;
+            if (durability.hasPendingDiskWrite(item.key)) {
+              rawValues[index] = durability.readPendingDiskWrite(item.key);
               return;
             }
           }
 
           if (scope === StorageScope.Secure) {
-            const pending = durability.readPendingSecureWrite(item.key);
-            if (pending !== undefined) {
-              rawValues[index] = pending;
+            if (durability.hasPendingSecureWrite(item.key)) {
+              rawValues[index] = durability.readPendingSecureWrite(item.key);
               return;
             }
           }
 
           if (item._readCacheEnabled === true) {
-            const cache = getScopeRawCache(scope);
-            const cached = cache.get(item.key);
-            if (cached !== undefined || cache.has(item.key)) {
+            const cached = readCachedRawValue(scope, item.key);
+            if (hasCachedRawValue(scope, item.key)) {
               rawValues[index] = cached;
               return;
             }
@@ -2293,6 +3003,10 @@ export function createStorageCore(
 
           flushSecureWrites();
           const keys = secureEntries.map(({ item }) => item.key);
+          keys.forEach((key) => {
+            invalidateRawCache(scope, key);
+          });
+          const serializedValues: string[] = [];
           const oldValues = shouldReadPreviousEventValues(scope)
             ? adapter.backend
                 .getBatch(keys, scope)
@@ -2308,12 +3022,14 @@ export function createStorageCore(
           >();
 
           secureEntries.forEach(({ item, value, internal }) => {
+            const serialized = item.serialize(value);
+            serializedValues.push(serialized);
             const accessControl =
               internal._secureAccessControl ?? secureDefaultAccessControl;
             const existingGroup = groupedByAccessControl.get(accessControl);
             const group = existingGroup ?? { keys: [], values: [] };
             group.keys.push(item.key);
-            group.values.push(item.serialize(value));
+            group.values.push(serialized);
             if (!existingGroup) {
               groupedByAccessControl.set(accessControl, group);
             }
@@ -2326,20 +3042,24 @@ export function createStorageCore(
               cacheRawValue(scope, key, group.values[index]);
             });
           });
+          const willEmitChanges =
+            storageEvents.hasListeners(scope) || eventObserver !== undefined;
           emitBatchChange(
             scope,
             "setBatch",
             adapter.changeSource,
-            secureEntries.map(({ item, value }, index) =>
-              createKeyChange(
-                scope,
-                item.key,
-                oldValues[index],
-                item.serialize(value),
-                "setBatch",
-                adapter.changeSource,
-              ),
-            ),
+            willEmitChanges
+              ? keys.map((key, index) =>
+                  createKeyChange(
+                    scope,
+                    key,
+                    oldValues[index],
+                    serializedValues[index],
+                    "setBatch",
+                    adapter.changeSource,
+                  ),
+                )
+              : [],
           );
           return;
         }
@@ -2423,6 +3143,17 @@ export function createStorageCore(
           return;
         }
 
+        if (
+          items.some(
+            (item) => asInternal(item as StorageItem<unknown>)._hasRenameFrom,
+          )
+        ) {
+          items.forEach((item) => {
+            asInternal(item as StorageItem<unknown>).delete();
+          });
+          return;
+        }
+
         const keys = items.map((item) => item.key);
         if (scope === StorageScope.Disk) {
           flushDiskWrites();
@@ -2431,14 +3162,46 @@ export function createStorageCore(
           flushSecureWrites();
         }
         const oldValues = shouldReadPreviousEventValues(scope)
-          ? adapter.backend
-              .getBatch(keys, scope)
-              .map((value) =>
-                value === undefined
-                  ? undefined
-                  : unescapeCollidingRawValue(value),
-              )
+          ? (() => {
+              const plainItems = items.filter(
+                (item) =>
+                  asInternal(item as StorageItem<unknown>)._isBiometric !==
+                  true,
+              );
+              const plainValues =
+                plainItems.length === 0
+                  ? []
+                  : adapter.backend
+                      .getBatch(
+                        plainItems.map((item) => item.key),
+                        scope,
+                      )
+                      .map((value) =>
+                        value === undefined
+                          ? undefined
+                          : unescapeCollidingRawValue(value),
+                      );
+              let plainIndex = 0;
+              return items.map((item) => {
+                const internal = asInternal(item as StorageItem<unknown>);
+                if (internal._isBiometric === true) {
+                  return getEventRawValueForRepresentation(
+                    scope,
+                    item.key,
+                    "biometric",
+                  );
+                }
+                const value = plainValues[plainIndex];
+                plainIndex += 1;
+                return value;
+              });
+            })()
           : [];
+        if (scope === StorageScope.Secure) {
+          keys.forEach((key) => {
+            invalidateRawCache(scope, key);
+          });
+        }
         adapter.backend.removeBatch(keys, scope);
         keys.forEach((key) => {
           cacheRawValue(scope, key, undefined);
@@ -2515,44 +3278,116 @@ export function createStorageCore(
       }
 
       const NOT_SET = Symbol();
-      const rollback = new Map<string, RollbackRecord>();
+      type TransactionRollbackEntry = {
+        key: string;
+        representation: StorageRawCacheRepresentation;
+        record: RollbackRecord;
+      };
+      const rollback = new Map<string, TransactionRollbackEntry>();
+      const itemRenameStates = new Map<StorageItemInternal<unknown>, boolean>();
 
       const rememberRollback = (
         key: string,
         item?: Pick<StorageItem<unknown>, "key" | "scope">,
+        includeOtherSecureRepresentation = false,
       ) => {
-        if (rollback.has(key)) {
-          return;
-        }
-        if (scope === StorageScope.Memory) {
-          rollback.set(key, {
-            kind: "memory",
-            value: memoryStore.has(key) ? memoryStore.get(key) : NOT_SET,
-          });
-        } else {
-          const internal = item
-            ? (item as StorageItemInternal<unknown>)
-            : undefined;
-          if (
-            scope === StorageScope.Secure &&
-            internal?._isBiometric === true
-          ) {
-            rollback.set(key, {
-              kind: "biometric",
-              value: adapter.backend.getSecureBiometric(key),
-              level: internal._biometricLevel,
+        const internal = item
+          ? (item as StorageItemInternal<unknown>)
+          : undefined;
+        const representation: StorageRawCacheRepresentation =
+          scope === StorageScope.Secure && internal?._isBiometric === true
+            ? "biometric"
+            : "plain";
+        const rememberRepresentation = (
+          representationToRemember: StorageRawCacheRepresentation,
+        ) => {
+          const identity = JSON.stringify([
+            scope,
+            key,
+            representationToRemember,
+          ]);
+          if (rollback.has(identity)) {
+            return;
+          }
+          if (scope === StorageScope.Memory) {
+            const expiresAt = memoryExpirationDeadlines.get(key);
+            rollback.set(identity, {
+              key,
+              representation: representationToRemember,
+              record: {
+                kind: "memory",
+                value: memoryStore.has(key) ? memoryStore.get(key) : NOT_SET,
+                ...(expiresAt === undefined ? {} : { expiresAt }),
+              },
             });
             return;
           }
-          rollback.set(key, {
-            kind: "raw",
-            value: getStoredRawValue(key, scope),
-            ...(scope === StorageScope.Secure &&
-            internal?._secureAccessControl !== undefined
-              ? { accessControl: internal._secureAccessControl }
-              : {}),
+          if (representationToRemember === "biometric") {
+            rollback.set(identity, {
+              key,
+              representation: representationToRemember,
+              record: {
+                kind: "biometric",
+                value: getStoredRawValueForRepresentation(
+                  key,
+                  scope,
+                  representationToRemember,
+                ),
+                level:
+                  internal?._biometricLevel !== undefined &&
+                  internal._biometricLevel !== BiometricLevel.None
+                    ? internal._biometricLevel
+                    : BiometricLevel.BiometryOnly,
+              },
+            });
+            return;
+          }
+          rollback.set(identity, {
+            key,
+            representation: representationToRemember,
+            record: {
+              kind: "raw",
+              value: getStoredRawValueForRepresentation(
+                key,
+                scope,
+                representationToRemember,
+              ),
+              ...(scope === StorageScope.Secure &&
+              internal?._secureAccessControl !== undefined
+                ? { accessControl: internal._secureAccessControl }
+                : {}),
+            },
           });
+        };
+
+        if (
+          representation === "biometric" ||
+          includeOtherSecureRepresentation
+        ) {
+          rememberRepresentation("plain");
         }
+        rememberRepresentation(representation);
+        if (includeOtherSecureRepresentation) {
+          rememberRepresentation("biometric");
+        }
+      };
+
+      const rememberItemRollback = (
+        item: Pick<StorageItem<unknown>, "key" | "scope">,
+      ): void => {
+        const internal = item as StorageItemInternal<unknown>;
+        const includeOtherSecureRepresentation =
+          scope === StorageScope.Secure &&
+          (internal._isBiometric === true || internal._hasRenameFrom === true);
+        rememberRollback(item.key, item, includeOtherSecureRepresentation);
+        if (internal._getRenameMigrationState) {
+          if (!itemRenameStates.has(internal)) {
+            itemRenameStates.set(internal, internal._getRenameMigrationState());
+          }
+        }
+        (internal._renameFromKeys ?? EMPTY_KEYS).forEach((aliasKey) => {
+          rememberRollback(aliasKey, item, true);
+        });
       };
 
       const tx: TransactionContext = {
@@ -2563,21 +3398,22 @@ export function createStorageCore(
           setRawValue(key, value, scope);
         },
         removeRaw: (key) => {
-          rememberRollback(key);
+          rememberRollback(key, undefined, scope === StorageScope.Secure);
           removeRawValue(key, scope);
         },
         getItem: (item) => {
           assertBatchScope([item], scope);
+          rememberItemRollback(item);
           return item.get();
         },
         setItem: (item, value) => {
           assertBatchScope([item], scope);
-          rememberRollback(item.key, item);
+          rememberItemRollback(item);
           item.set(value);
         },
         removeItem: (item) => {
           assertBatchScope([item], scope);
-          rememberRollback(item.key, item);
+          rememberItemRollback(item);
           item.delete();
         },
       };
@@ -2585,21 +3421,56 @@ export function createStorageCore(
       try {
         return transaction(tx);
       } catch (error) {
-        const rollbackEntries = Array.from(rollback.entries()).reverse();
+        itemRenameStates.forEach((migrated, item) => {
+          item._setRenameMigrationState(migrated);
+        });
+        const rollbackEntries = Array.from(rollback.values()).reverse();
         const rollbackSource =
           scope === StorageScope.Memory ? "memory" : adapter.changeSource;
-        const preRollbackValues =
-          rollbackEntries.length > 0
-            ? rollbackEntries.map(([key]) => getEventRawValue(scope, key))
-            : [];
+        const rollbackErrors: { label: string; error: unknown }[] = [];
+        const readRollbackEventValue = (
+          entry: TransactionRollbackEntry,
+        ): string | undefined => {
+          try {
+            return getEventRawValueForRepresentation(
+              scope,
+              entry.key,
+              entry.representation,
+            );
+          } catch (readError) {
+            rollbackErrors.push({
+              label: `rollback read ${entry.representation}:${entry.key}`,
+              error: readError,
+            });
+            return undefined;
+          }
+        };
+        const preRollbackValues = rollbackEntries.map(readRollbackEventValue);
         if (scope === StorageScope.Memory) {
-          rollbackEntries.forEach(([key, record]) => {
-            if (record.value === NOT_SET) {
-              memoryStore.delete(key);
-            } else {
-              memoryStore.set(key, record.value);
+          rollbackEntries.forEach((entry) => {
+            try {
+              const record = entry.record;
+              if (record.kind !== "memory") {
+                return;
+              }
+              if (record.value === NOT_SET) {
+                memoryStore.delete(entry.key);
+              } else {
+                memoryStore.set(entry.key, record.value);
+              }
+              if (record.expiresAt === undefined) {
+                memoryExpirationDeadlines.delete(entry.key);
+              } else {
+                memoryExpirationDeadlines.set(entry.key, record.expiresAt);
+              }
+              invalidateMemoryItemCaches(entry.key);
+              notifyKeyListeners(memoryListeners, entry.key);
+            } catch (rollbackError) {
+              rollbackErrors.push({
+                label: `rollback ${entry.representation}:${entry.key}`,
+                error: rollbackError,
+              });
             }
-            notifyKeyListeners(memoryListeners, key);
           });
         } else {
           const groupedKeysToSet = new Map<
@@ -2607,18 +3478,14 @@ export function createStorageCore(
             { keys: string[]; values: string[] }
           >();
           const keysToRemove: string[] = [];
+          const biometricEntries: TransactionRollbackEntry[] = [];
+          const biometricValues = new Map<string, string | undefined>();
 
-          rollbackEntries.forEach(([key, record]) => {
+          rollbackEntries.forEach((entry) => {
+            const { key, record } = entry;
             if (record.kind === "biometric") {
-              if (record.value === undefined) {
-                adapter.backend.deleteSecureBiometric(key);
-              } else {
-                adapter.backend.setSecureBiometricWithLevel(
-                  key,
-                  record.value,
-                  record.level,
-                );
-              }
+              biometricEntries.push(entry);
+              biometricValues.set(key, record.value);
               return;
             }
             if (record.kind !== "raw") {
@@ -2640,26 +3507,115 @@ export function createStorageCore(
           });
 
           if (scope === StorageScope.Disk) {
-            flushDiskWrites();
+            try {
+              flushDiskWrites();
+            } catch (flushError) {
+              rollbackErrors.push({
+                label: "rollback flush disk",
+                error: flushError,
+              });
+            }
           }
           if (scope === StorageScope.Secure) {
-            flushSecureWrites();
-          }
-          groupedKeysToSet.forEach((group, accessControl) => {
-            if (scope === StorageScope.Secure) {
-              adapter.backend.setSecureAccessControl(accessControl);
+            try {
+              flushSecureWrites();
+            } catch (flushError) {
+              rollbackErrors.push({
+                label: "rollback flush secure",
+                error: flushError,
+              });
             }
-            adapter.backend.setBatch(group.keys, group.values, scope);
-            group.keys.forEach((key, index) => {
-              cacheRawValue(scope, key, group.values[index]);
+          }
+          if (scope === StorageScope.Secure) {
+            rollbackEntries.forEach((entry) => {
+              invalidateRawCache(scope, entry.key);
             });
+          }
+          biometricEntries.forEach((entry) => {
+            const { key, record } = entry;
+            if (record.kind !== "biometric" || record.value === undefined) {
+              return;
+            }
+            try {
+              adapter.backend.setSecureBiometricWithLevel(
+                key,
+                record.value,
+                record.level,
+              );
+              cacheRawValue(
+                StorageScope.Secure,
+                key,
+                record.value,
+                "biometric",
+              );
+            } catch (rollbackError) {
+              rollbackErrors.push({
+                label: "rollback biometric",
+                error: rollbackError,
+              });
+            }
+          });
+          groupedKeysToSet.forEach((group, accessControl) => {
+            try {
+              if (scope === StorageScope.Secure) {
+                adapter.backend.setSecureAccessControl(accessControl);
+              }
+              adapter.backend.setBatch(group.keys, group.values, scope);
+              group.keys.forEach((key, index) => {
+                cacheRawValue(scope, key, group.values[index], "plain");
+              });
+            } catch (rollbackError) {
+              rollbackErrors.push({
+                label: "rollback plain setBatch",
+                error: rollbackError,
+              });
+            }
           });
           if (keysToRemove.length > 0) {
-            adapter.backend.removeBatch(keysToRemove, scope);
-            keysToRemove.forEach((key) => {
-              cacheRawValue(scope, key, undefined);
-            });
+            const keysToRemoveWithoutBiometric = keysToRemove.filter(
+              (key) => biometricValues.get(key) === undefined,
+            );
+            try {
+              if (keysToRemoveWithoutBiometric.length > 0) {
+                adapter.backend.removeBatch(
+                  keysToRemoveWithoutBiometric,
+                  scope,
+                );
+              }
+              keysToRemove.forEach((key) => {
+                cacheRawValue(scope, key, undefined, "plain");
+              });
+            } catch (rollbackError) {
+              rollbackErrors.push({
+                label: "rollback plain removeBatch",
+                error: rollbackError,
+              });
+            }
           }
+          biometricEntries.forEach((entry) => {
+            const { key, record } = entry;
+            if (record.kind !== "biometric") {
+              return;
+            }
+            if (record.value !== undefined) {
+              return;
+            }
+            invalidateRawCache(StorageScope.Secure, key);
+            try {
+              adapter.backend.deleteSecureBiometric(key);
+              cacheRawValue(
+                StorageScope.Secure,
+                key,
+                record.value,
+                "biometric",
+              );
+            } catch (rollbackError) {
+              rollbackErrors.push({
+                label: "rollback biometric",
+                error: rollbackError,
+              });
+            }
+          });
         }
 
         if (rollbackEntries.length > 0) {
@@ -2667,16 +3623,23 @@ export function createStorageCore(
             scope,
             "rollback",
             rollbackSource,
-            rollbackEntries.map(([key], index) =>
+            rollbackEntries.map((entry, index) =>
               createKeyChange(
                 scope,
-                key,
+                entry.key,
                 preRollbackValues[index],
-                getEventRawValue(scope, key),
+                readRollbackEventValue(entry),
                 "rollback",
                 rollbackSource,
               ),
             ),
+          );
+        }
+        if (rollbackErrors.length > 0) {
+          throw createStorageCompositeError(
+            "transaction rollback",
+            error,
+            rollbackErrors,
           );
         }
         throw error;

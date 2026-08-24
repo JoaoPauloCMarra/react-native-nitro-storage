@@ -19,6 +19,7 @@ import {
   getWebSecureStorageBackend,
   getBatch,
   isKeychainLockedError,
+  isStorageError,
   migrateFromMMKV,
   migrateToLatest,
   registerMigration,
@@ -739,8 +740,16 @@ function buildTests(): SmokeTest[] {
       },
     },
     {
-      label: "isKeychainLockedError",
+      label: "Storage error classification",
       fn: () => {
+        const locked = new Error(
+          "[nitro-error:keychain_locked] NitroStorage: locked",
+        );
+        assert(isStorageError(locked, "keychain_locked"), "exact locked code");
+        assert(
+          !isStorageError(locked, "key_invalidated"),
+          "must not conflate recovery codes",
+        );
         assert(
           isKeychainLockedError(new Error("random")) === false,
           "should be false for random error",

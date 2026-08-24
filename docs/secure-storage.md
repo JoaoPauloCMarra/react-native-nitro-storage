@@ -148,35 +148,70 @@ Android secure storage uses encrypted SharedPreferences. Restored encrypted pref
 
 If you disable `configureAndroidBackup` or maintain custom Android backup XML, add equivalent exclusions for both cloud backup and device transfer.
 
-## Locked Keychain Errors
+## Secure Storage Error Recovery
 
 ```ts
-import { isKeychainLockedError } from "react-native-nitro-storage";
+import { isStorageError } from "react-native-nitro-storage";
 
 try {
   refreshTokenItem.get();
 } catch (error) {
-  if (isKeychainLockedError(error)) {
+  if (isStorageError(error, "keychain_locked")) {
     // Defer token refresh until the device is unlocked.
   }
 }
 ```
 
-The helper recognizes iOS locked Keychain cases and Android invalidated/locked key cases surfaced by the native bridge.
+Recovery depends on the exact stable code:
+
+| Code                      | Meaning                                   | Consumer action                                     |
+| ------------------------- | ----------------------------------------- | --------------------------------------------------- |
+| `keychain_locked`         | Protected data is temporarily unavailable | Retry after the device unlocks and the app resumes. |
+| `authentication_required` | The secure item requires user interaction | Start the application's authentication flow.        |
+| `key_invalidated`         | The platform key can no longer decrypt it | Remove and recreate the affected credential safely. |
+
+`isKeychainLockedError()` remains available for compatibility but is
+deprecated. It groups all three codes and must not be used to select retry
+behavior. The package does not block the synchronous JSI call, sleep, or retry
+internally; the application owns lifecycle scheduling and cancellation.
+
+Do not enable `fallbackToCacheOnReadError` for access or refresh tokens unless
+the application explicitly accepts stale or revoked credentials. A cached
+value can hide the distinction between temporary unavailability and credential
+recovery.
 
 ## Android Secure Write Mode
 
-Android secure writes default to synchronous persistence. Enable async writes when write throughput is more important than immediate durability:
+Android secure writes default to asynchronous `SharedPreferences.apply()`. If
+the caller requires each secure write to wait for a durable
+`SharedPreferences.commit()`, opt into synchronous mode:
 
 ```ts
 import { storage } from "react-native-nitro-storage";
 
-storage.setSecureWritesAsync(true);
+storage.setSecureWritesAsync(false);
 refreshTokenItem.set("opaque-refresh-token");
-storage.flushSecureWrites();
 ```
 
-Call `flushSecureWrites()` before assertions, namespace clears, or any boundary that requires deterministic persistence.
+Coalesced secure item writes remain in a last-write-wins queue until the next
+microtask or an explicit `flushSecureWrites()`. A failed flush throws and keeps
+failed and unattempted writes queued for a later retry. Call
+`flushSecureWrites()` before assertions, namespace clears, or any boundary that
+requires deterministic persistence. `storage.clearBiometric()` is also a
+durability barrier: it flushes pending Secure writes before clearing biometric
+entries, and surfaces native clear failures.
+
+## iOS Legacy Disk Migration
+
+Older releases tracked observed Disk keys in `standardUserDefaults`. On iOS,
+adapter initialization copies a valid registry into the Nitro suite domain and
+removes each legacy source only after a target readback and synchronization
+check. `NSUserDefaults` is not transactional, so the migration stops on any
+failed synchronization or readback without deleting the source or registry.
+Malformed registries, same-domain or fallback stores, conflicting target
+values, and failed persistence therefore remain available for recovery. The
+migration is retryable on a later initialization; do not delete the registry
+manually while an upgrade is in progress.
 
 ## Web Secure Backend
 
@@ -202,4 +237,5 @@ bun run test:cpp -- --filter=react-native-nitro-storage
 (cd packages/react-native-nitro-storage && bun run check:pack)
 ```
 
-Also run an end-to-end auth flow on a locked/unlocked real device when changing biometric or Keychain behavior.
+Also run the [physical-device Keychain lifecycle protocol](keychain-lifecycle-testing.md)
+when changing biometric, Keychain, or error-classification behavior.

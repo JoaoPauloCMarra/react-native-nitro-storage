@@ -29,6 +29,7 @@ const requiredFiles = [
   "docs/api-reference.md",
   "docs/batch-transactions-migrations.md",
   "docs/benchmarks.md",
+  "docs/keychain-lifecycle-testing.md",
   "docs/mmkv-migration.md",
   "docs/react-hooks.md",
   "docs/recipes.md",
@@ -93,14 +94,13 @@ function readPackFileList() {
 
 let packFileList;
 try {
-  runDocsSync("prepare");
   try {
+    runDocsSync("prepare");
     packFileList = readPackFileList();
   } finally {
     runDocsSync("cleanup");
   }
 } catch (error) {
-  runDocsSync("cleanup");
   fail(
     `Failed to evaluate bun pack output. ${
       error instanceof Error ? error.message : String(error)
