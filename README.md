@@ -4,7 +4,7 @@
 [![npm downloads](https://img.shields.io/npm/dm/react-native-nitro-storage?color=22c55e&label=downloads)](https://www.npmjs.com/package/react-native-nitro-storage)
 [![CI](https://github.com/JoaoPauloCMarra/react-native-nitro-storage/actions/workflows/ci.yml/badge.svg)](https://github.com/JoaoPauloCMarra/react-native-nitro-storage/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/react-native-nitro-storage?color=007ec6)](https://github.com/JoaoPauloCMarra/react-native-nitro-storage/blob/main/LICENSE)
-[![React Native](https://img.shields.io/badge/react--native-0.87.0-61dafb)](https://reactnative.dev/docs/0.87/getting-started-without-a-framework)
+[![React Native](https://img.shields.io/badge/react--native-0.86.2-61dafb)](https://reactnative.dev/docs/0.86/getting-started-without-a-framework)
 [![Expo](https://img.shields.io/badge/expo-SDK%2057%20%28RN%200.86.2%29-000020)](https://docs.expo.dev/versions/v57.0.0/)
 [![Nitro Modules](https://img.shields.io/badge/nitro--modules-%3E%3D0.37.0%20%3C0.38.0-black)](https://nitro.margelo.com/)
 [![TypeScript](https://img.shields.io/badge/typescript-6.0-3178c6)](https://www.typescriptlang.org/)
@@ -65,24 +65,26 @@ Peer dependencies:
 
 Nitro peer requirement: `react-native-nitro-modules >=0.37.0 <0.38.0`.
 
-The standalone package gate uses React Native `0.87.0` and the Strict
-TypeScript API. The Expo example uses Expo SDK `57.0.16`, React Native
+The package gate uses React Native `0.86.2` and the Strict TypeScript API.
+`check:ci` also compiles the public source against React Native `0.87.0`'s
+Strict TypeScript API; this does not change the runtime baseline. The Expo
+example uses Expo SDK `57.0.16`, React Native
 `0.86.2`, React `19.2.3`, and Nitro Modules `0.37.0`, which is the React Native
 version supported by that Expo SDK. Do not override Expo's React Native version.
 
-When upgrading from 0.8.x, upgrade Nitro Modules to the 0.37.x range before
-installing this package, then rebuild the native app so the generated Nitro
-bindings and native runtime use the same major-minor version:
+When upgrading from 0.8.x or 0.9.x, upgrade Nitro Modules to the 0.37.x range
+before installing this package, then rebuild the native app so the generated
+Nitro bindings and native runtime use the same major-minor version:
 
 ```sh
 bun add react-native-nitro-modules@0.37.0 react-native-nitro-storage@0.10.0
 bunx expo prebuild
 ```
 
-`SetStorageItem.get()` now returns a partial membership map because a member can
-be absent. Use `set.has(member)` for membership checks, or handle an indexed
-value as `true | undefined`; code that assigned the result to
-`Record<string, true>` must update its type.
+`SetStorageItem.get()` retains its original `Record<string, true>` compatibility
+shape. At runtime, absent members are still absent, so use `set.has(member)` for
+membership checks. New code that wants a precise member union can use
+`set.getTyped()`, which returns `Partial<Record<TMember, true>>`.
 
 Nitro Storage requires an Expo development build or a bare React Native app;
 Expo Go and native Windows, macOS, and tvOS targets are not supported.
@@ -256,9 +258,11 @@ loginMethod.setOrDelete(maybeMethod); // null/undefined deletes, value sets
 ## Set Items
 
 `createSetItem()` models set-membership state (seen ids, dismissed prompts)
-without hand-rolling membership helpers. Its `get()` result is a partial map,
-because absent members are not stored. Adding an existing member or deleting an
-absent one is a no-op, so subscribers do not re-render.
+without hand-rolling membership helpers. Its compatibility `get()` result is a
+`Record<string, true>`; absent members are still not stored at runtime. Use
+`getTyped()` when a precise `Partial<Record<TMember, true>>` result is useful.
+Adding an existing member or deleting an absent one is a no-op, so subscribers
+do not re-render.
 
 ```ts
 import { createSetItem, StorageScope } from "react-native-nitro-storage";
@@ -437,11 +441,12 @@ exporting secure values unless you are intentionally doing a short-lived
 in-memory migration. `storage.export(StorageScope.Secure)` throws unless you
 explicitly opt into `{ includeSecureValues: true }`.
 
-Android secure writes default to asynchronous `apply()`. Call
-`storage.setSecureWritesAsync(false)` when each write must wait for synchronous
-`commit()` durability, or call `storage.flushSecureWrites()` before a
-deterministic persistence boundary. A failed secure flush throws and keeps
-failed or unattempted queued writes available for retry. `storage.clearBiometric()`
+Android secure writes default to synchronous `commit()` durability. Call
+`storage.setSecureWritesAsync(true)` only when asynchronous `apply()` writes are
+acceptable. After opting into async writes, call `storage.flushSecureWrites()`
+before a deterministic persistence boundary. A failed secure flush throws and
+keeps failed or unattempted queued writes available for retry.
+`storage.clearBiometric()`
 flushes pending Secure writes before clearing biometric entries and surfaces
 native clear failures.
 

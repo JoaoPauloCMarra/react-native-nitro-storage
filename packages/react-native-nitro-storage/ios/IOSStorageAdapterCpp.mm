@@ -3,6 +3,7 @@
 #import <Security/Security.h>
 #import <LocalAuthentication/LocalAuthentication.h>
 
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -38,6 +39,43 @@ static std::runtime_error keychainStatusError(OSStatus status, const std::string
 static NSUserDefaults* NitroDiskDefaults() {
     static NSUserDefaults* defaults = [[NSUserDefaults alloc] initWithSuiteName:kDiskSuiteName];
     return defaults ?: [NSUserDefaults standardUserDefaults];
+}
+
+static NSSet<NSString*>* registeredLegacyDiskKeys() {
+    NSArray* stored = [NitroDiskDefaults() stringArrayForKey:kLegacyDiskKeysRegistryKey];
+    return stored ? [NSSet setWithArray:stored] : [NSSet set];
+}
+
+static void persistLegacyDiskKeys(NSSet<NSString*>* keys) {
+    NSUserDefaults* defaults = NitroDiskDefaults();
+    if (keys.count == 0) {
+        [defaults removeObjectForKey:kLegacyDiskKeysRegistryKey];
+        return;
+    }
+    [defaults setObject:[keys allObjects] forKey:kLegacyDiskKeysRegistryKey];
+}
+
+static void registerLegacyDiskKey(NSString* key) {
+    NSMutableSet* keys = [registeredLegacyDiskKeys() mutableCopy];
+    [keys addObject:key];
+    persistLegacyDiskKeys(keys);
+}
+
+static void unregisterLegacyDiskKeys(NSArray<NSString*>* keys) {
+    if (keys.count == 0) {
+        return;
+    }
+    NSMutableSet* registered = [registeredLegacyDiskKeys() mutableCopy];
+    BOOL changed = NO;
+    for (NSString* key in keys) {
+        if ([registered containsObject:key]) {
+            [registered removeObject:key];
+            changed = YES;
+        }
+    }
+    if (changed) {
+        persistLegacyDiskKeys(registered);
+    }
 }
 
 // --- Legacy disk key migration ---
@@ -126,6 +164,37 @@ void runLegacyDiskMigrationCutoverForTesting(NSUserDefaults* defaults) {
 }
 #endif
 
+static NSString* migrateLegacyDiskValue(NSString* key) {
+    NSUserDefaults* defaults = NitroDiskDefaults();
+    NSString* result = [defaults stringForKey:key];
+    if (result) {
+        return result;
+    }
+
+    NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
+    NSString* legacyValue = [standard stringForKey:key];
+    if (!legacyValue) {
+        return nil;
+    }
+
+    registerLegacyDiskKey(key);
+    if (defaults == standard) {
+        return legacyValue;
+    }
+
+    [defaults setObject:legacyValue forKey:key];
+    if (![defaults synchronize] ||
+        ![[defaults stringForKey:key] isEqualToString:legacyValue]) {
+        return legacyValue;
+    }
+
+    [standard removeObjectForKey:key];
+    if ([standard synchronize] && [standard objectForKey:key] == nil) {
+        unregisterLegacyDiskKeys(@[key]);
+    }
+    return [defaults stringForKey:key] ?: legacyValue;
+}
+
 // Prevents the Keychain from showing auth UI. On iOS 14+ kSecUseAuthenticationUIFail is
 // deprecated; the correct replacement is an LAContext with interactionNotAllowed = YES.
 static void disableKeychainInteraction(NSMutableDictionary* query) {
@@ -186,36 +255,67 @@ IOSStorageAdapterCpp::~IOSStorageAdapterCpp() {}
 void IOSStorageAdapterCpp::setDisk(const std::string& key, const std::string& value) {
     NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
     NSString* nsValue = [NSString stringWithUTF8String:value.c_str()];
-    [NitroDiskDefaults() setObject:nsValue forKey:nsKey];
+    NSUserDefaults* defaults = NitroDiskDefaults();
+    [defaults setObject:nsValue forKey:nsKey];
+    NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
+    if (defaults != standard && [standard objectForKey:nsKey] != nil) {
+        [standard removeObjectForKey:nsKey];
+        unregisterLegacyDiskKeys(@[nsKey]);
+    }
 }
 
 std::optional<std::string> IOSStorageAdapterCpp::getDisk(const std::string& key) {
     NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
-    NSString* result = [NitroDiskDefaults() stringForKey:nsKey];
+    NSString* result = migrateLegacyDiskValue(nsKey);
     if (!result) return std::nullopt;
     return std::string([result UTF8String]);
 }
 
 void IOSStorageAdapterCpp::deleteDisk(const std::string& key) {
     NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
-    [NitroDiskDefaults() removeObjectForKey:nsKey];
+    NSUserDefaults* defaults = NitroDiskDefaults();
+    [defaults removeObjectForKey:nsKey];
+    NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
+    if (defaults != standard && [standard objectForKey:nsKey] != nil) {
+        [standard removeObjectForKey:nsKey];
+    }
+    unregisterLegacyDiskKeys(@[nsKey]);
 }
 
 bool IOSStorageAdapterCpp::hasDisk(const std::string& key) {
     NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
-    return [NitroDiskDefaults() objectForKey:nsKey] != nil;
+    NSUserDefaults* defaults = NitroDiskDefaults();
+    if ([defaults objectForKey:nsKey] != nil) {
+        return true;
+    }
+    if ([[NSUserDefaults standardUserDefaults] stringForKey:nsKey] != nil) {
+        registerLegacyDiskKey(nsKey);
+        return true;
+    }
+    return false;
 }
 
 std::vector<std::string> IOSStorageAdapterCpp::getAllKeysDisk() {
     NSUserDefaults* defaults = NitroDiskDefaults();
     NSDictionary<NSString*, id>* entries = [defaults persistentDomainForName:kDiskSuiteName] ?: @{};
-    std::vector<std::string> keys;
-    keys.reserve(entries.count);
+    NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
+    std::unordered_set<std::string> combined;
     for (NSString* key in entries) {
         if (![key isEqualToString:kLegacyDiskKeysRegistryKey] &&
             ![key isEqualToString:kLegacyDiskMigrationMarkerKey]) {
-            keys.push_back(std::string([key UTF8String]));
+            combined.insert(std::string([key UTF8String]));
         }
+    }
+    for (NSString* key in [registeredLegacyDiskKeys() allObjects]) {
+        if ([entries objectForKey:key] == nil &&
+            [standard stringForKey:key] != nil) {
+            combined.insert(std::string([key UTF8String]));
+        }
+    }
+    std::vector<std::string> keys;
+    keys.reserve(combined.size());
+    for (const auto& key : combined) {
+        keys.push_back(key);
     }
     return keys;
 }
@@ -241,11 +341,20 @@ void IOSStorageAdapterCpp::setDiskBatch(
     const std::vector<std::string>& values
 ) {
     NSUserDefaults* defaults = NitroDiskDefaults();
+    NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
+    NSMutableArray* legacyKeysToRemove = [NSMutableArray array];
     for (size_t i = 0; i < keys.size() && i < values.size(); ++i) {
         NSString* nsKey = [NSString stringWithUTF8String:keys[i].c_str()];
         NSString* nsValue = [NSString stringWithUTF8String:values[i].c_str()];
         [defaults setObject:nsValue forKey:nsKey];
+        if (defaults != standard && [standard objectForKey:nsKey] != nil) {
+            [legacyKeysToRemove addObject:nsKey];
+        }
     }
+    for (NSString* key in legacyKeysToRemove) {
+        [standard removeObjectForKey:key];
+    }
+    unregisterLegacyDiskKeys(legacyKeysToRemove);
 }
 
 std::vector<std::optional<std::string>> IOSStorageAdapterCpp::getDiskBatch(
@@ -268,6 +377,7 @@ void IOSStorageAdapterCpp::deleteDiskBatch(const std::vector<std::string>& keys)
 void IOSStorageAdapterCpp::clearDisk() {
     NSUserDefaults* defaults = NitroDiskDefaults();
     NSDictionary<NSString*, id>* entries = [defaults persistentDomainForName:kDiskSuiteName] ?: @{};
+    NSMutableSet* legacyKeys = [registeredLegacyDiskKeys() mutableCopy];
     for (NSString* key in entries) {
         if ([key isEqualToString:kLegacyDiskKeysRegistryKey] ||
             [key isEqualToString:kLegacyDiskMigrationMarkerKey]) {
@@ -275,6 +385,21 @@ void IOSStorageAdapterCpp::clearDisk() {
         }
         [defaults removeObjectForKey:key];
     }
+    NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
+    if (defaults != standard) {
+        for (NSString* key in entries) {
+            if ([key isEqualToString:kLegacyDiskKeysRegistryKey] ||
+                [key isEqualToString:kLegacyDiskMigrationMarkerKey]) {
+                continue;
+            }
+            [standard removeObjectForKey:key];
+            [legacyKeys removeObject:key];
+        }
+        for (NSString* key in legacyKeys) {
+            [standard removeObjectForKey:key];
+        }
+    }
+    [defaults removeObjectForKey:kLegacyDiskKeysRegistryKey];
 }
 
 // --- Secure (Keychain) ---

@@ -17,6 +17,8 @@ namespace {
 
 const char* kHostKey = "nitro-storage-ut-host-owned";
 const char* kLegacyKey = "nitro-storage-ut-legacy";
+const char* kLegacyGetKey = "nitro-storage-ut-legacy-get";
+const char* kLegacyHasKey = "nitro-storage-ut-legacy-has";
 const char* kSuiteKey = "nitro-storage-ut-suite";
 const char* kConflictKey = "nitro-storage-ut-conflict";
 
@@ -32,6 +34,8 @@ void cleanupState() {
     NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
     [standard removeObjectForKey:nsKey(kHostKey)];
     [standard removeObjectForKey:nsKey(kLegacyKey)];
+    [standard removeObjectForKey:nsKey(kLegacyGetKey)];
+    [standard removeObjectForKey:nsKey(kLegacyHasKey)];
     [standard removeObjectForKey:nsKey(kSuiteKey)];
     [standard removeObjectForKey:nsKey(kConflictKey)];
     [standard removeObjectForKey:@"__nitro_storage_legacy_disk_keys__"];
@@ -43,9 +47,8 @@ void cleanupState() {
 } // namespace
 
 // Verifies the disk-scoping contract: enumeration and clear must only ever
-// touch keys owned by Nitro Storage (the suite domain), never arbitrary
-// host-app standard defaults keys, and the legacy standard-defaults store is
-// consulted only by the one-time versioned migration cutover.
+// touch keys owned by Nitro Storage (the suite domain or legacy keys observed
+// through the storage API), never arbitrary host-app standard defaults keys.
 int main() {
     @autoreleasepool {
         cleanupState();
@@ -129,18 +132,30 @@ int main() {
         adapter.clearDisk();
         assert([[[NSUserDefaults standardUserDefaults] stringForKey:nsKey(kHostKey)] isEqualToString:@"host-value"]);
 
-        // 3. After the one-time cutover, standardUserDefaults is never
-        //    consulted: a legacy-style value stays invisible to the API.
+        // 3. Legacy values remain readable through the storage API even when
+        //    they were not included in the one-time migration registry.
         [[NSUserDefaults standardUserDefaults]
-            setObject:@"legacy-value" forKey:nsKey(kLegacyKey)];
-        assert(!adapter.hasDisk(kLegacyKey));
-        assert(!adapter.getDisk(kLegacyKey).has_value());
-        assert(!containsKey(adapter.getAllKeysDisk(), kLegacyKey));
+            setObject:@"legacy-get-value" forKey:nsKey(kLegacyGetKey)];
+        assert(!containsKey(adapter.getAllKeysDisk(), kLegacyGetKey));
+        assert(adapter.getDisk(kLegacyGetKey).value() == "legacy-get-value");
+        assert([suite stringForKey:nsKey(kLegacyGetKey)] != nil);
+        assert([[NSUserDefaults standardUserDefaults] objectForKey:nsKey(kLegacyGetKey)] == nil);
+
+        [[NSUserDefaults standardUserDefaults]
+            setObject:@"legacy-has-value" forKey:nsKey(kLegacyHasKey)];
+        assert(!containsKey(adapter.getAllKeysDisk(), kLegacyHasKey));
+        assert(adapter.hasDisk(kLegacyHasKey));
+        assert(containsKey(adapter.getAllKeysDisk(), kLegacyHasKey));
         adapter.clearDisk();
-        assert([[NSUserDefaults standardUserDefaults] objectForKey:nsKey(kLegacyKey)] != nil);
+        assert(!containsKey(adapter.getAllKeysDisk(), kLegacyGetKey));
+        assert(!containsKey(adapter.getAllKeysDisk(), kLegacyHasKey));
+        assert([[NSUserDefaults standardUserDefaults] objectForKey:nsKey(kLegacyGetKey)] == nil);
+        assert([[NSUserDefaults standardUserDefaults] objectForKey:nsKey(kLegacyHasKey)] == nil);
 
         // 4. The one-time cutover migrates registered legacy keys into the
         //    suite domain and removes their standard-defaults copies.
+        [[NSUserDefaults standardUserDefaults]
+            setObject:@"legacy-value" forKey:nsKey(kLegacyKey)];
         [suite setObject:@[nsKey(kLegacyKey)] forKey:@"__nitro_storage_legacy_disk_keys__"];
         [suite removeObjectForKey:@"__nitro_storage_legacy_disk_migration_v1__"];
         IOSStorageAdapterCpp migrated;

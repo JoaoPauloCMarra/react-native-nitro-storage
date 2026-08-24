@@ -182,14 +182,14 @@ recovery.
 
 ## Android Secure Write Mode
 
-Android secure writes default to asynchronous `SharedPreferences.apply()`. If
-the caller requires each secure write to wait for a durable
-`SharedPreferences.commit()`, opt into synchronous mode:
+Android secure writes default to synchronous `SharedPreferences.commit()` for
+the established durability contract. If asynchronous
+`SharedPreferences.apply()` is acceptable, opt into async mode explicitly:
 
 ```ts
 import { storage } from "react-native-nitro-storage";
 
-storage.setSecureWritesAsync(false);
+storage.setSecureWritesAsync(true);
 refreshTokenItem.set("opaque-refresh-token");
 ```
 

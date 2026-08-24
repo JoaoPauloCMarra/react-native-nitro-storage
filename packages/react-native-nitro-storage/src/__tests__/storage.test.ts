@@ -383,9 +383,10 @@ describe("createStorageItem", () => {
     expect(capabilities.backend.secure).toBe("platform-secure-storage");
   });
 
-  it("defaults secure writes to async and reports it in Android capabilities", () => {
-    expect(DEFAULT_SECURE_WRITES_ASYNC).toBe(true);
-    expect(resolveNativeWriteBuffering("android").secure).toBe(true);
+  it("defaults secure writes to sync and reports opt-in async buffering", () => {
+    expect(DEFAULT_SECURE_WRITES_ASYNC).toBe(false);
+    expect(resolveNativeWriteBuffering("android").secure).toBe(false);
+    expect(resolveNativeWriteBuffering("android", true).secure).toBe(true);
     expect(resolveNativeWriteBuffering("android", false).secure).toBe(false);
     expect(resolveNativeWriteBuffering("ios").secure).toBe(false);
 
@@ -398,7 +399,7 @@ describe("createStorageItem", () => {
     });
     try {
       storage.setSecureWritesAsync(DEFAULT_SECURE_WRITES_ASYNC);
-      expect(storage.getCapabilities().writeBuffering.secure).toBe(true);
+      expect(storage.getCapabilities().writeBuffering.secure).toBe(false);
       storage.setSecureWritesAsync(false);
       expect(storage.getCapabilities().writeBuffering.secure).toBe(false);
     } finally {

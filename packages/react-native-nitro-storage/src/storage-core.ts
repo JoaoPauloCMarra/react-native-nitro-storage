@@ -190,14 +190,17 @@ export type StorageClearOptions = {
 };
 
 export type SetItemConfig<TMember extends string = string> = Omit<
-  StorageItemConfig<Partial<Record<TMember, true>>>,
+  StorageItemConfig<Record<string, true>>,
   "defaultValue" | "serialize" | "deserialize"
 > & {
   defaultValue?: readonly TMember[];
 };
 
 export type SetStorageItem<TMember extends string = string> = {
-  get: () => Partial<Record<TMember, true>>;
+  /** Compatibility shape retained from the original set-item API. */
+  get: () => Record<string, true>;
+  /** Precise membership shape for new code. */
+  getTyped: () => Partial<Record<TMember, true>>;
   has: (id: TMember) => boolean;
   add: (id: TMember) => void;
   delete: (id: TMember) => void;
@@ -209,7 +212,7 @@ export type SetStorageItem<TMember extends string = string> = {
   subscribe: (callback: () => void) => () => void;
   scope: StorageScope;
   key: string;
-  item: StorageItem<Partial<Record<TMember, true>>>;
+  item: StorageItem<Record<string, true>>;
 };
 
 export type StorageCoreBackend = {
@@ -3716,14 +3719,14 @@ export function createStorageCore(
     config: SetItemConfig<TMember>,
   ): SetStorageItem<TMember> {
     const { defaultValue, ...rest } = config;
-    const initial: Partial<Record<TMember, true>> = {};
+    const initial: Record<string, true> = {};
     if (defaultValue) {
       for (const id of defaultValue) {
         initial[id] = true;
       }
     }
 
-    const item = createStorageItem<Partial<Record<TMember, true>>>({
+    const item = createStorageItem<Record<string, true>>({
       ...rest,
       defaultValue: initial,
     });
@@ -3759,8 +3762,17 @@ export function createStorageCore(
       return true;
     };
 
+    const getTyped = (): Partial<Record<TMember, true>> => {
+      const typed: Partial<Record<TMember, true>> = {};
+      for (const id of Object.keys(item.get())) {
+        typed[id as TMember] = true;
+      }
+      return typed;
+    };
+
     return {
       get: item.get,
+      getTyped,
       has,
       add,
       delete: deleteId,

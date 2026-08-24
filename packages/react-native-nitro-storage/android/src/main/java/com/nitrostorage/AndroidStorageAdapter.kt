@@ -125,7 +125,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
     }
 
     @Volatile
-    private var secureWritesAsync = true
+    private var secureWritesAsync = false
 
     @Volatile
     private var secureKeysCache: Array<String>? = null

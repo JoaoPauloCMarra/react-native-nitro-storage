@@ -8,18 +8,26 @@ Breaking changes are always listed first in each release section.
 
 ## [0.10.0] - 2026-08-24
 
+### Breaking changes
+
+- None. The Nitro Modules `0.37.x` native rebuild requirement remains from
+  0.9.0; this release restores the previous set-item type and secure-write
+  defaults for existing consumers.
+
 ### Added
 
 - Added `isStorageError(error, code)` to select recovery behavior from an exact
   stable storage error code on native and web.
-- Added an example-app Keychain lifecycle probe and a physical-device protocol
-  that verify temporary lock classification and successful reads after resume
-  without exposing stored values.
 
 ### Changed
 
-- Aligned the Expo SDK 57 example with Doctor-selected patch releases: Expo and
-  Expo Router 57.0.16, plus Expo Asset, Build Properties, and Constants 57.0.14.
+- Restored `SetStorageItem.get()` and its `item` property to the original
+  `Record<string, true>` compatibility shape. Added `getTyped()` for new code
+  that wants `Partial<Record<TMember, true>>` without forcing a type migration.
+- Restored synchronous Android Secure writes by default. Asynchronous
+  `apply()` writes remain available through the explicit
+  `storage.setSecureWritesAsync(true)` opt-in and can be drained with
+  `storage.flushSecureWrites()`.
 
 ### Deprecated
 
@@ -56,10 +64,6 @@ Breaking changes are always listed first in each release section.
 - Native batch reads now preserve missing entries as `undefined`, matching the
   TypeScript contract and allowing stored values that match the old internal
   sentinel string.
-- The standalone package development and type baseline is now React Native
-  0.87.0. The Expo SDK 57 example remains on its supported React Native 0.86.2
-  baseline.
-
 - Secure write flushes now retain failed and unattempted last-write-wins entries
   for retry instead of silently dropping them.
 - iOS legacy Disk migration is conservative and retryable. A valid registry is
