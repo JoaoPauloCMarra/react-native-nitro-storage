@@ -6,13 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes are always listed first in each release section.
 
-## [0.10.0] - 2026-08-24
+## [0.10.0] - 2026-08-25
 
 ### Breaking changes
 
-- Breaking changes: None. The Nitro Modules `0.37.x` native rebuild
-  requirement remains from 0.9.0; this release restores the previous set-item
-  type and secure-write defaults for existing consumers.
+- None when upgrading from `0.9.x`. Direct upgrades from `0.8.x` or earlier
+  still require Nitro Modules `0.37.x` and a native rebuild as described in
+  the `0.9.0` entry. This release restores the previous set-item type and
+  secure-write defaults for existing consumers.
 
 ### Added
 
