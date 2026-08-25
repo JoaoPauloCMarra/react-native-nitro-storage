@@ -10,9 +10,9 @@ Breaking changes are always listed first in each release section.
 
 ### Breaking changes
 
-- None. The Nitro Modules `0.37.x` native rebuild requirement remains from
-  0.9.0; this release restores the previous set-item type and secure-write
-  defaults for existing consumers.
+- Breaking changes: None. The Nitro Modules `0.37.x` native rebuild
+  requirement remains from 0.9.0; this release restores the previous set-item
+  type and secure-write defaults for existing consumers.
 
 ### Added
 
@@ -28,6 +28,8 @@ Breaking changes are always listed first in each release section.
   `apply()` writes remain available through the explicit
   `storage.setSecureWritesAsync(true)` opt-in and can be drained with
   `storage.flushSecureWrites()`.
+- Enabled raw read-cache lookups now reuse cached missing values in single and
+  batch reads without per-item fallback calls.
 
 ### Deprecated
 
@@ -41,6 +43,7 @@ Breaking changes are always listed first in each release section.
 - Documented secure-storage recovery semantics and warned against cached
   fallback for authentication tokens unless stale credentials are an explicit
   application policy.
+- Clarified isolated web benchmark limits and corrected capability/API examples.
 
 ## [0.9.0] - 2026-08-20
 

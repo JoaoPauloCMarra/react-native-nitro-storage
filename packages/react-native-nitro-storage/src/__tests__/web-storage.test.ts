@@ -1434,6 +1434,20 @@ describe("Web Storage", () => {
     expect(getBatch([cachedDisk], StorageScope.Disk)).toEqual(["cached-value"]);
     expect(diskGetSpy).toHaveBeenCalledTimes(0);
 
+    const cachedMissing = createStorageItem({
+      key: "disk-batch-cache-missing",
+      scope: StorageScope.Disk,
+      defaultValue: "missing-default",
+      readCache: true,
+    });
+    expect(cachedMissing.get()).toBe("missing-default");
+    diskGetSpy.mockClear();
+
+    expect(getBatch([cachedMissing], StorageScope.Disk)).toEqual([
+      "missing-default",
+    ]);
+    expect(diskGetSpy).toHaveBeenCalledTimes(0);
+
     const pendingSecure = createStorageItem({
       key: "secure-batch-pending",
       scope: StorageScope.Secure,
@@ -1448,7 +1462,7 @@ describe("Web Storage", () => {
     await Promise.resolve();
   });
 
-  it("falls back to item.get in web getBatch when raw value is missing", () => {
+  it("returns the item default in web getBatch when raw value is missing", () => {
     const item = createStorageItem({
       key: "web-batch-fallback",
       scope: StorageScope.Disk,

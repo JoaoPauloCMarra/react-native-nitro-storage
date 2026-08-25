@@ -852,6 +852,30 @@ describe("useStorage", () => {
     expect(mockHybridObject.get).toHaveBeenCalledTimes(1);
   });
 
+  it("reuses cached missing values for item and batch reads", () => {
+    const firstItem = createStorageItem({
+      key: "cache-missing",
+      scope: StorageScope.Disk,
+      defaultValue: "first-default",
+      readCache: true,
+    });
+
+    mockHybridObject.get.mockReturnValue(undefined);
+    expect(firstItem.get()).toBe("first-default");
+
+    const secondItem = createStorageItem({
+      key: "cache-missing",
+      scope: StorageScope.Disk,
+      defaultValue: "second-default",
+      readCache: true,
+    });
+
+    const values = getBatch([secondItem], StorageScope.Disk);
+    expect(values).toEqual(["second-default"]);
+    expect(mockHybridObject.get).toHaveBeenCalledTimes(1);
+    expect(mockHybridObject.getBatch).not.toHaveBeenCalled();
+  });
+
   it("keeps read-through cache disabled by default", () => {
     const item = createStorageItem({
       key: "cache-disabled",

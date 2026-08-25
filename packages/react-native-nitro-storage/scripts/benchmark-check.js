@@ -3,6 +3,7 @@ const fs = require("fs");
 const { performance } = require("perf_hooks");
 
 const packageRoot = path.join(__dirname, "..");
+const packageManifest = require(path.join(packageRoot, "package.json"));
 const entrypointPath = path.join(
   packageRoot,
   "lib",
@@ -10,45 +11,22 @@ const entrypointPath = path.join(
   "index.web.js",
 );
 
-let storageModule;
+if (packageManifest.name !== "react-native-nitro-storage") {
+  console.error(
+    `Benchmark setup failed: expected react-native-nitro-storage, got ${packageManifest.name}.`,
+  );
+  process.exit(1);
+}
+
 if (!fs.existsSync(entrypointPath)) {
   console.error("Benchmark setup failed: build artifacts were not found.");
   console.error("Run `bun run build` before running `bun run benchmark`.");
   process.exit(1);
 }
 
-try {
-  storageModule = require(entrypointPath);
-} catch (error) {
-  console.error("Benchmark setup failed: unable to load benchmark entrypoint.");
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-}
-
-const {
-  createStorageItem,
-  StorageScope,
-  setBatch,
-  getBatch,
-  removeBatch,
-  storage,
-} = storageModule;
-
-console.log(
-  "Benchmark scope: web-only (lib/commonjs/index.web.js with the localStorage backend).",
-);
-console.log(
-  "Native Disk/Secure baselines require a device run and are not part of this gate.",
-);
-console.log("");
-
-function ensureLocalStorage() {
-  if (typeof globalThis.localStorage !== "undefined") {
-    return;
-  }
-
+function createIsolatedLocalStorage() {
   const store = new Map();
-  const localStorageMock = {
+  return {
     clear() {
       store.clear();
     },
@@ -68,37 +46,84 @@ function ensureLocalStorage() {
       return store.size;
     },
   };
-
-  Object.defineProperty(globalThis, "localStorage", {
-    value: localStorageMock,
-    configurable: true,
-    writable: true,
-  });
 }
 
-function measure(label, operations, run) {
-  const start = performance.now();
-  run();
-  const durationMs = performance.now() - start;
-  const opsPerSecond = operations / (durationMs / 1000);
-  return { label, durationMs, opsPerSecond };
+Object.defineProperty(globalThis, "localStorage", {
+  value: createIsolatedLocalStorage(),
+  configurable: true,
+  writable: true,
+});
+
+let storageModule;
+try {
+  storageModule = require(entrypointPath);
+} catch (error) {
+  console.error("Benchmark setup failed: unable to load benchmark entrypoint.");
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
 }
 
-function measureBestOf(label, operations, run, samples = 3) {
-  let best = measure(label, operations, run);
-  for (let sample = 1; sample < samples; sample += 1) {
-    const metric = measure(label, operations, run);
-    if (metric.opsPerSecond > best.opsPerSecond) {
-      best = metric;
-    }
+const {
+  createStorageItem,
+  StorageScope,
+  setBatch,
+  getBatch,
+  removeBatch,
+  storage,
+} = storageModule;
+
+console.log(`Benchmark package: ${packageManifest.name}@${packageManifest.version}`);
+console.log(
+  "Benchmark scope: isolated Node web adapter with a private in-memory localStorage implementation.",
+);
+console.log(
+  "Disk/Secure labels below are web scopes backed by the same private adapter; they are not native storage measurements.",
+);
+console.log("");
+
+function percentile(values, percentileValue) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const position = (sorted.length - 1) * percentileValue;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) return sorted[lower];
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower);
+}
+
+function measureSamples(label, operations, run, samples = 7, warmup = 2) {
+  for (let index = 0; index < warmup; index += 1) {
+    run();
   }
-  return best;
+
+  const durations = [];
+  for (let index = 0; index < samples; index += 1) {
+    const start = performance.now();
+    run();
+    durations.push(performance.now() - start);
+  }
+
+  const totalMs = durations.reduce((sum, duration) => sum + duration, 0);
+  const medianMs = percentile(durations, 0.5);
+  return {
+    label,
+    operations,
+    samples,
+    warmup,
+    meanMs: totalMs / samples,
+    medianMs,
+    p95Ms: percentile(durations, 0.95),
+    minMs: Math.min(...durations),
+    maxMs: Math.max(...durations),
+    opsPerSecond: operations / (medianMs / 1000),
+  };
 }
 
 function printMetric(metric) {
-  const roundedMs = metric.durationMs.toFixed(2);
+  const roundedMs = metric.medianMs.toFixed(2);
   const roundedOps = Math.round(metric.opsPerSecond).toLocaleString();
-  console.log(`${metric.label}: ${roundedMs}ms (${roundedOps} ops/s)`);
+  console.log(
+    `${metric.label}: median=${roundedMs}ms p95=${metric.p95Ms.toFixed(2)}ms (${roundedOps} ops/s)`,
+  );
 }
 
 const thresholds = {
@@ -112,24 +137,32 @@ const thresholds = {
   secureGetOpsPerSecond: 150_000,
 };
 
-ensureLocalStorage();
 storage.clearAll();
 
+const benchmarkNamespace = `__nitro_storage_benchmark_${process.pid}__`;
+const benchmarkKey = (name) => `${benchmarkNamespace}${name}`;
+
+const resetStorage = () => {
+  storage.clearAll();
+};
+
 const memoryCounter = createStorageItem({
-  key: "__benchmark_memory_counter__",
+  key: benchmarkKey("memory_counter"),
   scope: StorageScope.Memory,
   defaultValue: 0,
 });
 
 const setIterations = 40_000;
-const setMetric = measureBestOf("memory:set", setIterations, () => {
+resetStorage();
+const setMetric = measureSamples("web:memory:set", setIterations, () => {
   for (let index = 0; index < setIterations; index += 1) {
     memoryCounter.set(index);
   }
 });
 
 const getIterations = 80_000;
-const getMetric = measureBestOf("memory:get", getIterations, () => {
+resetStorage();
+const getMetric = measureSamples("web:memory:get", getIterations, () => {
   for (let index = 0; index < getIterations; index += 1) {
     memoryCounter.get();
   }
@@ -137,7 +170,7 @@ const getMetric = measureBestOf("memory:get", getIterations, () => {
 
 const batchItems = Array.from({ length: 32 }, (_, index) =>
   createStorageItem({
-    key: `__benchmark_batch_${index}__`,
+    key: benchmarkKey(`batch_${index}`),
     scope: StorageScope.Memory,
     defaultValue: 0,
   }),
@@ -148,8 +181,9 @@ const batchPayload = batchItems.map((item, index) => ({
 }));
 const batchIterations = 400;
 const batchOperationsPerIteration = batchItems.length * 3;
-const batchMetric = measureBestOf(
-  "memory:batch-set-get-remove",
+resetStorage();
+const batchMetric = measureSamples(
+  "web:memory:batch-set-get-remove",
   batchIterations * batchOperationsPerIteration,
   () => {
     for (let iteration = 0; iteration < batchIterations; iteration += 1) {
@@ -161,44 +195,56 @@ const batchMetric = measureBestOf(
 );
 
 const diskCounter = createStorageItem({
-  key: "__benchmark_disk_counter__",
+  key: benchmarkKey("disk_counter"),
   scope: StorageScope.Disk,
   defaultValue: 0,
 });
 
 const diskSetIterations = 25_000;
-const diskSetMetric = measureBestOf("disk:set", diskSetIterations, () => {
+resetStorage();
+const diskSetMetric = measureSamples("web:disk-scope:set", diskSetIterations, () => {
   for (let index = 0; index < diskSetIterations; index += 1) {
     diskCounter.set(index);
   }
 });
 
 const diskGetIterations = 25_000;
-const diskGetMetric = measureBestOf("disk:get", diskGetIterations, () => {
+resetStorage();
+const diskGetMetric = measureSamples("web:disk-scope:get", diskGetIterations, () => {
   for (let index = 0; index < diskGetIterations; index += 1) {
     diskCounter.get();
   }
 });
 
 const secureCounter = createStorageItem({
-  key: "__benchmark_secure_counter__",
+  key: benchmarkKey("secure_counter"),
   scope: StorageScope.Secure,
   defaultValue: 0,
 });
 
 const secureSetIterations = 15_000;
-const secureSetMetric = measureBestOf("secure:set", secureSetIterations, () => {
-  for (let index = 0; index < secureSetIterations; index += 1) {
-    secureCounter.set(index);
-  }
-});
+resetStorage();
+const secureSetMetric = measureSamples(
+  "web:secure-scope:set",
+  secureSetIterations,
+  () => {
+    for (let index = 0; index < secureSetIterations; index += 1) {
+      secureCounter.set(index);
+    }
+  },
+);
 
 const secureGetIterations = 15_000;
-const secureGetMetric = measureBestOf("secure:get", secureGetIterations, () => {
-  for (let index = 0; index < secureGetIterations; index += 1) {
-    secureCounter.get();
-  }
-});
+resetStorage();
+const secureGetMetric = measureSamples(
+  "web:secure-scope:get",
+  secureGetIterations,
+  () => {
+    for (let index = 0; index < secureGetIterations; index += 1) {
+      secureCounter.get();
+    }
+  },
+);
 
 const metrics = [
   setMetric,
@@ -211,6 +257,20 @@ const metrics = [
 ];
 console.log("Web (localStorage) results:");
 metrics.forEach(printMetric);
+
+console.log(
+  `BENCHMARK_RESULT ${JSON.stringify({
+    package: packageManifest.name,
+    version: packageManifest.version,
+    benchmark: "web-storage",
+    scope: "node-private-localStorage",
+    native: false,
+    metrics,
+    runtime: process.version,
+    platform: process.platform,
+    architecture: process.arch,
+  })}`,
+);
 
 const failures = [];
 if (setMetric.opsPerSecond < thresholds.memorySetOpsPerSecond) {

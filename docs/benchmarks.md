@@ -11,13 +11,18 @@ bun run benchmark
 
 ## Scope: Web Only
 
-`benchmark` loads `lib/commonjs/index.web.js` and measures the web entry against the localStorage backend. The `disk:` and `secure:` labels describe web scopes, not native Disk or Secure storage.
+`benchmark` loads only this package's `lib/commonjs/index.web.js` entry and measures it against a private localStorage implementation created for that process. The `web:disk-scope:` and `web:secure-scope:` labels describe web scopes, not native Disk or Secure storage.
 
 Native Disk/Secure baselines require a device or simulator run and are not part of this gate. Do not compare these numbers against native storage.
 
 ## Interpreting Results
 
+- Each run reports the package name/version, runtime, architecture, warmups,
+  sample count, median, and p95. It does not use another package's artifact or
+  ambient browser storage.
 - Compare results on the same machine and Node/Bun version.
+- The benchmark uses seven measured samples after two warmups and reports the
+  median for throughput. It does not select the best sample.
 - Treat large deltas as a prompt to inspect recent storage-runtime, serialization, cache, or event changes.
 - Do not compare web backend numbers against native secure storage numbers; they measure different systems.
 

@@ -334,7 +334,47 @@ export const Page = ({
   );
 };
 
+const consumerStyles = {
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  flex1: {
+    flex: 1,
+  },
+  panel: {
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 12,
+    padding: 12,
+    gap: 8,
+  },
+  panelTitle: {
+    color: Colors.muted,
+    fontFamily: fontSans700,
+    fontSize: 11,
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  panelValue: {
+    color: Colors.text,
+    fontFamily: fontSans800,
+    fontSize: 42,
+    lineHeight: 44,
+    textAlign: "center",
+  },
+  helperText: {
+    color: Colors.muted,
+    fontFamily: fontSans400,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+} as const;
+
 export const styles = StyleSheet.create({
+  ...consumerStyles,
   container: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -552,12 +592,6 @@ export const styles = StyleSheet.create({
     lineHeight: 18,
     color: "#cbd5e1",
   },
-  codeText: {
-    fontFamily: fontMono400,
-    fontSize: 12,
-    lineHeight: 18,
-    color: Colors.text,
-  },
   section: {
     gap: 10,
   },
@@ -569,58 +603,4 @@ export const styles = StyleSheet.create({
     letterSpacing: 1,
     marginTop: 4,
   },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  grid: {
-    flexDirection: "row",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  flex1: {
-    flex: 1,
-  },
-  panel: {
-    backgroundColor: Colors.card,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 12,
-    padding: 12,
-    gap: 8,
-  },
-  panelTitle: {
-    color: Colors.muted,
-    fontFamily: fontSans700,
-    fontSize: 11,
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
-  },
-  panelValue: {
-    color: Colors.text,
-    fontFamily: fontSans800,
-    fontSize: 42,
-    lineHeight: 44,
-    textAlign: "center",
-  },
-  helperText: {
-    color: Colors.muted,
-    fontFamily: fontSans400,
-    fontSize: 12,
-    lineHeight: 18,
-  },
 });
-
-const sharedStyleKeysForLint = [
-  styles.codeText,
-  styles.row,
-  styles.grid,
-  styles.flex1,
-  styles.panel,
-  styles.panelTitle,
-  styles.panelValue,
-  styles.helperText,
-];
-void sharedStyleKeysForLint;

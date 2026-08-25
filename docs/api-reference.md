@@ -14,24 +14,28 @@ const item = createStorageItem<T>({
 
 `StorageItemConfig<T>`:
 
-| Field                  | Type                             | Purpose                                                          |
-| ---------------------- | -------------------------------- | ---------------------------------------------------------------- |
-| `key`                  | `string`                         | Storage key. Combined with `namespace` when provided.            |
-| `scope`                | `StorageScope`                   | Memory, Disk, or Secure.                                         |
-| `defaultValue`         | `T`                              | Value returned when no stored value exists.                      |
-| `serialize`            | `(value: T) => string`           | Custom string encoder. Defaults to primitive/JSON serialization. |
-| `deserialize`          | `(value: string) => T`           | Custom string decoder.                                           |
-| `validate`             | `(value: unknown) => value is T` | Runtime guard for stored data.                                   |
-| `onValidationError`    | `(invalidValue: unknown) => T`   | Replacement value when validation fails.                         |
-| `expiration`           | `{ ttlMs: number }`              | Time-to-live for the value.                                      |
-| `onExpired`            | `(key: string) => void`          | Called when a read detects TTL expiry.                           |
-| `readCache`            | `boolean`                        | Cache parsed values in memory.                                   |
-| `coalesceDiskWrites`   | `boolean`                        | Buffer Disk writes until the next flush.                         |
-| `coalesceSecureWrites` | `boolean`                        | Buffer Secure writes until the next flush.                       |
-| `namespace`            | `string`                         | Prefix keys as `namespace:key`.                                  |
-| `biometric`            | `boolean`                        | Store through biometric secure storage.                          |
-| `biometricLevel`       | `BiometricLevel`                 | Require biometric/passcode or biometric-only access.             |
-| `accessControl`        | `AccessControl`                  | Platform secure accessibility setting.                           |
+| Field                        | Type                             | Purpose                                                             |
+| ---------------------------- | -------------------------------- | ------------------------------------------------------------------- |
+| `key`                        | `string`                         | Storage key. Combined with `namespace` when provided.               |
+| `scope`                      | `StorageScope`                   | Memory, Disk, or Secure.                                            |
+| `defaultValue`               | `T`                              | Value returned when no stored value exists.                         |
+| `serialize`                  | `(value: T) => string`           | Custom string encoder. Defaults to primitive/JSON serialization.    |
+| `deserialize`                | `(value: string) => T`           | Custom string decoder.                                              |
+| `validate`                   | `(value: unknown) => value is T` | Runtime guard for stored data.                                      |
+| `onValidationError`          | `(invalidValue: unknown) => T`   | Replacement value when validation fails.                            |
+| `expiration`                 | `{ ttlMs: number }`              | Time-to-live for the value.                                         |
+| `onExpired`                  | `(key: string) => void`          | Called when a read detects TTL expiry.                              |
+| `readCache`                  | `boolean`                        | Reuse raw cache entries for reads, including cached missing values. |
+| `coalesceDiskWrites`         | `boolean`                        | Buffer Disk writes until the next flush.                            |
+| `coalesceSecureWrites`       | `boolean`                        | Buffer Secure writes until the next flush.                          |
+| `namespace`                  | `string`                         | Prefix keys as `namespace:key`.                                     |
+| `biometric`                  | `boolean`                        | Store through biometric secure storage.                             |
+| `biometricLevel`             | `BiometricLevel`                 | Require biometric/passcode or biometric-only access.                |
+| `accessControl`              | `AccessControl`                  | Platform secure accessibility setting.                              |
+| `group`                      | `string`                         | Register the item for group cleanup and inspection.                 |
+| `renameFrom`                 | `string \| readonly string[]`    | Copy a legacy key on first read, then remove it.                    |
+| `fallbackToCacheOnReadError` | `boolean`                        | Return the last cached value when a backend read fails.             |
+| `onReadError`                | `(error: unknown) => void`       | Observe a backend read failure before fallback or rethrow.          |
 
 `StorageItem<T>`:
 
@@ -41,6 +45,9 @@ const item = createStorageItem<T>({
 | `getWithVersion()`             | Return `{ value, version }` for optimistic writes.          |
 | `set(value)`                   | Store a value. Accepts direct values or updater functions.  |
 | `setIfVersion(version, value)` | Store only when the current version still matches.          |
+| `merge(partial)`               | Shallow-merge an object value.                              |
+| `reset()`                      | Delete the key so the next read returns the default.        |
+| `setOrDelete(value)`           | Set a value or delete for `null`/`undefined`.               |
 | `delete()`                     | Remove the key.                                             |
 | `has()`                        | Check whether the key exists.                               |
 | `subscribe(callback)`          | Subscribe to item changes. Returns an unsubscribe function. |
@@ -58,6 +65,23 @@ const unsubscribe = profileItem.subscribeSelector(
 );
 ```
 
+## createSetItem
+
+```ts
+const flags = createSetItem<"beta" | "compact">({
+  key: "flags",
+  scope: StorageScope.Memory,
+  defaultValue: ["compact"],
+});
+
+flags.add("beta");
+flags.has("compact");
+flags.getTyped();
+```
+
+`get()` retains the compatibility shape `Record<string, true>`. Use
+`getTyped()` when a precise member union is useful.
+
 ## React Hooks
 
 ```ts
@@ -74,9 +98,14 @@ See [react-hooks.md](react-hooks.md).
 
 | Method                                           | Purpose                                                                                   |
 | ------------------------------------------------ | ----------------------------------------------------------------------------------------- |
-| `clear(scope)`                                   | Clear one scope.                                                                          |
+| `clear(scope, options?)`                         | Clear one scope, optionally preserving selected keys.                                     |
 | `clearAll()`                                     | Clear Memory, Disk, and Secure scopes.                                                    |
 | `clearNamespace(namespace, scope)`               | Remove keys under `namespace:`.                                                           |
+| `clearGroup(group)`                              | Remove registered items in a group across their scopes.                                   |
+| `getGroupItems(group)`                           | List registered items in a group.                                                         |
+| `subscribeExpired(scope, listener)`              | Receive item events caused by TTL expiry.                                                 |
+| `findDuplicateKeys()`                            | Find duplicate registered `(scope, key)` definitions.                                     |
+| `getRegisteredKeys()`                            | List registered `(scope, key)` definitions.                                               |
 | `subscribe(scope, listener)`                     | Subscribe to raw scope-level change events.                                               |
 | `subscribeKey(scope, key, listener)`             | Subscribe to raw events for one key.                                                      |
 | `subscribePrefix(scope, prefix, listener)`       | Subscribe to raw events for matching key prefixes.                                        |
@@ -97,6 +126,7 @@ See [react-hooks.md](react-hooks.md).
 | `setKeychainAccessGroup(group)`                  | Configure iOS Keychain access group.                                                      |
 | `setMetricsObserver(observer)`                   | Receive operation timing events.                                                          |
 | `getMetricsSnapshot()`                           | Read aggregated metrics.                                                                  |
+| `getScopedMetricsSnapshot()`                     | Read metrics grouped by storage scope.                                                    |
 | `resetMetrics()`                                 | Clear metrics counters.                                                                   |
 | `getCapabilities()`                              | Read runtime storage capabilities.                                                        |
 | `getSecurityCapabilities()`                      | Read secure backend capability metadata.                                                  |
@@ -170,6 +200,11 @@ setBatch(
 removeBatch([themeItem, localeItem], StorageScope.Disk);
 ```
 
+`getBatch()` reuses enabled raw cache entries, including cached missing values,
+and returns each item's default for a missing raw value without issuing a
+per-item fallback read. Items that need validation, expiration, or migration
+use their item-level read path to preserve those rules.
+
 See [batch-transactions-migrations.md](batch-transactions-migrations.md).
 
 ## Transactions
@@ -237,6 +272,10 @@ setWebSecureStorageBackend(backend);
 getWebSecureStorageBackend();
 await flushWebStorageBackends();
 ```
+
+The web entry also exports `describeWebBackendCapabilities(backend)` and
+`isIndexedDBWebBackend(backend)`. The native entry keeps the web backend
+setters, getters, and flush function as typed no-ops for shared code.
 
 See [web-backends.md](web-backends.md).
 

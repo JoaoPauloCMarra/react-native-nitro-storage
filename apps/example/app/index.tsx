@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { memo, useRef, useState } from "react";
 import { Platform, StyleSheet, Text, View } from "react-native";
 import {
   createSecureAuthStorage,
@@ -37,6 +37,11 @@ import {
   styles,
 } from "../components/shared";
 import { SmokeTestRunner } from "../components/smoke-test";
+
+const MemoizedAdvancedApiDemo = memo(AdvancedApiDemo);
+const MemoizedErgonomicsDemo = memo(ErgonomicsDemo);
+const MemoizedKeychainLifecycleProbe = memo(KeychainLifecycleProbe);
+const MemoizedSmokeTestRunner = memo(SmokeTestRunner);
 
 const counterItem = createStorageItem({
   key: "counter",
@@ -282,7 +287,7 @@ function runRuntimeBenchmark() {
   }
 }
 
-function RuntimeBenchmarkCard() {
+const RuntimeBenchmarkCard = memo(function RuntimeBenchmarkCard() {
   const [runtimeBenchmarkResult, setRuntimeBenchmarkResult] =
     useState("(not run)");
 
@@ -310,12 +315,13 @@ function RuntimeBenchmarkCard() {
       </CodeBlock>
     </Card>
   );
-}
+});
 
 export default function HomeScreen() {
   const [counter, setCounter] = useStorage(counterItem);
 
   const [diskName, setDiskName] = useStorage(diskNameItem);
+  const hasDiskName = diskNameItem.has();
   const [tempDiskName, setTempDiskName] = useState("");
   const tempDiskNameRef = useRef("");
 
@@ -369,12 +375,8 @@ export default function HomeScreen() {
     storage.size(StorageScope.Memory),
   );
 
-  const [scopeDiskSize, setScopeDiskSize] = useState(() =>
-    storage.size(StorageScope.Disk),
-  );
-  const [scopeMemorySize, setScopeMemorySize] = useState(() =>
-    storage.size(StorageScope.Memory),
-  );
+  const [scopeDiskSize, setScopeDiskSize] = useState(diskSize);
+  const [scopeMemorySize, setScopeMemorySize] = useState(memorySize);
 
   const [rawValue, setRawValue] = useState<string | undefined>();
 
@@ -448,12 +450,12 @@ export default function HomeScreen() {
 
   return (
     <Page title="Nitro Storage" subtitle="Complete feature showcase">
-      <SmokeTestRunner />
+      <MemoizedSmokeTestRunner />
 
-      <KeychainLifecycleProbe />
+      <MemoizedKeychainLifecycleProbe />
 
-      <ErgonomicsDemo />
-      <AdvancedApiDemo />
+      <MemoizedErgonomicsDemo />
+      <MemoizedAdvancedApiDemo />
 
       <Card
         title="Memory Scope"
@@ -673,8 +675,8 @@ export default function HomeScreen() {
         <StatusRow
           testID="disk-has-value"
           label="has()"
-          value={String(diskNameItem.has())}
-          color={diskNameItem.has() ? Colors.success : Colors.muted}
+          value={String(hasDiskName)}
+          color={hasDiskName ? Colors.success : Colors.muted}
         />
       </Card>
 
