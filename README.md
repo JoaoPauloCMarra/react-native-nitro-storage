@@ -702,9 +702,10 @@ bun run example:android
 bun run example:ios
 ```
 
-Run native example builds before release when changing plugin, native, Nitro,
-secure storage, or packaging files. The package release path also validates
-package contents and dry-run publish behavior.
+Run native example builds locally before release when changing plugin, native,
+Nitro, secure storage, or packaging files. GitHub CI does not build the Android
+or iOS example. The package release path also validates package contents and
+dry-run publish behavior.
 
 `bun run benchmark` measures only the built web entry with an isolated private
 localStorage implementation; it is not a native Disk or Secure benchmark. See
