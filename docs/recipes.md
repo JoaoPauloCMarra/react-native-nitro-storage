@@ -283,10 +283,9 @@ Use `subscribePrefix()` or `subscribeNamespace()` for targeted integrations. Use
 ## Capability Checks
 
 ```ts
-const capabilities = storage.getCapabilities();
 const security = storage.getSecurityCapabilities();
 
-if (security.secureStorage !== "available") {
+if (security.secureStorage.encrypted !== "available") {
   console.warn("Secure storage is not available on this runtime");
 }
 ```

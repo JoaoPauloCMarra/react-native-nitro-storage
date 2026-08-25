@@ -393,14 +393,6 @@ export function createStorageCore(
     return getCachedRawValueEntry(scope, key)?.get(representation);
   }
 
-  function hasCachedRawValue(
-    scope: NonMemoryScope,
-    key: string,
-    representation: StorageRawCacheRepresentation = "plain",
-  ): boolean {
-    return getCachedRawValueEntry(scope, key)?.has(representation) ?? false;
-  }
-
   function invalidateRawCache(scope: NonMemoryScope, key: string): void {
     getScopeRawCache(scope).delete(key);
   }
@@ -1699,13 +1691,9 @@ export function createStorageCore(
 
       if (readCache) {
         const scope = resolveNonMemoryScope();
-        const cached = readCachedRawValue(
-          scope,
-          storageKey,
-          rawCacheRepresentation,
-        );
-        if (hasCachedRawValue(scope, storageKey, rawCacheRepresentation)) {
-          return cached;
+        const cachedEntry = getCachedRawValueEntry(scope, storageKey);
+        if (cachedEntry?.has(rawCacheRepresentation)) {
+          return cachedEntry.get(rawCacheRepresentation);
         }
       }
 
@@ -2895,9 +2883,9 @@ export function createStorageCore(
           }
 
           if (item._readCacheEnabled === true) {
-            const cached = readCachedRawValue(scope, item.key);
-            if (hasCachedRawValue(scope, item.key)) {
-              rawValues[index] = cached;
+            const cachedEntry = getCachedRawValueEntry(scope, item.key);
+            if (cachedEntry?.has("plain")) {
+              rawValues[index] = cachedEntry.get("plain");
               return;
             }
           }

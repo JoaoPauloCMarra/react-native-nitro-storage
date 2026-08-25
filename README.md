@@ -469,7 +469,9 @@ can also throw when a protected store is locked or its key is invalidated. Use
 matching item. `setBatch()` validates every item/value pair independently,
 including heterogeneous batches.
 Missing keys use each item's `defaultValue`; the native bridge preserves missing
-entries as `undefined` while reading the batch.
+entries as `undefined` while reading the batch. With `readCache: true`, item and
+batch reads reuse raw cache entries, including cached missing values, until a
+write, delete, clear, or external change invalidates the entry.
 
 ```ts
 import { getBatch, removeBatch, setBatch } from "react-native-nitro-storage";
@@ -592,6 +594,11 @@ setWebDiskStorageBackend(backend);
 setWebSecureStorageBackend(backend);
 ```
 
+Web reads and mutations stay synchronous against the backend's in-memory
+contract; use `flushWebStorageBackends()` for asynchronous persistence
+boundaries. The native entry keeps the web backend setters, getters, and flush
+function as typed no-ops for cross-platform code.
+
 Browser storage cannot provide iOS Keychain or Android Keystore guarantees. Web
 Secure scope is only as strong as the backend you configure.
 
@@ -622,28 +629,25 @@ const { storage, memoryItem } = createNitroStorageMock();
 
 ## API
 
-The default export is a configured `storage` instance; `createStorage()`
-builds isolated instances. Values are read and written through typed storage
-items (`stringItem`, `numberItem`, `booleanItem`, `jsonItem`, plus custom
-`createStorageItem` schemas) bound to a scope (`Memory`, `Disk`, or
-`Secure`). The surface covers single-key operations (`get`/`set`/`remove`/
-`has`), batch reads and writes, prefixed key enumeration, size queries,
-`flushSecureWrites()`, clear-by-scope, events and observers, React hooks,
-transactional migrations with rename/rollback, and the web backend adapter
-API. The full reference lives in
+The package exposes named `storage`, `createStorageItem`, the scoped item
+factories, `createSetItem`, batch operations, migration and transaction helpers,
+secure-auth storage, React hooks, and web backend utilities. Values are bound to
+`Memory`, `Disk`, or `Secure` and support typed single-key operations, raw
+inspection, events and observers, cache and write-flush controls, secure
+metadata, transactional migrations with rename/rollback, and configurable web
+backends. The full reference lives in
 [docs/api-reference.md](docs/api-reference.md).
 
 ## Error Contract
 
-Native failures cross the bridge as tagged, deterministic errors and surface
-as typed `StorageError` values with stable string codes — identical codes on
-iOS, Android, and web. Use `isStorageError(error, code)` to branch on them:
+Native and web adapters tag classified failures with stable error codes. Use
+`getStorageErrorCode(error)` or `isStorageError(error, code)` to branch on them:
 `keychain_locked` reports a locked Keychain that a retry can recover after
 authentication, secure-scope write or biometric failures carry their own
 codes, and invalid inputs (bad scope, malformed keys, numeric guard
-violations) are rejected before reaching native storage. Errors never
-swallow the underlying cause silently: the original platform message is
-preserved on the error for diagnostics.
+violations) are rejected before reaching native storage. Errors never swallow
+the underlying cause silently: the original platform message is preserved on
+the error for diagnostics.
 
 ## Platform Support
 
@@ -701,6 +705,10 @@ bun run example:ios
 Run native example builds before release when changing plugin, native, Nitro,
 secure storage, or packaging files. The package release path also validates
 package contents and dry-run publish behavior.
+
+`bun run benchmark` measures only the built web entry with an isolated private
+localStorage implementation; it is not a native Disk or Secure benchmark. See
+[docs/benchmarks.md](docs/benchmarks.md) for sampling and interpretation limits.
 
 ## License
 

@@ -98,7 +98,7 @@ import { storage } from "react-native-nitro-storage";
 
 const capabilities = storage.getSecurityCapabilities();
 
-if (capabilities.secureStorage === "available") {
+if (capabilities.secureStorage.encrypted === "available") {
   // Secure scope is backed by the configured native or web secure backend.
 }
 ```
