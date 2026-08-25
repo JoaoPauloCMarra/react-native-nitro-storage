@@ -2,29 +2,33 @@ import { act, fireEvent, render } from "@testing-library/react-native";
 import { createElement } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 
-jest.mock("react-native-nitro-storage", () => {
-  const probeItem = {
-    delete: jest.fn(),
-    get: jest.fn(),
-    set: jest.fn(),
-  };
-  return {
-    __probeItem: probeItem,
-    AccessControl: { WhenUnlockedThisDeviceOnly: 3 },
-    StorageScope: { Secure: 2 },
-    createStorageItem: jest.fn(() => probeItem),
-    getStorageErrorCode: jest.fn((error: unknown) =>
-      error instanceof Error
-        ? error.message.match(/\[nitro-error:([a-z_]+)\]/)?.[1]
-        : undefined,
-    ),
-    isStorageError: jest.fn(
-      (error: unknown, code: string) =>
-        error instanceof Error &&
-        error.message.includes(`[nitro-error:${code}]`),
-    ),
-  };
-});
+jest.mock(
+  "react-native-nitro-storage",
+  () => {
+    const probeItem = {
+      delete: jest.fn(),
+      get: jest.fn(),
+      set: jest.fn(),
+    };
+    return {
+      __probeItem: probeItem,
+      AccessControl: { WhenUnlockedThisDeviceOnly: 3 },
+      StorageScope: { Secure: 2 },
+      createStorageItem: jest.fn(() => probeItem),
+      getStorageErrorCode: jest.fn((error: unknown) =>
+        error instanceof Error
+          ? error.message.match(/\[nitro-error:([a-z_]+)\]/)?.[1]
+          : undefined,
+      ),
+      isStorageError: jest.fn(
+        (error: unknown, code: string) =>
+          error instanceof Error &&
+          error.message.includes(`[nitro-error:${code}]`),
+      ),
+    };
+  },
+  { virtual: true },
+);
 
 import { KeychainLifecycleProbe } from "../../../../apps/example/components/keychain-lifecycle-probe";
 
