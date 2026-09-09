@@ -554,22 +554,6 @@ export function createStorageCore(
     metrics.record(operation, scope, durationMs, keysCount);
   }
 
-  function readPendingSecureWrite(key: string): string | undefined {
-    return durability.readPendingSecureWrite(key);
-  }
-
-  function readPendingDiskWrite(key: string): string | undefined {
-    return durability.readPendingDiskWrite(key);
-  }
-
-  function hasPendingDiskWrite(key: string): boolean {
-    return durability.hasPendingDiskWrite(key);
-  }
-
-  function hasPendingSecureWrite(key: string): boolean {
-    return durability.hasPendingSecureWrite(key);
-  }
-
   function clearPendingDiskWrite(key: string): void {
     durability.clearPendingDiskWrite(key);
   }
@@ -622,12 +606,18 @@ export function createStorageCore(
       return typeof value === "string" ? value : undefined;
     }
 
-    if (scope === StorageScope.Disk && hasPendingDiskWrite(key)) {
-      return readPendingDiskWrite(key);
+    if (scope === StorageScope.Disk) {
+      const pending = durability.getPendingDiskWrite(key);
+      if (pending !== undefined) {
+        return pending.value;
+      }
     }
 
-    if (scope === StorageScope.Secure && hasPendingSecureWrite(key)) {
-      return readPendingSecureWrite(key);
+    if (scope === StorageScope.Secure) {
+      const pending = durability.getPendingSecureWrite(key);
+      if (pending !== undefined) {
+        return pending.value;
+      }
     }
 
     return adapter.backend.get(key, scope);
@@ -653,18 +643,22 @@ export function createStorageCore(
         : undefined;
     }
 
-    if (scope === StorageScope.Disk && hasPendingDiskWrite(key)) {
-      const pending = readPendingDiskWrite(key);
-      return pending === undefined
-        ? undefined
-        : unescapeCollidingRawValue(pending);
+    if (scope === StorageScope.Disk) {
+      const pending = durability.getPendingDiskWrite(key);
+      if (pending !== undefined) {
+        return pending.value === undefined
+          ? undefined
+          : unescapeCollidingRawValue(pending.value);
+      }
     }
 
-    if (scope === StorageScope.Secure && hasPendingSecureWrite(key)) {
-      const pending = readPendingSecureWrite(key);
-      return pending === undefined
-        ? undefined
-        : unescapeCollidingRawValue(pending);
+    if (scope === StorageScope.Secure) {
+      const pending = durability.getPendingSecureWrite(key);
+      if (pending !== undefined) {
+        return pending.value === undefined
+          ? undefined
+          : unescapeCollidingRawValue(pending.value);
+      }
     }
 
     const raw = adapter.backend.get(key, scope);
@@ -1664,28 +1658,32 @@ export function createStorageCore(
       }
 
       if (nonMemoryScope === StorageScope.Disk) {
-        if (durability.hasPendingDiskWrite(storageKey)) {
-          return durability.readPendingDiskWrite(storageKey);
+        const pending = durability.getPendingDiskWrite(storageKey);
+        if (pending !== undefined) {
+          return pending.value;
         }
       }
 
       if (nonMemoryScope === StorageScope.Secure && !isBiometric) {
-        if (durability.hasPendingSecureWrite(storageKey)) {
-          return durability.readPendingSecureWrite(storageKey);
+        const pending = durability.getPendingSecureWrite(storageKey);
+        if (pending !== undefined) {
+          return pending.value;
         }
       }
 
       migrateRenamesIfNeeded();
 
       if (nonMemoryScope === StorageScope.Disk) {
-        if (durability.hasPendingDiskWrite(storageKey)) {
-          return durability.readPendingDiskWrite(storageKey);
+        const pending = durability.getPendingDiskWrite(storageKey);
+        if (pending !== undefined) {
+          return pending.value;
         }
       }
 
       if (nonMemoryScope === StorageScope.Secure && !isBiometric) {
-        if (durability.hasPendingSecureWrite(storageKey)) {
-          return durability.readPendingSecureWrite(storageKey);
+        const pending = durability.getPendingSecureWrite(storageKey);
+        if (pending !== undefined) {
+          return pending.value;
         }
       }
 
@@ -1964,21 +1962,22 @@ export function createStorageCore(
       const records = getItemStateKeys().map((key) => {
         let pending: ItemPendingSnapshot | undefined;
         if (nonMemoryScope === StorageScope.Disk) {
-          if (durability.hasPendingDiskWrite(key)) {
+          const pendingWrite = durability.getPendingDiskWrite(key);
+          if (pendingWrite !== undefined) {
             pending = {
-              value: durability.readPendingDiskWrite(key),
+              value: pendingWrite.value,
             };
           }
-        } else if (
-          nonMemoryScope === StorageScope.Secure &&
-          !isBiometric &&
-          durability.hasPendingSecureWrite(key)
-        ) {
-          const accessControl = durability.readPendingSecureAccessControl(key);
-          pending = {
-            value: durability.readPendingSecureWrite(key),
-            ...(accessControl === undefined ? {} : { accessControl }),
-          };
+        } else if (nonMemoryScope === StorageScope.Secure && !isBiometric) {
+          const pendingWrite = durability.getPendingSecureWrite(key);
+          if (pendingWrite !== undefined) {
+            pending = {
+              value: pendingWrite.value,
+              ...(pendingWrite.accessControl === undefined
+                ? {}
+                : { accessControl: pendingWrite.accessControl }),
+            };
+          }
         }
 
         return {
@@ -2714,13 +2713,15 @@ export function createStorageCore(
         if (isMemory) return memoryStore.has(storageKey);
         if (isBiometric) return adapter.backend.hasSecureBiometric(storageKey);
         if (nonMemoryScope === StorageScope.Disk) {
-          if (durability.hasPendingDiskWrite(storageKey)) {
-            return durability.readPendingDiskWrite(storageKey) !== undefined;
+          const pending = durability.getPendingDiskWrite(storageKey);
+          if (pending !== undefined) {
+            return pending.value !== undefined;
           }
         }
         if (nonMemoryScope === StorageScope.Secure) {
-          if (durability.hasPendingSecureWrite(storageKey)) {
-            return durability.readPendingSecureWrite(storageKey) !== undefined;
+          const pending = durability.getPendingSecureWrite(storageKey);
+          if (pending !== undefined) {
+            return pending.value !== undefined;
           }
         }
         return adapter.backend.has(storageKey, config.scope);
@@ -2869,15 +2870,17 @@ export function createStorageCore(
 
         items.forEach((item, index) => {
           if (scope === StorageScope.Disk) {
-            if (durability.hasPendingDiskWrite(item.key)) {
-              rawValues[index] = durability.readPendingDiskWrite(item.key);
+            const pending = durability.getPendingDiskWrite(item.key);
+            if (pending !== undefined) {
+              rawValues[index] = pending.value;
               return;
             }
           }
 
           if (scope === StorageScope.Secure) {
-            if (durability.hasPendingSecureWrite(item.key)) {
-              rawValues[index] = durability.readPendingSecureWrite(item.key);
+            const pending = durability.getPendingSecureWrite(item.key);
+            if (pending !== undefined) {
+              rawValues[index] = pending.value;
               return;
             }
           }

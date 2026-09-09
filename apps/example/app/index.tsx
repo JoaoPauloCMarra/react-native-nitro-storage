@@ -23,6 +23,7 @@ import {
   type WebSecureStorageBackend,
 } from "react-native-nitro-storage";
 import { AdvancedApiDemo } from "../components/advanced-api-demo";
+import { E2eGate } from "../components/e2e-gate";
 import { ErgonomicsDemo } from "../components/ergonomics-demo";
 import { KeychainLifecycleProbe } from "../components/keychain-lifecycle-probe";
 import {
@@ -450,6 +451,7 @@ export default function HomeScreen() {
 
   return (
     <Page title="Nitro Storage" subtitle="Complete feature showcase">
+      <E2eGate />
       <MemoizedSmokeTestRunner />
 
       <MemoizedKeychainLifecycleProbe />

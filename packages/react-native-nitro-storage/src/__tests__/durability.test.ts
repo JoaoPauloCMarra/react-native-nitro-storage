@@ -101,7 +101,7 @@ describe("durability coordinator", () => {
 
     expect(() => coordinator.flushDiskWrites()).toThrow(failure);
     expect(coordinator.hasPendingDiskWrite("removed")).toBe(true);
-    expect(coordinator.readPendingDiskWrite("removed")).toBeUndefined();
+    expect(coordinator.getPendingDiskWrite("removed")?.value).toBeUndefined();
 
     coordinator.flushDiskWrites();
 
@@ -126,7 +126,7 @@ describe("durability coordinator", () => {
     coordinator.flushSecureWrites();
 
     expect(coordinator.hasPendingSecureWrite("same-key")).toBe(true);
-    expect(coordinator.readPendingSecureWrite("same-key")).toBe("new");
+    expect(coordinator.getPendingSecureWrite("same-key")?.value).toBe("new");
 
     coordinator.flushSecureWrites();
 
@@ -150,7 +150,9 @@ describe("durability coordinator", () => {
     coordinator.clearPendingSecureWriteIf(attempted);
 
     expect(attempted.generation).toBeLessThan(newer.generation);
-    expect(coordinator.readPendingSecureWrite("same-generation")).toBe("new");
+    expect(coordinator.getPendingSecureWrite("same-generation")?.value).toBe(
+      "new",
+    );
     expect(setBatch).not.toHaveBeenCalled();
   });
 
@@ -167,7 +169,7 @@ describe("durability coordinator", () => {
     coordinator.scheduleDiskWrite("same-disk-key", "old");
     coordinator.flushDiskWrites();
 
-    expect(coordinator.readPendingDiskWrite("same-disk-key")).toBe("new");
+    expect(coordinator.getPendingDiskWrite("same-disk-key")?.value).toBe("new");
     coordinator.flushDiskWrites();
     expect(setBatch).toHaveBeenLastCalledWith(
       ["same-disk-key"],
@@ -189,7 +191,7 @@ describe("durability coordinator", () => {
     coordinator.scheduleDiskWrite("same-disk-delete-key", undefined);
     coordinator.flushDiskWrites();
 
-    expect(coordinator.readPendingDiskWrite("same-disk-delete-key")).toBe(
+    expect(coordinator.getPendingDiskWrite("same-disk-delete-key")?.value).toBe(
       "recreated",
     );
     coordinator.flushDiskWrites();
@@ -213,9 +215,9 @@ describe("durability coordinator", () => {
     coordinator.scheduleSecureWrite("same-secure-delete-key", undefined);
     coordinator.flushSecureWrites();
 
-    expect(coordinator.readPendingSecureWrite("same-secure-delete-key")).toBe(
-      "recreated",
-    );
+    expect(
+      coordinator.getPendingSecureWrite("same-secure-delete-key")?.value,
+    ).toBe("recreated");
     coordinator.flushSecureWrites();
     expect(backend.setBatch).toHaveBeenLastCalledWith(
       ["same-secure-delete-key"],
