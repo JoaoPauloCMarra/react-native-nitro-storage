@@ -1090,6 +1090,7 @@ export function SmokeTestRunner() {
     [logs],
   );
   const total = logs.length;
+  const completionLabel = failCount === 0 ? "Complete: PASS" : "Complete: FAIL";
 
   return (
     <View style={s.container}>
@@ -1097,9 +1098,10 @@ export function SmokeTestRunner() {
         <View style={s.headerLeft}>
           <Text style={s.title}>Smoke Test</Text>
           {total > 0 ? (
-            <Text style={s.summary}>
+            <Text testID="smoke-summary" style={s.summary}>
+              {running ? "Running: " : `${completionLabel}: `}
               {passCount}/{total} passed
-              {failCount > 0 ? ` · ${failCount} failed` : ""}
+              {` · ${failCount} failed`}
               {skippedCount > 0 ? ` · ${skippedCount} skipped` : ""}
             </Text>
           ) : (

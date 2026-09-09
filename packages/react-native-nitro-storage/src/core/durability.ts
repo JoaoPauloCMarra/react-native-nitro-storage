@@ -13,9 +13,8 @@ export type DurabilityCoordinator = {
   isDiskWritesAsync(): boolean;
   hasPendingDiskWrite(key: string): boolean;
   hasPendingSecureWrite(key: string): boolean;
-  readPendingDiskWrite(key: string): string | undefined;
-  readPendingSecureWrite(key: string): string | undefined;
-  readPendingSecureAccessControl(key: string): AccessControl | undefined;
+  getPendingDiskWrite(key: string): PendingDiskWrite | undefined;
+  getPendingSecureWrite(key: string): PendingSecureWrite | undefined;
   clearPendingDiskWrite(key: string): void;
   clearPendingSecureWrite(key: string): void;
   clearPendingDiskWriteIf(write: PendingDiskWrite): void;
@@ -235,10 +234,8 @@ export function createDurabilityCoordinator(options: {
     isDiskWritesAsync: () => diskWritesAsync,
     hasPendingDiskWrite: (key) => pendingDiskWrites.has(key),
     hasPendingSecureWrite: (key) => pendingSecureWrites.has(key),
-    readPendingDiskWrite: (key) => pendingDiskWrites.get(key)?.value,
-    readPendingSecureWrite: (key) => pendingSecureWrites.get(key)?.value,
-    readPendingSecureAccessControl: (key) =>
-      pendingSecureWrites.get(key)?.accessControl,
+    getPendingDiskWrite: (key) => pendingDiskWrites.get(key),
+    getPendingSecureWrite: (key) => pendingSecureWrites.get(key),
     clearPendingDiskWrite: (key) => {
       pendingDiskWrites.delete(key);
     },

@@ -112,6 +112,7 @@ temp/
 *.temp
 
 .pack-docs-state/
+/.agent-device/
 
 .agents
 *.md
