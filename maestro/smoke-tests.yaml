@@ -10,9 +10,9 @@ name: "Smoke Tests - Terminal State"
     timeout: 120000
 - tapOn: "Run All"
 - extendedWaitUntil:
-    notVisible: "Running..."
+    visible:
+      id: "smoke-summary"
+      text: "Complete: PASS: [1-9][0-9]*/[0-9]+ passed · 0 failed.*"
     timeout: 120000
-- assertVisible:
-    text: ".*[1-9][0-9]*/[0-9]+ passed.*"
 - assertNotVisible:
-    text: ".*failed.*"
+    text: "Complete: FAIL.*"
