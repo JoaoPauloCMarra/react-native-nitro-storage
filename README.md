@@ -77,7 +77,7 @@ before installing this package, then rebuild the native app so the generated
 Nitro bindings and native runtime use the same major-minor version:
 
 ```sh
-bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.10.1
+bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.10.2
 bunx expo prebuild
 ```
 
@@ -98,6 +98,10 @@ bunx expo prebuild
 
 Expo Go cannot load Nitro native modules. Use an Expo development build or a
 bare React Native app.
+
+iOS static frameworks are supported with source-built React Native. After
+upgrading, regenerate the Expo native project or run `pod install`, then rebuild
+the app so CocoaPods applies the updated header paths.
 
 ## Expo Config
 

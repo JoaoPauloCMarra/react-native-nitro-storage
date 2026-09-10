@@ -39,4 +39,5 @@ Pod::Spec.new do |s|
   
   load 'nitrogen/generated/ios/NitroStorage+autolinking.rb'
   add_nitrogen_files(s)
+  install_modules_dependencies(s)
 end
