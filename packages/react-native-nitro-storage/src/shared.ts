@@ -51,6 +51,13 @@ export type StorageMetricSummary = {
   maxDurationMs: number;
 };
 
+export type StorageCacheMetrics = {
+  cacheHits: number;
+  cacheMisses: number;
+  cacheEntries: number;
+  cacheBytes: number;
+};
+
 export type StorageSelectorListener<TSelected> = (
   value: TSelected,
   previousValue: TSelected,

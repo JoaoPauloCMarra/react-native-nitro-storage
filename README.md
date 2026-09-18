@@ -68,7 +68,7 @@ Nitro peer requirement: `react-native-nitro-modules >=0.37.0 <0.38.0`.
 The package gate uses React Native `0.86.3` and the Strict TypeScript API.
 `check:ci` also compiles the public source against React Native `0.87.0`'s
 Strict TypeScript API; this does not change the runtime baseline. The Expo
-example uses Expo SDK `57.0.21`, React Native
+example uses Expo SDK `57.0.24`, React Native
 `0.86.3`, React `19.2.3`, and Nitro Modules `0.37.1`, which is the React Native
 version supported by that Expo SDK. Do not override Expo's React Native version.
 
@@ -520,13 +520,21 @@ storage.setMetricsObserver((event) => {
 
 const metrics = storage.getMetricsSnapshot();
 const scopedMetrics = storage.getScopedMetricsSnapshot();
+const cacheMetrics = storage.getCacheMetrics();
 storage.resetMetrics();
 unsubscribe();
 ```
 
 `getMetricsSnapshot()` aggregates each operation across scopes for backward
 compatibility. `getScopedMetricsSnapshot()` adds the numeric scope suffix for
-per-scope analysis, for example `item:set:1`.
+per-scope analysis, for example `item:set:1`. `getCacheMetrics()` reports live
+Disk/Secure raw-cache hits, misses, entries, and estimated bytes. The cache is
+unbounded; `resetMetrics()` zeros the hit/miss counters and leaves entries in
+place.
+
+The example app includes hidden integrity, keychain, and Disk/Secure stress
+labs at `nitrostorage://e2e-integrity`, `nitrostorage://e2e-keychain`, and
+`nitrostorage://e2e-stress`.
 
 Secure event observer values are redacted by default. Pass
 `{ redactSecureValues: false }` only in trusted debug tooling where raw values

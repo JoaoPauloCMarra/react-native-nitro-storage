@@ -1,0 +1,7 @@
+open "com.nitrostorage.example" "nitrostorage://e2e-stress" --relaunch
+wait "stable"
+wait id="e2e-stress-screen"
+wait text "ready"
+wait id="e2e-stress-summary"
+wait text "fail=0"
+close

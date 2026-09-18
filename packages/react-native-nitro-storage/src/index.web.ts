@@ -34,6 +34,7 @@ export type {
   SecureAuthStorageConfig,
   StorageEventObserverOptions,
   StorageExportOptions,
+  StorageCacheMetrics,
   StorageMetricSummary,
   StorageMetricsEvent,
   StorageMetricsObserver,
