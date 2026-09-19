@@ -14,7 +14,8 @@ internal class DiskSqliteStore(
     init {
         val file = File(context.filesDir, DATABASE_NAME)
         db = SQLiteDatabase.openOrCreateDatabase(file, null)
-        db.execSQL("PRAGMA journal_mode=WAL")
+        // PRAGMA journal_mode returns a row; Android forbids result-bearing SQL on execSQL.
+        db.rawQuery("PRAGMA journal_mode=WAL", null).close()
         db.execSQL("PRAGMA synchronous=NORMAL")
         db.execSQL(
             "CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)",

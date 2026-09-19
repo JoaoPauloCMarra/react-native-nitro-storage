@@ -32,7 +32,10 @@ Breaking changes are always listed first in each release section.
 - The example iOS host uses a `SceneDelegate` so the app can present a window on
   iOS 27 physical devices.
 
-## [0.10.2] - 2026-09-10
+### Fixed
+
+- Android Disk no longer crashes on first open when enabling SQLite WAL:
+  `PRAGMA journal_mode=WAL` is applied with `rawQuery` instead of `execSQL`.
 
 ### Breaking changes
 

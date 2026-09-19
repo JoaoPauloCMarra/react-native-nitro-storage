@@ -8,6 +8,7 @@ import {
   getStorageErrorCode,
   getWebDiskStorageBackend,
   getWebSecureStorageBackend,
+  isKeychainLockedError,
   migrateToLatest,
   registerMigration,
   removeBatch,
@@ -38,6 +39,17 @@ import {
   styles,
 } from "../components/shared";
 import { SmokeTestRunner } from "../components/smoke-test";
+
+function withKeychainFallback<T>(run: () => T, fallback: T): T {
+  try {
+    return run();
+  } catch (error) {
+    if (isKeychainLockedError(error)) {
+      return fallback;
+    }
+    throw error;
+  }
+}
 
 const MemoizedAdvancedApiDemo = memo(AdvancedApiDemo);
 const MemoizedErgonomicsDemo = memo(ErgonomicsDemo);
@@ -330,10 +342,10 @@ export default function HomeScreen() {
   const [tempToken, setTempToken] = useState("");
   const tempTokenRef = useRef("");
   const [secureMetadata, setSecureMetadata] = useState(() =>
-    storage.getSecureMetadata("secure-token"),
+    withKeychainFallback(() => storage.getSecureMetadata("secure-token"), undefined),
   );
-  const [secureMetadataCount, setSecureMetadataCount] = useState(
-    () => storage.getAllSecureMetadata().length,
+  const [secureMetadataCount, setSecureMetadataCount] = useState(() =>
+    withKeychainFallback(() => storage.getAllSecureMetadata().length, 0),
   );
 
   const [nsPref, setNsPref] = useStorage(namespacedItem);
@@ -395,8 +407,15 @@ export default function HomeScreen() {
   const securityCapabilities = storage.getSecurityCapabilities();
 
   const refreshSecureMetadata = () => {
-    setSecureMetadata(storage.getSecureMetadata("secure-token"));
-    setSecureMetadataCount(storage.getAllSecureMetadata().length);
+    setSecureMetadata(
+      withKeychainFallback(
+        () => storage.getSecureMetadata("secure-token"),
+        undefined,
+      ),
+    );
+    setSecureMetadataCount(
+      withKeychainFallback(() => storage.getAllSecureMetadata().length, 0),
+    );
   };
 
   const installWebBackends = () => {

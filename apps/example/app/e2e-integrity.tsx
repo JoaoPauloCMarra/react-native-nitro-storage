@@ -2,7 +2,10 @@ import { useEffect, useState } from "react";
 import { View } from "react-native";
 import {
   createStorageItem,
+  getBatch,
+  removeBatch,
   runTransaction,
+  setBatch,
   storage,
   StorageScope,
 } from "react-native-nitro-storage";
@@ -146,8 +149,9 @@ function runIntegritySweep(): IntegrityReport {
     }),
     runCase("cache-metrics", () => {
       storage.resetMetrics();
+      const key = `__integrity_cache_${Date.now()}__`;
       const item = createStorageItem({
-        key: "__integrity_cache__",
+        key,
         scope: StorageScope.Disk,
         defaultValue: "",
         readCache: true,
@@ -160,6 +164,90 @@ function runIntegritySweep(): IntegrityReport {
       assert(metrics.cacheHits > 0, "expected a hit");
       assert(metrics.cacheEntries > 0, "expected cache entries");
       item.delete();
+      storage.flushDiskWrites();
+    }),
+    runCase("disk-ttl", () => {
+      const item = createStorageItem({
+        key: "__integrity_ttl__",
+        scope: StorageScope.Disk,
+        defaultValue: "expired-default",
+        expiration: { ttlMs: 1 },
+      });
+      item.set("fresh");
+      storage.flushDiskWrites();
+      const started = Date.now();
+      while (Date.now() - started < 5) {}
+      assert(item.get() === "expired-default", `got ${item.get()}`);
+      item.delete();
+      storage.flushDiskWrites();
+    }),
+    runCase("secure-batch", () => {
+      const a = createStorageItem({
+        key: "__integrity_sb_a__",
+        scope: StorageScope.Secure,
+        defaultValue: "",
+      });
+      const b = createStorageItem({
+        key: "__integrity_sb_b__",
+        scope: StorageScope.Secure,
+        defaultValue: "",
+      });
+      setBatch(
+        [
+          { item: a, value: "a" },
+          { item: b, value: "b" },
+        ],
+        StorageScope.Secure,
+      );
+      storage.flushSecureWrites();
+      const [va, vb] = getBatch([a, b], StorageScope.Secure);
+      assert(va === "a" && vb === "b", `got ${String(va)},${String(vb)}`);
+      removeBatch([a, b], StorageScope.Secure);
+      storage.flushSecureWrites();
+    }),
+    runCase("secure-tx-rollback", () => {
+      const item = createStorageItem({
+        key: "__integrity_stx__",
+        scope: StorageScope.Secure,
+        defaultValue: "",
+      });
+      item.set("committed");
+      storage.flushSecureWrites();
+      let rolledBack = false;
+      try {
+        runTransaction(StorageScope.Secure, (tx) => {
+          tx.setItem(item, "should-rollback");
+          throw new Error("rollback");
+        });
+      } catch {
+        rolledBack = true;
+      }
+      assert(rolledBack, "expected throw");
+      assert(item.get() === "committed", `got ${item.get()}`);
+      item.delete();
+      storage.flushSecureWrites();
+    }),
+    runCase("disk-prefix", () => {
+      storage.setString("__pfx_keep__", "1", StorageScope.Disk);
+      storage.setString("__pfx_drop_a__", "2", StorageScope.Disk);
+      storage.flushDiskWrites();
+      const keys = storage.getKeysByPrefix("__pfx_", StorageScope.Disk);
+      assert(keys.includes("__pfx_keep__"), "keep missing");
+      assert(keys.includes("__pfx_drop_a__"), "drop missing");
+      for (const key of storage.getKeysByPrefix("__pfx_drop_", StorageScope.Disk)) {
+        storage.deleteString(key, StorageScope.Disk);
+      }
+      storage.flushDiskWrites();
+      assert(
+        storage.getString("__pfx_keep__", StorageScope.Disk) === "1",
+        "keep removed",
+      );
+      assert(
+        storage.getString("__pfx_drop_a__", StorageScope.Disk) == null,
+        "drop still present",
+      );
+      storage.deleteString("__pfx_keep__", StorageScope.Disk);
+      storage.flushDiskWrites();
     }),
     previousPersist === "persist-v1"
       ? {
