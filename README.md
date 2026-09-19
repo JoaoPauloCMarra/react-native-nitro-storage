@@ -77,7 +77,7 @@ before installing this package, then rebuild the native app so the generated
 Nitro bindings and native runtime use the same major-minor version:
 
 ```sh
-bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.10.2
+bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.10.3
 bunx expo prebuild
 ```
 

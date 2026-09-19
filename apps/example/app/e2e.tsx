@@ -9,12 +9,12 @@ function LabLink({
   testID,
   label,
 }: {
-  href: string;
+  href: Href;
   testID: string;
   label: string;
 }) {
   return (
-    <Link href={href as Href} asChild>
+    <Link href={href} asChild>
       <Pressable
         testID={testID}
         accessibilityRole="link"

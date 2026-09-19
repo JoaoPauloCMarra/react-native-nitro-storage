@@ -50,19 +50,21 @@ function runIntegritySweep(): IntegrityReport {
   const previousPersist = storage.getString(persistKey, StorageScope.Disk);
   const cases: LabCase[] = [
     runCase("disk-write-read", () => {
+      storage.setString("__integrity_disk__", "disk-ok", StorageScope.Disk);
       const item = createStorageItem({
-        key: "__integrity_disk__",
+        key: "__integrity_disk_item__",
         scope: StorageScope.Disk,
         defaultValue: "",
       });
-      item.set("disk-ok");
-      assert(item.get() === "disk-ok", `got ${item.get()}`);
+      item.set("disk-item-ok");
+      assert(item.get() === "disk-item-ok", `got ${item.get()}`);
       assert(
         storage.getString("__integrity_disk__", StorageScope.Disk) ===
           "disk-ok",
         "raw disk mismatch",
       );
       item.delete();
+      storage.deleteString("__integrity_disk__", StorageScope.Disk);
     }),
     runCase("secure-write-read", () => {
       const item = createStorageItem({
@@ -129,15 +131,18 @@ function runIntegritySweep(): IntegrityReport {
         defaultValue: "",
       });
       namespaced.set("ns-ok");
+      assert(namespaced.get() === "ns-ok", `got ${namespaced.get()}`);
+      storage.setString("integrity:pref-raw", "ns-raw", StorageScope.Disk);
       assert(
-        storage.getString("integrity:pref", StorageScope.Disk) === "ns-ok",
-        "namespaced key missing",
+        storage.getString("integrity:pref-raw", StorageScope.Disk) === "ns-raw",
+        "namespaced raw key missing",
       );
       assert(
-        storage.getString("pref", StorageScope.Disk) !== "ns-ok",
+        storage.getString("pref", StorageScope.Disk) !== "ns-raw",
         "plain key leaked into namespace",
       );
       namespaced.delete();
+      storage.deleteString("integrity:pref-raw", StorageScope.Disk);
     }),
     runCase("cache-metrics", () => {
       storage.resetMetrics();

@@ -1,5 +1,5 @@
 import { Pressable, Text } from "react-native";
-import { Link, type Href } from "expo-router";
+import { Link } from "expo-router";
 import { Colors } from "./shared";
 
 export function E2eGate() {
@@ -19,7 +19,7 @@ export function E2eGate() {
           </Text>
         </Pressable>
       </Link>
-      <Link href={"/e2e-integrity" as Href} asChild>
+      <Link href="/e2e-integrity" asChild>
         <Pressable
           testID="open-e2e-integrity-home"
           accessibilityRole="link"
@@ -30,6 +30,34 @@ export function E2eGate() {
             style={{ color: Colors.muted, fontSize: 12, fontWeight: "600" }}
           >
             Integrity lab
+          </Text>
+        </Pressable>
+      </Link>
+      <Link href="/e2e-keychain" asChild>
+        <Pressable
+          testID="open-e2e-keychain-home"
+          accessibilityRole="link"
+          accessibilityLabel="Open keychain lab"
+          style={{ alignSelf: "flex-start", paddingVertical: 6 }}
+        >
+          <Text
+            style={{ color: Colors.muted, fontSize: 12, fontWeight: "600" }}
+          >
+            Keychain lab
+          </Text>
+        </Pressable>
+      </Link>
+      <Link href="/e2e-stress" asChild>
+        <Pressable
+          testID="open-e2e-stress-home"
+          accessibilityRole="link"
+          accessibilityLabel="Open stress lab"
+          style={{ alignSelf: "flex-start", paddingVertical: 6 }}
+        >
+          <Text
+            style={{ color: Colors.muted, fontSize: 12, fontWeight: "600" }}
+          >
+            Stress lab
           </Text>
         </Pressable>
       </Link>
