@@ -37,6 +37,8 @@ Breaking changes are always listed first in each release section.
 - Android Disk no longer crashes on first open when enabling SQLite WAL:
   `PRAGMA journal_mode=WAL` is applied with `rawQuery` instead of `execSQL`.
 
+## [0.10.2] - 2026-09-10
+
 ### Breaking changes
 
 - None.
