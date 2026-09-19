@@ -61,6 +61,7 @@ private fun Throwable.wrapStorageException(
 class AndroidStorageAdapter private constructor(private val context: Context) {
     private val sharedPreferences: SharedPreferences =
         context.getSharedPreferences("NitroStorage", Context.MODE_PRIVATE)
+    private val diskStore: DiskSqliteStore = DiskSqliteStore(context, sharedPreferences)
 
     private val masterKeyAlias = "${context.packageName}.nitro_storage.master_key"
 
@@ -519,71 +520,57 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
 
         @JvmStatic
         fun setDisk(key: String, value: String) {
-            getInstanceOrThrow().sharedPreferences.edit().putString(key, value).apply()
+            getInstanceOrThrow().diskStore.set(key, value)
         }
 
         @JvmStatic
         fun setDiskBatch(keys: Array<String>, values: Array<String>) {
-            val editor = getInstanceOrThrow().sharedPreferences.edit()
-            val count = minOf(keys.size, values.size)
-            for (index in 0 until count) {
-                editor.putString(keys[index], values[index])
-            }
-            editor.apply()
+            getInstanceOrThrow().diskStore.setBatch(keys, values)
         }
 
         @JvmStatic
         fun getDisk(key: String): String? {
-            return getInstanceOrThrow().sharedPreferences.getString(key, null)
+            return getInstanceOrThrow().diskStore.get(key)
         }
 
         @JvmStatic
         fun getDiskBatch(keys: Array<String>): Array<String?> {
-            val prefs = getInstanceOrThrow().sharedPreferences
-            return Array(keys.size) { index ->
-                prefs.getString(keys[index], null)
-            }
+            return getInstanceOrThrow().diskStore.getBatch(keys)
         }
 
         @JvmStatic
         fun deleteDisk(key: String) {
-            getInstanceOrThrow().sharedPreferences.edit().remove(key).apply()
+            getInstanceOrThrow().diskStore.remove(key)
         }
 
         @JvmStatic
         fun deleteDiskBatch(keys: Array<String>) {
-            val editor = getInstanceOrThrow().sharedPreferences.edit()
-            for (key in keys) {
-                editor.remove(key)
-            }
-            editor.apply()
+            getInstanceOrThrow().diskStore.removeBatch(keys)
         }
 
         @JvmStatic
         fun hasDisk(key: String): Boolean {
-            return getInstanceOrThrow().sharedPreferences.contains(key)
+            return getInstanceOrThrow().diskStore.has(key)
         }
 
         @JvmStatic
         fun getAllKeysDisk(): Array<String> {
-            return getInstanceOrThrow().sharedPreferences.all.keys.toTypedArray()
+            return getInstanceOrThrow().diskStore.getAllKeys()
         }
 
         @JvmStatic
         fun getKeysByPrefixDisk(prefix: String): Array<String> {
-            return getInstanceOrThrow().sharedPreferences.all.keys
-                .filter { it.startsWith(prefix) }
-                .toTypedArray()
+            return getInstanceOrThrow().diskStore.getKeysByPrefix(prefix)
         }
 
         @JvmStatic
         fun sizeDisk(): Int {
-            return getInstanceOrThrow().sharedPreferences.all.size
+            return getInstanceOrThrow().diskStore.size()
         }
 
         @JvmStatic
         fun clearDisk() {
-            getInstanceOrThrow().sharedPreferences.edit().clear().apply()
+            getInstanceOrThrow().diskStore.clear()
         }
 
         // --- Secure (async apply by default, sync commit when requested) ---

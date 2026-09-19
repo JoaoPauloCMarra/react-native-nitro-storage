@@ -213,6 +213,11 @@ values, and failed persistence therefore remain available for recovery. The
 migration is retryable on a later initialization; do not delete the registry
 manually while an upgrade is in progress.
 
+After that cutover, suite string keys are imported into the SQLite WAL Disk
+database. New Disk writes go to SQLite. The v1 suite marker is preserved so
+the UserDefaults cutover stays retryable. See
+[native-libraries.md](native-libraries.md).
+
 ## Web Secure Backend
 
 Browsers cannot provide iOS Keychain or Android Keystore guarantees. On web, Secure scope is only as strong as the backend you configure.

@@ -146,6 +146,9 @@ const hybridSpecFile = path.join(
   "HybridStorageSpec.cpp",
 );
 const hybridOutputFile = path.join(buildDir, "hybrid_storage_test");
+const sqliteStoreSource = path.join(cppDir, "core", "SqliteDiskStore.cpp");
+const sqliteStoreTestFile = path.join(cppDir, "core", "SqliteDiskStoreTest.cpp");
+const sqliteOutputFile = path.join(buildDir, "sqlite_disk_store_test");
 
 console.log("⚙️  Compiling...");
 
@@ -227,9 +230,10 @@ function runCoverage(hybridOutputFile) {
     path.join(cppDir, "bindings", "HybridStorage.hpp"),
   ];
 
-  runCommand(hybridOutputFile, [], {
+    runCommand(hybridOutputFile, [], {
     env: { ...process.env, LLVM_PROFILE_FILE: hybridProfile },
   });
+    runCommand(sqliteOutputFile, [], { env: sanitizerRuntimeEnv() });
 
   runCommand(profdata, [
     "merge",
@@ -309,6 +313,18 @@ try {
   ];
   runCommand("clang++", compileHybridArgs);
 
+  const compileSqliteArgs = [
+    ...commonFlags,
+    `-I${path.join(cppDir, "core")}`,
+    sqliteStoreTestFile,
+    sqliteStoreSource,
+    "-lsqlite3",
+    "-o",
+    sqliteOutputFile,
+    ...linkFlags,
+  ];
+  runCommand("clang++", compileSqliteArgs);
+
   let iosAdapterOutputFile = null;
   if (process.platform === "darwin") {
     const iosAdapterTestFile = path.join(
@@ -332,6 +348,8 @@ try {
       `-I${path.join(__dirname, "..", "ios")}`,
       iosAdapterTestFile,
       iosAdapterSourceFile,
+      sqliteStoreSource,
+      "-lsqlite3",
       "-framework",
       "Foundation",
       "-framework",
@@ -346,6 +364,7 @@ try {
   }
 
   signDarwinBinary(hybridOutputFile);
+  signDarwinBinary(sqliteOutputFile);
   if (iosAdapterOutputFile) {
     signDarwinBinary(iosAdapterOutputFile);
   }
@@ -361,6 +380,7 @@ try {
   } else {
     const sanitizerEnv = sanitizerRuntimeEnv();
     runCommand(hybridOutputFile, [], { env: sanitizerEnv });
+    runCommand(sqliteOutputFile, [], { env: sanitizerEnv });
     if (iosAdapterOutputFile) {
       runCommand(iosAdapterOutputFile, [], { env: sanitizerEnv });
     }

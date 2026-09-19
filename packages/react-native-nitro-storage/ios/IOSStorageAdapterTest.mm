@@ -11,6 +11,7 @@ using NitroStorage::IOSStorageAdapterCpp;
 
 namespace NitroStorage {
 void runLegacyDiskMigrationCutoverForTesting(NSUserDefaults* defaults);
+void resetSqliteDiskStoreForTesting();
 }
 
 namespace {
@@ -31,6 +32,7 @@ NSString* nsKey(const char* key) {
 }
 
 void cleanupState() {
+    NitroStorage::resetSqliteDiskStoreForTesting();
     NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
     [standard removeObjectForKey:nsKey(kHostKey)];
     [standard removeObjectForKey:nsKey(kLegacyKey)];

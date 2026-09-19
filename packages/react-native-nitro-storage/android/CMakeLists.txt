@@ -13,6 +13,8 @@ file(GLOB SOURCES
 )
 # Unit/integration C++ tests define `main()` and must never be linked into the Android shared library.
 list(FILTER SOURCES EXCLUDE REGEX ".*/[^/]*Test\\.cpp$")
+# iOS/macOS Disk SQLite lives in this translation unit; Android uses DiskSqliteStore.kt.
+list(FILTER SOURCES EXCLUDE REGEX ".*/SqliteDiskStore\\.cpp$")
 
 # 2. Create the library target
 add_library(

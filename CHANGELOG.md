@@ -20,6 +20,10 @@ Breaking changes are always listed first in each release section.
 - Example integrity, keychain, and Disk/Secure stress labs at
   `nitrostorage://e2e-integrity`, `nitrostorage://e2e-keychain`, and
   `nitrostorage://e2e-stress`.
+- Native Disk now uses SQLite WAL (`SqliteDiskStore` on iOS, `DiskSqliteStore`
+  on Android). Existing UserDefaults suite keys and `NitroStorage`
+  SharedPreferences values are imported once. See
+  [docs/native-libraries.md](docs/native-libraries.md).
 
 ### Changed
 

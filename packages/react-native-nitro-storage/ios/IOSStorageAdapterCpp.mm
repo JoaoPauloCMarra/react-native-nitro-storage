@@ -3,6 +3,8 @@
 #import <Security/Security.h>
 #import <LocalAuthentication/LocalAuthentication.h>
 
+#include "SqliteDiskStore.hpp"
+
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -87,6 +89,50 @@ static void unregisterLegacyDiskKeys(NSArray<NSString*>* keys) {
 
 static NSString* const kLegacyDiskMigrationMarkerKey =
     @"__nitro_storage_legacy_disk_migration_v1__";
+
+static std::string NitroDiskStorePath() {
+    NSArray<NSURL*>* urls = [[NSFileManager defaultManager]
+        URLsForDirectory:NSApplicationSupportDirectory
+               inDomains:NSUserDomainMask];
+    NSURL* directory = urls.firstObject;
+    if (directory == nil) {
+        return NitroStorage::SqliteDiskStore::defaultPath();
+    }
+    [[NSFileManager defaultManager]
+        createDirectoryAtURL:directory
+ withIntermediateDirectories:YES
+                  attributes:nil
+                       error:nil];
+    NSString* path = [[directory URLByAppendingPathComponent:@"nitro-storage-disk.sqlite"] path];
+    return std::string([path UTF8String]);
+}
+
+static NitroStorage::SqliteDiskStore& NitroSqliteDiskStore() {
+    return NitroStorage::SqliteDiskStore::shared(NitroDiskStorePath());
+}
+
+static bool isInternalDiskKey(NSString* key) {
+    return [key isEqualToString:kLegacyDiskKeysRegistryKey] ||
+        [key isEqualToString:kLegacyDiskMigrationMarkerKey];
+}
+
+static void migrateSuiteIntoSqlite() {
+    NSDictionary<NSString*, id>* entries =
+        [NitroDiskDefaults() persistentDomainForName:kDiskSuiteName] ?: @{};
+    std::vector<std::pair<std::string, std::string>> pairs;
+    pairs.reserve(entries.count);
+    for (NSString* key in entries) {
+        if (isInternalDiskKey(key)) {
+            continue;
+        }
+        id value = entries[key];
+        if (![value isKindOfClass:[NSString class]]) {
+            continue;
+        }
+        pairs.emplace_back(std::string([key UTF8String]), std::string([(NSString*)value UTF8String]));
+    }
+    NitroSqliteDiskStore().migrateIfAbsent(pairs);
+}
 
 static void runLegacyDiskMigrationCutover(
     NSUserDefaults* defaults,
@@ -247,16 +293,27 @@ IOSStorageAdapterCpp::IOSStorageAdapterCpp() {
         NitroDiskDefaults(),
         [NSUserDefaults standardUserDefaults]
     );
+    migrateSuiteIntoSqlite();
 }
 IOSStorageAdapterCpp::~IOSStorageAdapterCpp() {}
+
+#ifdef NITRO_STORAGE_TESTING
+void resetSqliteDiskStoreForTesting() {
+    SqliteDiskStore::resetShared();
+    NSString* path = [NSString stringWithUTF8String:NitroDiskStorePath().c_str()];
+    NSFileManager* files = [NSFileManager defaultManager];
+    [files removeItemAtPath:path error:nil];
+    [files removeItemAtPath:[path stringByAppendingString:@"-wal"] error:nil];
+    [files removeItemAtPath:[path stringByAppendingString:@"-shm"] error:nil];
+}
+#endif
 
 // --- Disk ---
 
 void IOSStorageAdapterCpp::setDisk(const std::string& key, const std::string& value) {
+    NitroSqliteDiskStore().set(key, value);
     NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
-    NSString* nsValue = [NSString stringWithUTF8String:value.c_str()];
     NSUserDefaults* defaults = NitroDiskDefaults();
-    [defaults setObject:nsValue forKey:nsKey];
     NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
     if (defaults != standard && [standard objectForKey:nsKey] != nil) {
         [standard removeObjectForKey:nsKey];
@@ -265,13 +322,19 @@ void IOSStorageAdapterCpp::setDisk(const std::string& key, const std::string& va
 }
 
 std::optional<std::string> IOSStorageAdapterCpp::getDisk(const std::string& key) {
+    if (auto stored = NitroSqliteDiskStore().get(key)) {
+        return stored;
+    }
     NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
     NSString* result = migrateLegacyDiskValue(nsKey);
     if (!result) return std::nullopt;
-    return std::string([result UTF8String]);
+    const std::string value([result UTF8String]);
+    NitroSqliteDiskStore().set(key, value);
+    return value;
 }
 
 void IOSStorageAdapterCpp::deleteDisk(const std::string& key) {
+    NitroSqliteDiskStore().remove(key);
     NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
     NSUserDefaults* defaults = NitroDiskDefaults();
     [defaults removeObjectForKey:nsKey];
@@ -283,6 +346,9 @@ void IOSStorageAdapterCpp::deleteDisk(const std::string& key) {
 }
 
 bool IOSStorageAdapterCpp::hasDisk(const std::string& key) {
+    if (NitroSqliteDiskStore().has(key)) {
+        return true;
+    }
     NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
     NSUserDefaults* defaults = NitroDiskDefaults();
     if ([defaults objectForKey:nsKey] != nil) {
@@ -296,13 +362,15 @@ bool IOSStorageAdapterCpp::hasDisk(const std::string& key) {
 }
 
 std::vector<std::string> IOSStorageAdapterCpp::getAllKeysDisk() {
+    std::unordered_set<std::string> combined;
+    for (const auto& key : NitroSqliteDiskStore().getAllKeys()) {
+        combined.insert(key);
+    }
     NSUserDefaults* defaults = NitroDiskDefaults();
     NSDictionary<NSString*, id>* entries = [defaults persistentDomainForName:kDiskSuiteName] ?: @{};
     NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
-    std::unordered_set<std::string> combined;
     for (NSString* key in entries) {
-        if (![key isEqualToString:kLegacyDiskKeysRegistryKey] &&
-            ![key isEqualToString:kLegacyDiskMigrationMarkerKey]) {
+        if (!isInternalDiskKey(key)) {
             combined.insert(std::string([key UTF8String]));
         }
     }
@@ -321,13 +389,19 @@ std::vector<std::string> IOSStorageAdapterCpp::getAllKeysDisk() {
 }
 
 std::vector<std::string> IOSStorageAdapterCpp::getKeysByPrefixDisk(const std::string& prefix) {
-    const auto keys = getAllKeysDisk();
-    std::vector<std::string> filtered;
-    filtered.reserve(keys.size());
-    for (const auto& key : keys) {
+    std::unordered_set<std::string> combined;
+    for (const auto& key : NitroSqliteDiskStore().getKeysByPrefix(prefix)) {
+        combined.insert(key);
+    }
+    for (const auto& key : getAllKeysDisk()) {
         if (key.rfind(prefix, 0) == 0) {
-            filtered.push_back(key);
+            combined.insert(key);
         }
+    }
+    std::vector<std::string> filtered;
+    filtered.reserve(combined.size());
+    for (const auto& key : combined) {
+        filtered.push_back(key);
     }
     return filtered;
 }
@@ -340,13 +414,12 @@ void IOSStorageAdapterCpp::setDiskBatch(
     const std::vector<std::string>& keys,
     const std::vector<std::string>& values
 ) {
+    NitroSqliteDiskStore().setBatch(keys, values);
     NSUserDefaults* defaults = NitroDiskDefaults();
     NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
     NSMutableArray* legacyKeysToRemove = [NSMutableArray array];
     for (size_t i = 0; i < keys.size() && i < values.size(); ++i) {
         NSString* nsKey = [NSString stringWithUTF8String:keys[i].c_str()];
-        NSString* nsValue = [NSString stringWithUTF8String:values[i].c_str()];
-        [defaults setObject:nsValue forKey:nsKey];
         if (defaults != standard && [standard objectForKey:nsKey] != nil) {
             [legacyKeysToRemove addObject:nsKey];
         }
@@ -369,18 +442,26 @@ std::vector<std::optional<std::string>> IOSStorageAdapterCpp::getDiskBatch(
 }
 
 void IOSStorageAdapterCpp::deleteDiskBatch(const std::vector<std::string>& keys) {
+    NitroSqliteDiskStore().removeBatch(keys);
     for (const auto& key : keys) {
-        deleteDisk(key);
+        NSString* nsKey = [NSString stringWithUTF8String:key.c_str()];
+        NSUserDefaults* defaults = NitroDiskDefaults();
+        [defaults removeObjectForKey:nsKey];
+        NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
+        if (defaults != standard && [standard objectForKey:nsKey] != nil) {
+            [standard removeObjectForKey:nsKey];
+        }
+        unregisterLegacyDiskKeys(@[nsKey]);
     }
 }
 
 void IOSStorageAdapterCpp::clearDisk() {
+    NitroSqliteDiskStore().clear();
     NSUserDefaults* defaults = NitroDiskDefaults();
     NSDictionary<NSString*, id>* entries = [defaults persistentDomainForName:kDiskSuiteName] ?: @{};
     NSMutableSet* legacyKeys = [registeredLegacyDiskKeys() mutableCopy];
     for (NSString* key in entries) {
-        if ([key isEqualToString:kLegacyDiskKeysRegistryKey] ||
-            [key isEqualToString:kLegacyDiskMigrationMarkerKey]) {
+        if (isInternalDiskKey(key)) {
             continue;
         }
         [defaults removeObjectForKey:key];
@@ -388,8 +469,7 @@ void IOSStorageAdapterCpp::clearDisk() {
     NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
     if (defaults != standard) {
         for (NSString* key in entries) {
-            if ([key isEqualToString:kLegacyDiskKeysRegistryKey] ||
-                [key isEqualToString:kLegacyDiskMigrationMarkerKey]) {
+            if (isInternalDiskKey(key)) {
                 continue;
             }
             [standard removeObjectForKey:key];

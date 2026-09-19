@@ -390,7 +390,7 @@ const tokenActions = useStorageActions(tokenItem); // { set, merge, reset, remov
 | Scope                 | Backing store                                          | Use it for                                                                   |
 | --------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------- |
 | `StorageScope.Memory` | In-process memory                                      | Session-only state, fast counters, and render-time caches.                   |
-| `StorageScope.Disk`   | UserDefaults on iOS, SharedPreferences on Android, web | Preferences, feature flags, onboarding state, and non-secret persisted data. |
+| `StorageScope.Disk`   | SQLite WAL on iOS/Android (imports UserDefaults / SharedPreferences once); configured web backend | Preferences, feature flags, onboarding state, and non-secret persisted data. |
 | `StorageScope.Secure` | Keychain on iOS, Android Keystore-backed preferences   | Refresh tokens, credentials, API tokens, and biometric-protected values.     |
 
 ## Secure Storage
@@ -682,6 +682,7 @@ the error for diagnostics.
 | Web backends                        | [docs/web-backends.md](docs/web-backends.md)                                   |
 | Batch, transactions, and migrations | [docs/batch-transactions-migrations.md](docs/batch-transactions-migrations.md) |
 | MMKV migration                      | [docs/mmkv-migration.md](docs/mmkv-migration.md)                               |
+| Native libraries                    | [docs/native-libraries.md](docs/native-libraries.md)                           |
 | Recipes                             | [docs/recipes.md](docs/recipes.md)                                             |
 | Benchmarks                          | [docs/benchmarks.md](docs/benchmarks.md)                                       |
 | Security policy                     | [SECURITY.md](SECURITY.md)                                                     |
