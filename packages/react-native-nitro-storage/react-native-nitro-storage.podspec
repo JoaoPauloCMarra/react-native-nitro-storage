@@ -35,6 +35,8 @@ Pod::Spec.new do |s|
     ].join(" ")
   }
 
+  s.libraries = "sqlite3"
+
   s.dependency "React-Core"
   
   load 'nitrogen/generated/ios/NitroStorage+autolinking.rb'

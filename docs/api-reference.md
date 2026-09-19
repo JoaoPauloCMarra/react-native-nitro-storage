@@ -342,7 +342,10 @@ Common public types:
 
 `getCapabilities().writeBuffering` describes real per-mode durability:
 
-- Native: Disk writes are buffered by the platform (`SharedPreferences.apply()` on Android, `NSUserDefaults` on iOS). Secure writes are buffered only when `setSecureWritesAsync(true)` is active on Android; iOS Keychain writes are synchronous.
+- Native: Disk writes commit in a SQLite WAL transaction. JavaScript can still
+  coalesce Disk writes until `flushDiskWrites()`. Secure writes are buffered
+  only when `setSecureWritesAsync(true)` is active on Android; iOS Keychain
+  writes are synchronous.
 - Web: buffering follows the configured backend; IndexedDB backends are buffered, localStorage backends are synchronous.
 
 `describeWebBackendCapabilities(backend)` reports a backend's `buffered`, `flushable`, `closable`, and `subscribable` capabilities from the same typed contract used by the built-in backends.

@@ -8,6 +8,9 @@ export default function RootLayout() {
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="e2e" />
+        <Stack.Screen name="e2e-integrity" />
+        <Stack.Screen name="e2e-keychain" />
+        <Stack.Screen name="e2e-stress" />
       </Stack>
     </>
   );

@@ -1,7 +1,33 @@
-import { View } from "react-native";
+import { Pressable, Text, View } from "react-native";
+import { Link, type Href } from "expo-router";
 import { StorageE2eLab } from "../components/e2e-lab";
-import { Page, StatusRow } from "../components/shared";
+import { Colors, Page, StatusRow } from "../components/shared";
 import { SmokeTestRunner } from "../components/smoke-test";
+
+function LabLink({
+  href,
+  testID,
+  label,
+}: {
+  href: Href;
+  testID: string;
+  label: string;
+}) {
+  return (
+    <Link href={href} asChild>
+      <Pressable
+        testID={testID}
+        accessibilityRole="link"
+        accessibilityLabel={label}
+        style={{ paddingVertical: 8 }}
+      >
+        <Text style={{ color: Colors.primary, fontWeight: "600" }}>
+          {label}
+        </Text>
+      </Pressable>
+    </Link>
+  );
+}
 
 export default function StorageE2eScreen() {
   return (
@@ -12,6 +38,21 @@ export default function StorageE2eScreen() {
           testID="e2e-deeplink"
           label="link"
           value="nitrostorage://e2e"
+        />
+        <LabLink
+          href="/e2e-integrity"
+          testID="open-e2e-integrity"
+          label="Integrity lab"
+        />
+        <LabLink
+          href="/e2e-keychain"
+          testID="open-e2e-keychain"
+          label="Keychain lab"
+        />
+        <LabLink
+          href="/e2e-stress"
+          testID="open-e2e-stress"
+          label="Stress lab"
         />
         <StorageE2eLab />
         <SmokeTestRunner />

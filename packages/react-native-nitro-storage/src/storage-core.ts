@@ -38,6 +38,7 @@ import {
   type SecureAuthStorageConfig,
   type StorageEventObserverOptions,
   type StorageExportOptions,
+  type StorageCacheMetrics,
   type StorageMetricSummary,
   type StorageMetricsObserver,
   type StorageSelectorListener,
@@ -332,6 +333,10 @@ export function createStorageCore(
     [StorageScope.Disk]: new Map(),
     [StorageScope.Secure]: new Map(),
   };
+  // The Disk/Secure raw cache stays unbounded this release. Metrics report
+  // live size only; they do not evict entries.
+  let cacheHits = 0;
+  let cacheMisses = 0;
   let secureDefaultAccessControl: AccessControl = AccessControl.WhenUnlocked;
   let eventObserver: StorageEventListener | undefined;
   let eventObserverRedactSecureValues = true;
@@ -399,6 +404,27 @@ export function createStorageCore(
 
   function clearScopeRawCache(scope: NonMemoryScope): void {
     getScopeRawCache(scope).clear();
+  }
+
+  function snapshotCacheMetrics(): StorageCacheMetrics {
+    let cacheEntries = 0;
+    let cacheBytes = 0;
+    for (const scope of [StorageScope.Disk, StorageScope.Secure] as const) {
+      for (const entry of scopedRawCache[scope].values()) {
+        for (const value of entry.values()) {
+          cacheEntries += 1;
+          if (typeof value === "string") {
+            cacheBytes += value.length * 2;
+          }
+        }
+      }
+    }
+    return {
+      cacheHits,
+      cacheMisses,
+      cacheEntries,
+      cacheBytes,
+    };
   }
 
   function invalidateMemoryItemCaches(key: string): void {
@@ -1409,6 +1435,11 @@ export function createStorageCore(
     },
     resetMetrics: () => {
       metrics.reset();
+      cacheHits = 0;
+      cacheMisses = 0;
+    },
+    getCacheMetrics: (): StorageCacheMetrics => {
+      return snapshotCacheMetrics();
     },
     getSecureMetadata: (key: string): SecureStorageMetadata => {
       return measureOperation(
@@ -1691,8 +1722,10 @@ export function createStorageCore(
         const scope = resolveNonMemoryScope();
         const cachedEntry = getCachedRawValueEntry(scope, storageKey);
         if (cachedEntry?.has(rawCacheRepresentation)) {
+          cacheHits += 1;
           return cachedEntry.get(rawCacheRepresentation);
         }
+        cacheMisses += 1;
       }
 
       if (isBiometric) {

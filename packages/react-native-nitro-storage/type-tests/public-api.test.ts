@@ -136,6 +136,15 @@ const metricsObserver: StorageMetricsObserver = (
 };
 storage.setMetricsObserver(metricsObserver);
 storage.getMetricsSnapshot();
+const cacheMetrics = storage.getCacheMetrics();
+const cacheHits: number = cacheMetrics.cacheHits;
+const cacheMisses: number = cacheMetrics.cacheMisses;
+const cacheEntries: number = cacheMetrics.cacheEntries;
+const cacheBytes: number = cacheMetrics.cacheBytes;
+void cacheHits;
+void cacheMisses;
+void cacheEntries;
+void cacheBytes;
 storage.resetMetrics();
 storage.setMetricsObserver(undefined);
 const observerOptions: StorageEventObserverOptions = {

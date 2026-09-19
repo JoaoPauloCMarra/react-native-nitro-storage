@@ -2035,6 +2035,38 @@ describe("Web Storage", () => {
     expect(scopedSnapshot["item:set:1"]).toBeDefined();
   });
 
+  it("exposes live raw-cache metrics for Disk reads on web", () => {
+    storage.resetMetrics();
+    const before = storage.getCacheMetrics();
+    expect(before.cacheHits).toBe(0);
+    expect(before.cacheMisses).toBe(0);
+
+    const item = createStorageItem({
+      key: "web-cache-metrics-disk",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+      readCache: true,
+    });
+    item.get();
+    const afterMiss = storage.getCacheMetrics();
+    expect(afterMiss.cacheMisses).toBeGreaterThan(before.cacheMisses);
+    expect(afterMiss.cacheHits).toBe(0);
+
+    item.set("cached-value");
+    item.get();
+    const afterHit = storage.getCacheMetrics();
+    expect(afterHit.cacheHits).toBeGreaterThan(0);
+    expect(afterHit.cacheEntries).toBeGreaterThan(0);
+    expect(afterHit.cacheBytes).toBeGreaterThan(0);
+
+    storage.resetMetrics();
+    const afterReset = storage.getCacheMetrics();
+    expect(afterReset.cacheHits).toBe(0);
+    expect(afterReset.cacheMisses).toBe(0);
+    expect(afterReset.cacheEntries).toBeGreaterThan(0);
+    expect(afterReset.cacheBytes).toBeGreaterThan(0);
+  });
+
   // --- clearNamespace ---
 
   it("storage.clearNamespace removes only namespaced keys", () => {

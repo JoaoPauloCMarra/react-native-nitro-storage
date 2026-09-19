@@ -56,6 +56,9 @@
     "example:e2e:deeplink": "agent-device test e2e/qa-deeplink.ad --retries 1",
     "example:e2e:deeplink:android": "agent-device test e2e/qa-deeplink.ad --device \"RN Expo MidRange\" --retries 1",
     "example:e2e:deeplink:ios": "agent-device test e2e/qa-deeplink.ad --device \"iPhone 17 Pro Max (iOS 26.5)\" --retries 1",
+    "example:e2e:integrity": "agent-device test e2e/qa-integrity.ad --retries 1",
+    "example:e2e:keychain": "agent-device test e2e/qa-keychain.ad --retries 1",
+    "example:e2e:stress": "agent-device test e2e/qa-stress.ad --retries 1",
     "example:smoke:ci": "node scripts/assert-example-smoke.js"
   },
   "devDependencies": {
@@ -83,11 +86,11 @@
     "react-native": "0.86.3",
     "react-native-nitro-modules": "0.37.1",
     "@types/react": "~19.2.18",
-    "expo": "~57.0.21",
-    "expo-asset": "~57.0.16",
-    "expo-constants": "~57.0.17",
-    "expo-font": "~57.0.3",
-    "expo-linking": "~57.0.9"
+    "expo": "~57.0.24",
+    "expo-asset": "~57.0.18",
+    "expo-constants": "~57.0.19",
+    "expo-font": "~57.0.4",
+    "expo-linking": "~57.0.10"
   },
   "packageManager": "bun@1.3.14",
   "trustedDependencies": [

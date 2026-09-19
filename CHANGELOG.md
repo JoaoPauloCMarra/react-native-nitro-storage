@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes are always listed first in each release section.
 
+## [0.10.3] - 2026-09-18
+
+### Breaking changes
+
+- None.
+
+### Added
+
+- `storage.getCacheMetrics()` reports live Disk/Secure raw-cache hits, misses,
+  entries, and estimated bytes. The cache stays unbounded; reset zeros the
+  counters only.
+- Example integrity, keychain, and Disk/Secure stress labs at
+  `nitrostorage://e2e-integrity`, `nitrostorage://e2e-keychain`, and
+  `nitrostorage://e2e-stress`.
+- Native Disk now uses SQLite WAL (`SqliteDiskStore` on iOS, `DiskSqliteStore`
+  on Android). Existing UserDefaults suite keys and `NitroStorage`
+  SharedPreferences values are imported once. See
+  [docs/native-libraries.md](docs/native-libraries.md).
+
+### Changed
+
+- The example Expo pin follows SDK 57.0.24 (`expo-doctor` / `expo install --check`).
+  React Native stays `0.86.3`.
+- The example iOS host uses a `SceneDelegate` so the app can present a window on
+  iOS 27 physical devices.
+
+### Fixed
+
+- Android Disk no longer crashes on first open when enabling SQLite WAL:
+  `PRAGMA journal_mode=WAL` is applied with `rawQuery` instead of `execSQL`.
+
 ## [0.10.2] - 2026-09-10
 
 ### Breaking changes

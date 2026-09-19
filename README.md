@@ -68,7 +68,7 @@ Nitro peer requirement: `react-native-nitro-modules >=0.37.0 <0.38.0`.
 The package gate uses React Native `0.86.3` and the Strict TypeScript API.
 `check:ci` also compiles the public source against React Native `0.87.0`'s
 Strict TypeScript API; this does not change the runtime baseline. The Expo
-example uses Expo SDK `57.0.21`, React Native
+example uses Expo SDK `57.0.24`, React Native
 `0.86.3`, React `19.2.3`, and Nitro Modules `0.37.1`, which is the React Native
 version supported by that Expo SDK. Do not override Expo's React Native version.
 
@@ -77,7 +77,7 @@ before installing this package, then rebuild the native app so the generated
 Nitro bindings and native runtime use the same major-minor version:
 
 ```sh
-bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.10.2
+bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.10.3
 bunx expo prebuild
 ```
 
@@ -387,11 +387,11 @@ const tokenActions = useStorageActions(tokenItem); // { set, merge, reset, remov
 
 ## Storage Scopes
 
-| Scope                 | Backing store                                          | Use it for                                                                   |
-| --------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| `StorageScope.Memory` | In-process memory                                      | Session-only state, fast counters, and render-time caches.                   |
-| `StorageScope.Disk`   | UserDefaults on iOS, SharedPreferences on Android, web | Preferences, feature flags, onboarding state, and non-secret persisted data. |
-| `StorageScope.Secure` | Keychain on iOS, Android Keystore-backed preferences   | Refresh tokens, credentials, API tokens, and biometric-protected values.     |
+| Scope                 | Backing store                                                                                     | Use it for                                                                   |
+| --------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `StorageScope.Memory` | In-process memory                                                                                 | Session-only state, fast counters, and render-time caches.                   |
+| `StorageScope.Disk`   | SQLite WAL on iOS/Android (imports UserDefaults / SharedPreferences once); configured web backend | Preferences, feature flags, onboarding state, and non-secret persisted data. |
+| `StorageScope.Secure` | Keychain on iOS, Android Keystore-backed preferences                                              | Refresh tokens, credentials, API tokens, and biometric-protected values.     |
 
 ## Secure Storage
 
@@ -520,13 +520,21 @@ storage.setMetricsObserver((event) => {
 
 const metrics = storage.getMetricsSnapshot();
 const scopedMetrics = storage.getScopedMetricsSnapshot();
+const cacheMetrics = storage.getCacheMetrics();
 storage.resetMetrics();
 unsubscribe();
 ```
 
 `getMetricsSnapshot()` aggregates each operation across scopes for backward
 compatibility. `getScopedMetricsSnapshot()` adds the numeric scope suffix for
-per-scope analysis, for example `item:set:1`.
+per-scope analysis, for example `item:set:1`. `getCacheMetrics()` reports live
+Disk/Secure raw-cache hits, misses, entries, and estimated bytes. The cache is
+unbounded; `resetMetrics()` zeros the hit/miss counters and leaves entries in
+place.
+
+The example app includes hidden integrity, keychain, and Disk/Secure stress
+labs at `nitrostorage://e2e-integrity`, `nitrostorage://e2e-keychain`, and
+`nitrostorage://e2e-stress`.
 
 Secure event observer values are redacted by default. Pass
 `{ redactSecureValues: false }` only in trusted debug tooling where raw values
@@ -674,6 +682,7 @@ the error for diagnostics.
 | Web backends                        | [docs/web-backends.md](docs/web-backends.md)                                   |
 | Batch, transactions, and migrations | [docs/batch-transactions-migrations.md](docs/batch-transactions-migrations.md) |
 | MMKV migration                      | [docs/mmkv-migration.md](docs/mmkv-migration.md)                               |
+| Native libraries                    | [docs/native-libraries.md](docs/native-libraries.md)                           |
 | Recipes                             | [docs/recipes.md](docs/recipes.md)                                             |
 | Benchmarks                          | [docs/benchmarks.md](docs/benchmarks.md)                                       |
 | Security policy                     | [SECURITY.md](SECURITY.md)                                                     |
