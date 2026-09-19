@@ -387,11 +387,11 @@ const tokenActions = useStorageActions(tokenItem); // { set, merge, reset, remov
 
 ## Storage Scopes
 
-| Scope                 | Backing store                                          | Use it for                                                                   |
-| --------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| `StorageScope.Memory` | In-process memory                                      | Session-only state, fast counters, and render-time caches.                   |
+| Scope                 | Backing store                                                                                     | Use it for                                                                   |
+| --------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `StorageScope.Memory` | In-process memory                                                                                 | Session-only state, fast counters, and render-time caches.                   |
 | `StorageScope.Disk`   | SQLite WAL on iOS/Android (imports UserDefaults / SharedPreferences once); configured web backend | Preferences, feature flags, onboarding state, and non-secret persisted data. |
-| `StorageScope.Secure` | Keychain on iOS, Android Keystore-backed preferences   | Refresh tokens, credentials, API tokens, and biometric-protected values.     |
+| `StorageScope.Secure` | Keychain on iOS, Android Keystore-backed preferences                                              | Refresh tokens, credentials, API tokens, and biometric-protected values.     |
 
 ## Secure Storage
 
