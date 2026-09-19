@@ -755,7 +755,7 @@ export default function HomeScreen() {
         <StatusRow
           testID="secure-metadata-kind"
           label="Stored as"
-          value={secureMetadata.kind}
+          value={secureMetadata?.kind ?? "—"}
         />
         <StatusRow
           testID="secure-metadata-count"
