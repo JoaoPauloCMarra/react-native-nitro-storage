@@ -342,7 +342,10 @@ export default function HomeScreen() {
   const [tempToken, setTempToken] = useState("");
   const tempTokenRef = useRef("");
   const [secureMetadata, setSecureMetadata] = useState(() =>
-    withKeychainFallback(() => storage.getSecureMetadata("secure-token"), undefined),
+    withKeychainFallback(
+      () => storage.getSecureMetadata("secure-token"),
+      undefined,
+    ),
   );
   const [secureMetadataCount, setSecureMetadataCount] = useState(() =>
     withKeychainFallback(() => storage.getAllSecureMetadata().length, 0),

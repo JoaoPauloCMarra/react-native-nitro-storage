@@ -234,7 +234,10 @@ function runIntegritySweep(): IntegrityReport {
       const keys = storage.getKeysByPrefix("__pfx_", StorageScope.Disk);
       assert(keys.includes("__pfx_keep__"), "keep missing");
       assert(keys.includes("__pfx_drop_a__"), "drop missing");
-      for (const key of storage.getKeysByPrefix("__pfx_drop_", StorageScope.Disk)) {
+      for (const key of storage.getKeysByPrefix(
+        "__pfx_drop_",
+        StorageScope.Disk,
+      )) {
         storage.deleteString(key, StorageScope.Disk);
       }
       storage.flushDiskWrites();
