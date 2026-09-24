@@ -9,20 +9,7 @@ module.exports = {
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.nitrostorage.example",
-      "infoPlist": {
-        "UIApplicationSceneManifest": {
-          "UIApplicationSupportsMultipleScenes": false,
-          "UISceneConfigurations": {
-            "UIWindowSceneSessionRoleApplication": [
-              {
-                "UISceneConfigurationName": "Default Configuration",
-                "UISceneDelegateClassName": "$(PRODUCT_MODULE_NAME).SceneDelegate"
-              }
-            ]
-          }
-        }
-      }
+      "bundleIdentifier": "com.nitrostorage.example"
     },
     "android": {
       "package": "com.nitrostorage.example",
@@ -33,10 +20,12 @@ module.exports = {
     },
     "plugins": [
       "expo-router",
-      "./plugins/with-ios-scene-lifecycle",
       [
         "expo-build-properties",
         {
+          "ios": {
+            "enableSceneSupport": true
+          },
           "android": {
             "usePrecompiledHeaders": true
           }
