@@ -17,6 +17,7 @@ press id="e2e-set-run"
 wait text "ok:red=true:size=1"
 press id="e2e-biometric-run"
 wait text "ok:capability="
+scroll bottom
 press id="e2e-run-stress"
 wait text "ok:writes=200:reads=200:ms="
 scroll down

@@ -68,7 +68,7 @@ Nitro peer requirement: `react-native-nitro-modules >=0.37.0 <0.38.0`.
 The package gate uses React Native `0.86.3` and the Strict TypeScript API.
 `check:ci` also compiles the public source against React Native `0.87.0`'s
 Strict TypeScript API; this does not change the runtime baseline. The Expo
-example uses Expo SDK `57.0.24`, React Native
+example uses Expo SDK `57.0.25`, React Native
 `0.86.3`, React `19.2.3`, and Nitro Modules `0.37.1`, which is the React Native
 version supported by that Expo SDK. Do not override Expo's React Native version.
 
