@@ -342,6 +342,20 @@ export function createStorageCore(
   let eventObserverRedactSecureValues = true;
   const storageEvents = new StorageEventRegistry();
   const metrics = createMetricsRegistry();
+
+  function setOwnDataProperty(
+    target: object,
+    key: string,
+    value: unknown,
+  ): void {
+    Object.defineProperty(target, key, {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true,
+    });
+  }
+
   const durability = createDurabilityCoordinator({
     backend: {
       setBatch: (keys, values, scope) => {
@@ -1290,9 +1304,11 @@ export function createStorageCore(
       return measureOperation("storage:getKeysByPrefix", scope, () => {
         assertValidScope(scope);
         if (scope === StorageScope.Memory) {
-          return Array.from(memoryStore.keys()).filter((key) =>
-            key.startsWith(prefix),
-          );
+          const keys: string[] = [];
+          for (const key of memoryStore.keys()) {
+            if (key.startsWith(prefix)) keys.push(key);
+          }
+          return keys;
         }
         if (scope === StorageScope.Disk) {
           flushDiskWrites();
@@ -1318,7 +1334,7 @@ export function createStorageCore(
           keys.forEach((key) => {
             const value = memoryStore.get(key);
             if (typeof value === "string") {
-              result[key] = value;
+              setOwnDataProperty(result, key, unescapeCollidingRawValue(value));
             }
           });
           return result;
@@ -1334,7 +1350,7 @@ export function createStorageCore(
         keys.forEach((key, idx) => {
           const value = values[idx];
           if (value !== undefined) {
-            result[key] = unescapeCollidingRawValue(value);
+            setOwnDataProperty(result, key, unescapeCollidingRawValue(value));
           }
         });
         return result;
@@ -1345,11 +1361,11 @@ export function createStorageCore(
         assertValidScope(scope);
         const result: Record<string, string> = {};
         if (scope === StorageScope.Memory) {
-          for (const key of memoryStore.keys()) {
-            const value = memoryStore.get(key);
-            if (typeof value === "string")
-              result[key] = unescapeCollidingRawValue(value);
-          }
+          memoryStore.forEach((value, key) => {
+            if (typeof value === "string") {
+              setOwnDataProperty(result, key, unescapeCollidingRawValue(value));
+            }
+          });
           return result;
         }
         if (scope === StorageScope.Disk) {
@@ -1363,7 +1379,9 @@ export function createStorageCore(
         const values = adapter.backend.getBatch(keys, scope);
         keys.forEach((key, idx) => {
           const val = values[idx];
-          if (val !== undefined) result[key] = unescapeCollidingRawValue(val);
+          if (val !== undefined) {
+            setOwnDataProperty(result, key, unescapeCollidingRawValue(val));
+          }
         });
         return result;
       });
@@ -3746,7 +3764,7 @@ export function createStorageCore(
     const initial: Record<string, true> = {};
     if (defaultValue) {
       for (const id of defaultValue) {
-        initial[id] = true;
+        setOwnDataProperty(initial, id, true);
       }
     }
 
@@ -3763,7 +3781,7 @@ export function createStorageCore(
         return;
       }
       const next = { ...current };
-      next[id] = true;
+      setOwnDataProperty(next, id, true);
       item.set(next);
     };
 
@@ -3789,7 +3807,7 @@ export function createStorageCore(
     const getTyped = (): Partial<Record<TMember, true>> => {
       const typed: Partial<Record<TMember, true>> = {};
       for (const id of Object.keys(item.get())) {
-        typed[id as TMember] = true;
+        setOwnDataProperty(typed, id, true);
       }
       return typed;
     };

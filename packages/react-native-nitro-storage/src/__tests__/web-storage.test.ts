@@ -1941,6 +1941,52 @@ describe("Web Storage", () => {
     expect(all["ga2"]).toBe(serializeWithPrimitiveFastPath("b"));
   });
 
+  it("keeps prototype-named raw keys through import and enumeration", () => {
+    const imported = JSON.parse(
+      '{"__proto__":"proto-value","constructor":"constructor-value","toString":"string-value"}',
+    ) as Record<string, string>;
+    const keys = Object.keys(imported);
+
+    keys.forEach((key) => storage.deleteString(key, StorageScope.Memory));
+    storage.import(imported, StorageScope.Memory);
+
+    const all = storage.getAll(StorageScope.Memory);
+    const exported = storage.export(StorageScope.Memory);
+    const protoPrefix = storage.getByPrefix("__proto__", StorageScope.Memory);
+
+    expect(Object.getPrototypeOf(all)).toBe(Object.prototype);
+    expect(Object.getPrototypeOf(exported)).toBe(Object.prototype);
+    for (const key of keys) {
+      expect(Object.prototype.hasOwnProperty.call(all, key)).toBe(true);
+      expect(all[key]).toBe(imported[key]);
+      expect(Object.prototype.hasOwnProperty.call(exported, key)).toBe(true);
+      expect(exported[key]).toBe(imported[key]);
+    }
+    expect(Object.prototype.hasOwnProperty.call(protoPrefix, "__proto__")).toBe(
+      true,
+    );
+    expect(protoPrefix["__proto__"]).toBe(imported["__proto__"]);
+
+    keys.forEach((key) => storage.deleteString(key, StorageScope.Memory));
+  });
+
+  it("decodes reserved-prefix raw strings in web memory prefix snapshots", () => {
+    const values = {
+      "web-raw-prefix:primitive": "__nitro_storage_primitive__:s:literal",
+      "web-raw-prefix:escaped": "__nitro_storage_escaped__:literal",
+    };
+
+    for (const [key, value] of Object.entries(values)) {
+      storage.setString(key, value, StorageScope.Memory);
+      expect(storage.getString(key, StorageScope.Memory)).toBe(value);
+    }
+
+    expect(storage.getAll(StorageScope.Memory)).toMatchObject(values);
+    expect(storage.getByPrefix("web-raw-prefix:", StorageScope.Memory)).toEqual(
+      values,
+    );
+  });
+
   it("storage.getKeysByPrefix and storage.getByPrefix return filtered snapshots", () => {
     createStorageItem({
       key: "token",

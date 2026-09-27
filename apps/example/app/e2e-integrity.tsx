@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { View } from "react-native";
 import {
   createStorageItem,
+  createSetItem,
   getBatch,
   removeBatch,
   runTransaction,
@@ -52,6 +53,135 @@ function runIntegritySweep(): IntegrityReport {
   const persistKey = "__integrity_disk_persist__";
   const previousPersist = storage.getString(persistKey, StorageScope.Disk);
   const cases: LabCase[] = [
+    runCase("audit-prefix-case", () => {
+      const upper = "__audit_User";
+      const lower = "__audit_user";
+      try {
+        storage.setString(`${upper}::token`, "upper", StorageScope.Disk);
+        storage.setString(`${lower}::token`, "lower", StorageScope.Disk);
+        storage.flushDiskWrites();
+        const keys = storage.getKeysByPrefix(`${upper}::`, StorageScope.Disk);
+        assert(
+          keys.length === 1 && keys[0] === `${upper}::token`,
+          "prefix folded case",
+        );
+        storage.clearNamespace(upper, StorageScope.Disk);
+        storage.flushDiskWrites();
+        assert(
+          storage.getString(`${upper}::token`, StorageScope.Disk) == null,
+          "upper survived clear",
+        );
+        assert(
+          storage.getString(`${lower}::token`, StorageScope.Disk) === "lower",
+          "lower namespace removed",
+        );
+      } finally {
+        storage.deleteString(`${upper}::token`, StorageScope.Disk);
+        storage.deleteString(`${lower}::token`, StorageScope.Disk);
+        storage.flushDiskWrites();
+      }
+    }),
+    runCase("audit-memory-raw-and-set", () => {
+      const key = "__audit_raw__";
+      const literal = "__nitro_storage_primitive__:literal";
+      const item = createSetItem<string>({
+        key: "__audit_set__",
+        scope: StorageScope.Memory,
+        defaultValue: ["__proto__"],
+      });
+      try {
+        storage.setString(key, literal, StorageScope.Memory);
+        assert(
+          storage.getByPrefix(key, StorageScope.Memory)[key] === literal,
+          "raw escape leaked",
+        );
+        item.add("constructor");
+        item.add("toString");
+        for (const member of ["__proto__", "constructor", "toString"]) {
+          assert(
+            item.has(member) && Object.hasOwn(item.get(), member),
+            "set member missing",
+          );
+        }
+      } finally {
+        storage.deleteString(key, StorageScope.Memory);
+        item.item.delete();
+      }
+    }),
+    runCase("audit-prefix-literals", () => {
+      const prefixes = [
+        "__audit_%",
+        "__audit__",
+        "__audit_\\",
+        "__audit_café",
+        "__audit_nul\0",
+      ];
+      for (const prefix of prefixes) {
+        const key = `${prefix}::value`;
+        const decoy = "__audit_decoy::value";
+        try {
+          storage.setString(key, "value", StorageScope.Disk);
+          storage.setString(decoy, "keep", StorageScope.Disk);
+          storage.flushDiskWrites();
+          const matches = storage.getKeysByPrefix(prefix, StorageScope.Disk);
+          assert(
+            matches.length === 1 && matches[0] === key,
+            `literal prefix mismatch: ${JSON.stringify({ prefix, key, matches })}`,
+          );
+        } finally {
+          storage.deleteString(key, StorageScope.Disk);
+          storage.deleteString(decoy, StorageScope.Disk);
+          storage.flushDiskWrites();
+        }
+      }
+    }),
+    runCase("audit-nul-roundtrip", () => {
+      for (const scope of [StorageScope.Disk, StorageScope.Secure]) {
+        const prefix = "__audit_roundtrip__";
+        const key = prefix + "\0café😀";
+        const batchKey = prefix + "\0batch";
+        const value = "before\0after café😀";
+        const scopeName = StorageScope[scope];
+        try {
+          storage.setString(prefix, "decoy", scope);
+          storage.setString(key, value, scope);
+          storage.flushDiskWrites();
+          storage.flushSecureWrites();
+          assert(
+            storage.getString(key, scope) === value,
+            scopeName + " scalar NUL roundtrip",
+          );
+          assert(
+            storage.getString(prefix, scope) === "decoy",
+            scopeName + " NUL key collision",
+          );
+          storage.import({ [batchKey]: value }, scope);
+          storage.flushDiskWrites();
+          storage.flushSecureWrites();
+          assert(
+            storage.getString(batchKey, scope) === value,
+            scopeName + " batch NUL roundtrip",
+          );
+          assert(
+            storage.getAllKeys(scope).includes(key),
+            scopeName + " all keys truncated",
+          );
+          const selected = storage.getByPrefix(prefix + "\0", scope);
+          assert(
+            selected[key] === value &&
+              selected[batchKey] === value &&
+              !Object.hasOwn(selected, prefix),
+            scopeName + " prefix values truncated",
+          );
+        } finally {
+          storage.deleteString(key, scope);
+          storage.deleteString(batchKey, scope);
+          storage.deleteString(prefix, scope);
+          storage.flushDiskWrites();
+          storage.flushSecureWrites();
+        }
+      }
+    }),
     runCase("disk-write-read", () => {
       storage.setString("__integrity_disk__", "disk-ok", StorageScope.Disk);
       const item = createStorageItem({

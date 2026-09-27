@@ -103,9 +103,9 @@ internal class DiskSqliteStore(
     fun getKeysByPrefix(prefix: String): Array<String> {
         val pattern = buildString {
             for (character in prefix) {
-                if (character == '%' || character == '_' || character == '\\') {
-                    append('\\')
-                }
+                // LIKE stops at NUL; startsWith below checks the complete prefix.
+                if (character == '\u0000') break
+                if (character == '%' || character == '_' || character == '\\') append('\\')
                 append(character)
             }
             append('%')
@@ -116,7 +116,10 @@ internal class DiskSqliteStore(
         ).use { cursor ->
             val keys = ArrayList<String>(cursor.count)
             while (cursor.moveToNext()) {
-                keys.add(cursor.getString(0))
+                val key = cursor.getString(0)
+                if (key.startsWith(prefix)) {
+                    keys.add(key)
+                }
             }
             return keys.toTypedArray()
         }

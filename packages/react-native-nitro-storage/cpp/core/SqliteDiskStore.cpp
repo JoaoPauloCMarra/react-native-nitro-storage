@@ -44,12 +44,14 @@ void bindText(sqlite3_stmt* stmt, int index, const std::string& value) {
 
 std::string escapeLikePrefix(const std::string& prefix) {
     std::string escaped;
-    escaped.reserve(prefix.size());
-    for (const unsigned char character : prefix) {
+    escaped.reserve(prefix.size() + 1);
+    for (const char character : prefix) {
+        // SQLite LIKE stops at NUL; exact filtering below handles the full key.
+        if (character == '\0') break;
         if (character == '%' || character == '_' || character == '\\') {
             escaped.push_back('\\');
         }
-        escaped.push_back(static_cast<char>(character));
+        escaped.push_back(character);
     }
     escaped.push_back('%');
     return escaped;
@@ -336,8 +338,7 @@ std::vector<std::string> SqliteDiskStore::getKeysByPrefix(const std::string& pre
     std::lock_guard<std::mutex> lock(mutex_);
     sqlite3_reset(prefixStmt_);
     sqlite3_clear_bindings(prefixStmt_);
-    const std::string pattern = escapeLikePrefix(prefix);
-    bindText(prefixStmt_, 1, pattern);
+    bindText(prefixStmt_, 1, escapeLikePrefix(prefix));
     std::vector<std::string> keys;
     while (true) {
         const int rc = sqlite3_step(prefixStmt_);
@@ -350,10 +351,13 @@ std::vector<std::string> SqliteDiskStore::getKeysByPrefix(const std::string& pre
         }
         const unsigned char* text = sqlite3_column_text(prefixStmt_, 0);
         const int bytes = sqlite3_column_bytes(prefixStmt_, 0);
-        keys.emplace_back(
+        std::string key(
             text != nullptr ? reinterpret_cast<const char*>(text) : "",
             static_cast<size_t>(bytes)
         );
+        if (key.compare(0, prefix.size(), prefix) == 0) {
+            keys.push_back(std::move(key));
+        }
     }
     sqlite3_reset(prefixStmt_);
     return keys;

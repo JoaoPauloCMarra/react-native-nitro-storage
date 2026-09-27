@@ -52,6 +52,23 @@ describe("Pure JS Memory Storage", () => {
     expect(item.get()).toBe(42);
   });
 
+  it("decodes reserved-prefix raw strings in memory prefix snapshots", () => {
+    const values = {
+      "raw-prefix:primitive": "__nitro_storage_primitive__:s:literal",
+      "raw-prefix:escaped": "__nitro_storage_escaped__:literal",
+    };
+
+    for (const [key, value] of Object.entries(values)) {
+      storage.setString(key, value, StorageScope.Memory);
+      expect(storage.getString(key, StorageScope.Memory)).toBe(value);
+    }
+
+    expect(storage.getAll(StorageScope.Memory)).toMatchObject(values);
+    expect(storage.getByPrefix("raw-prefix:", StorageScope.Memory)).toEqual(
+      values,
+    );
+  });
+
   it("stores and retrieves complex objects (references)", () => {
     const item = createStorageItem<Record<string, string>>({
       key: "test-obj",

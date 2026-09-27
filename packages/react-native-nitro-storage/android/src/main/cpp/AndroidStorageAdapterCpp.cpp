@@ -1,5 +1,8 @@
 #include "AndroidStorageAdapterCpp.hpp"
 
+#include <limits>
+#include <stdexcept>
+
 namespace NitroStorage {
 
 using namespace facebook::jni;
@@ -7,10 +10,25 @@ using JavaStringArray = JArrayClass<jstring>;
 
 namespace {
 
+local_ref<JString> toJavaString(const std::string& value) {
+    // fbjni's std::string overload uses c_str(), which truncates embedded NUL.
+    if (value.find('\0') == std::string::npos) return make_jstring(value);
+    if (value.size() > static_cast<size_t>(std::numeric_limits<jsize>::max())) {
+        throw std::length_error("Storage string exceeds the Java array limit");
+    }
+    const auto size = static_cast<jsize>(value.size());
+    auto bytes = JArrayByte::newArray(size);
+    bytes->setRegion(0, size, reinterpret_cast<const jbyte*>(value.data()));
+    static auto constructor = JString::javaClassStatic()->getConstructor<
+        jstring(jbyteArray, jstring)>();
+    auto charset = make_jstring("UTF-8");
+    return JString::javaClassStatic()->newObject(constructor, bytes.get(), charset.get());
+}
+
 local_ref<JavaStringArray> toJavaStringArray(const std::vector<std::string>& values) {
     auto javaArray = JavaStringArray::newArray(static_cast<jsize>(values.size()));
     for (size_t i = 0; i < values.size(); ++i) {
-        auto javaValue = make_jstring(values[i]);
+        auto javaValue = toJavaString(values[i]);
         javaArray->setElement(static_cast<jsize>(i), javaValue.get());
     }
     return javaArray;
@@ -61,25 +79,25 @@ AndroidStorageAdapterCpp::~AndroidStorageAdapterCpp() = default;
 // --- Disk ---
 
 void AndroidStorageAdapterCpp::setDisk(const std::string& key, const std::string& value) {
-    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<void(std::string, std::string)>("setDisk");
-    method(AndroidStorageAdapterJava::javaClassStatic(), key, value);
+    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<void(alias_ref<JString>, alias_ref<JString>)>("setDisk");
+    method(AndroidStorageAdapterJava::javaClassStatic(), toJavaString(key), toJavaString(value));
 }
 
 std::optional<std::string> AndroidStorageAdapterCpp::getDisk(const std::string& key) {
-    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<jstring(std::string)>("getDisk");
-    auto result = method(AndroidStorageAdapterJava::javaClassStatic(), key);
+    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<jstring(alias_ref<JString>)>("getDisk");
+    auto result = method(AndroidStorageAdapterJava::javaClassStatic(), toJavaString(key));
     if (!result) return std::nullopt;
     return result->toStdString();
 }
 
 void AndroidStorageAdapterCpp::deleteDisk(const std::string& key) {
-    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<void(std::string)>("deleteDisk");
-    method(AndroidStorageAdapterJava::javaClassStatic(), key);
+    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<void(alias_ref<JString>)>("deleteDisk");
+    method(AndroidStorageAdapterJava::javaClassStatic(), toJavaString(key));
 }
 
 bool AndroidStorageAdapterCpp::hasDisk(const std::string& key) {
-    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<jboolean(std::string)>("hasDisk");
-    return method(AndroidStorageAdapterJava::javaClassStatic(), key);
+    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<jboolean(alias_ref<JString>)>("hasDisk");
+    return method(AndroidStorageAdapterJava::javaClassStatic(), toJavaString(key));
 }
 
 std::vector<std::string> AndroidStorageAdapterCpp::getAllKeysDisk() {
@@ -92,9 +110,9 @@ std::vector<std::string> AndroidStorageAdapterCpp::getAllKeysDisk() {
 
 std::vector<std::string> AndroidStorageAdapterCpp::getKeysByPrefixDisk(const std::string& prefix) {
     static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<
-        local_ref<JavaStringArray>(std::string)
+        local_ref<JavaStringArray>(alias_ref<JString>)
     >("getKeysByPrefixDisk");
-    auto keys = method(AndroidStorageAdapterJava::javaClassStatic(), prefix);
+    auto keys = method(AndroidStorageAdapterJava::javaClassStatic(), toJavaString(prefix));
     return fromJavaStringArray(keys);
 }
 
@@ -145,25 +163,25 @@ void AndroidStorageAdapterCpp::clearDisk() {
 // --- Secure ---
 
 void AndroidStorageAdapterCpp::setSecure(const std::string& key, const std::string& value) {
-    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<void(std::string, std::string)>("setSecure");
-    method(AndroidStorageAdapterJava::javaClassStatic(), key, value);
+    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<void(alias_ref<JString>, alias_ref<JString>)>("setSecure");
+    method(AndroidStorageAdapterJava::javaClassStatic(), toJavaString(key), toJavaString(value));
 }
 
 std::optional<std::string> AndroidStorageAdapterCpp::getSecure(const std::string& key) {
-    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<jstring(std::string)>("getSecure");
-    auto result = method(AndroidStorageAdapterJava::javaClassStatic(), key);
+    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<jstring(alias_ref<JString>)>("getSecure");
+    auto result = method(AndroidStorageAdapterJava::javaClassStatic(), toJavaString(key));
     if (!result) return std::nullopt;
     return result->toStdString();
 }
 
 void AndroidStorageAdapterCpp::deleteSecure(const std::string& key) {
-    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<void(std::string)>("deleteSecure");
-    method(AndroidStorageAdapterJava::javaClassStatic(), key);
+    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<void(alias_ref<JString>)>("deleteSecure");
+    method(AndroidStorageAdapterJava::javaClassStatic(), toJavaString(key));
 }
 
 bool AndroidStorageAdapterCpp::hasSecure(const std::string& key) {
-    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<jboolean(std::string)>("hasSecure");
-    return method(AndroidStorageAdapterJava::javaClassStatic(), key);
+    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<jboolean(alias_ref<JString>)>("hasSecure");
+    return method(AndroidStorageAdapterJava::javaClassStatic(), toJavaString(key));
 }
 
 std::vector<std::string> AndroidStorageAdapterCpp::getAllKeysSecure() {
@@ -176,9 +194,9 @@ std::vector<std::string> AndroidStorageAdapterCpp::getAllKeysSecure() {
 
 std::vector<std::string> AndroidStorageAdapterCpp::getKeysByPrefixSecure(const std::string& prefix) {
     static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<
-        local_ref<JavaStringArray>(std::string)
+        local_ref<JavaStringArray>(alias_ref<JString>)
     >("getKeysByPrefixSecure");
-    auto keys = method(AndroidStorageAdapterJava::javaClassStatic(), prefix);
+    auto keys = method(AndroidStorageAdapterJava::javaClassStatic(), toJavaString(prefix));
     return fromJavaStringArray(keys);
 }
 
@@ -242,25 +260,25 @@ void AndroidStorageAdapterCpp::setSecureBiometric(const std::string& key, const 
 }
 
 void AndroidStorageAdapterCpp::setSecureBiometricWithLevel(const std::string& key, const std::string& value, int level) {
-    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<void(std::string, std::string, jint)>("setSecureBiometricWithLevel");
-    method(AndroidStorageAdapterJava::javaClassStatic(), key, value, level);
+    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<void(alias_ref<JString>, alias_ref<JString>, jint)>("setSecureBiometricWithLevel");
+    method(AndroidStorageAdapterJava::javaClassStatic(), toJavaString(key), toJavaString(value), level);
 }
 
 std::optional<std::string> AndroidStorageAdapterCpp::getSecureBiometric(const std::string& key) {
-    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<jstring(std::string)>("getSecureBiometric");
-    auto result = method(AndroidStorageAdapterJava::javaClassStatic(), key);
+    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<jstring(alias_ref<JString>)>("getSecureBiometric");
+    auto result = method(AndroidStorageAdapterJava::javaClassStatic(), toJavaString(key));
     if (!result) return std::nullopt;
     return result->toStdString();
 }
 
 void AndroidStorageAdapterCpp::deleteSecureBiometric(const std::string& key) {
-    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<void(std::string)>("deleteSecureBiometric");
-    method(AndroidStorageAdapterJava::javaClassStatic(), key);
+    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<void(alias_ref<JString>)>("deleteSecureBiometric");
+    method(AndroidStorageAdapterJava::javaClassStatic(), toJavaString(key));
 }
 
 bool AndroidStorageAdapterCpp::hasSecureBiometric(const std::string& key) {
-    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<jboolean(std::string)>("hasSecureBiometric");
-    return method(AndroidStorageAdapterJava::javaClassStatic(), key);
+    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<jboolean(alias_ref<JString>)>("hasSecureBiometric");
+    return method(AndroidStorageAdapterJava::javaClassStatic(), toJavaString(key));
 }
 
 void AndroidStorageAdapterCpp::clearSecureBiometric() {
