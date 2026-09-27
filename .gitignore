@@ -116,6 +116,7 @@ temp/
 
 .agents
 *.md
+!/AUDIT.md
 !.github/pull_request_template.md
 !README.md
 !CONTRIBUTING.md

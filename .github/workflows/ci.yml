@@ -79,3 +79,15 @@ jobs:
           bun run test:cpp:asan
           bun run test:cpp:tsan
           bun run test:cpp:ubsan
+
+      - name: Test lifecycle and release contracts
+        run: bun run test:lifecycle
+
+      - name: Build package artifacts
+        run: bun run build
+
+      - name: Audit package contents
+        run: bun run audit:package
+
+      - name: Validate auth-free publication
+        run: bun run publish-package:dry-run

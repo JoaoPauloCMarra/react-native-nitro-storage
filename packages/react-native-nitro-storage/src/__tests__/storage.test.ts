@@ -1075,6 +1075,39 @@ describe("useStorage", () => {
     });
   });
 
+  it("preserves prefix metrics and observer mutation ordering", () => {
+    storage.setString("metrics-prefix:key", "before", StorageScope.Memory);
+    const operations: string[] = [];
+    storage.resetMetrics();
+    storage.setMetricsObserver((event) => {
+      operations.push(event.operation);
+      if (event.operation === "storage:getKeysByPrefix") {
+        storage.setString("metrics-prefix:key", "after", StorageScope.Memory);
+      }
+    });
+    try {
+      expect(
+        storage.getByPrefix("metrics-prefix:", StorageScope.Memory),
+      ).toEqual({
+        "metrics-prefix:key": "after",
+      });
+      expect(
+        operations.filter((name) => name === "storage:getKeysByPrefix"),
+      ).toHaveLength(1);
+      expect(
+        operations.filter((name) => name === "storage:getByPrefix"),
+      ).toHaveLength(1);
+    } finally {
+      storage.setMetricsObserver(undefined);
+      storage.resetMetrics();
+      createStorageItem({
+        key: "metrics-prefix:key",
+        scope: StorageScope.Memory,
+        defaultValue: "",
+      }).delete();
+    }
+  });
+
   it("emits operation metrics and exposes counter snapshots", () => {
     const metricsEvents: StorageMetricsEvent[] = [];
     storage.setMetricsObserver((event) => metricsEvents.push(event));
@@ -1211,6 +1244,35 @@ describe("useStorage", () => {
     expect(storage.getAll(StorageScope.Disk)).toEqual({
       a: serializeWithPrimitiveFastPath("x"),
     });
+  });
+
+  it("keeps prototype-named raw keys through import and enumeration", () => {
+    const imported = JSON.parse(
+      '{"__proto__":"proto-value","constructor":"constructor-value","toString":"string-value"}',
+    ) as Record<string, string>;
+    const keys = Object.keys(imported);
+
+    keys.forEach((key) => storage.deleteString(key, StorageScope.Memory));
+    storage.import(imported, StorageScope.Memory);
+
+    const all = storage.getAll(StorageScope.Memory);
+    const exported = storage.export(StorageScope.Memory);
+    const protoPrefix = storage.getByPrefix("__proto__", StorageScope.Memory);
+
+    expect(Object.getPrototypeOf(all)).toBe(Object.prototype);
+    expect(Object.getPrototypeOf(exported)).toBe(Object.prototype);
+    for (const key of keys) {
+      expect(Object.prototype.hasOwnProperty.call(all, key)).toBe(true);
+      expect(all[key]).toBe(imported[key]);
+      expect(Object.prototype.hasOwnProperty.call(exported, key)).toBe(true);
+      expect(exported[key]).toBe(imported[key]);
+    }
+    expect(Object.prototype.hasOwnProperty.call(protoPrefix, "__proto__")).toBe(
+      true,
+    );
+    expect(protoPrefix["__proto__"]).toBe(imported["__proto__"]);
+
+    keys.forEach((key) => storage.deleteString(key, StorageScope.Memory));
   });
 
   it("covers item branches for non-string disk reads and secure biometric delete/has", () => {

@@ -106,6 +106,58 @@ describe("createSetItem", () => {
     expect(seen.values().sort()).toEqual(["x", "y"]);
   });
 
+  it("stores prototype-named members as own data properties", () => {
+    type Member = "__proto__" | "constructor" | "toString";
+    const { createSetItem } = freshMock();
+    const defaults = createSetItem<Member>({
+      key: "special-set-defaults",
+      scope: StorageScope.Memory,
+      defaultValue: ["__proto__", "constructor", "toString"],
+    });
+    const defaultValues = defaults.get();
+
+    expect(Object.getPrototypeOf(defaultValues)).toBe(Object.prototype);
+    expect(
+      Object.prototype.hasOwnProperty.call(defaultValues, "__proto__"),
+    ).toBe(true);
+    expect(defaults.values().sort()).toEqual([
+      "__proto__",
+      "constructor",
+      "toString",
+    ]);
+
+    const members = createSetItem<Member>({
+      key: "special-set-members",
+      scope: StorageScope.Memory,
+    });
+    members.add("__proto__");
+    members.add("constructor");
+    members.add("toString");
+
+    const value = members.get();
+    const typed = members.getTyped();
+    expect(Object.getPrototypeOf(value)).toBe(Object.prototype);
+    expect(Object.getPrototypeOf(typed)).toBe(Object.prototype);
+    for (const key of ["__proto__", "constructor", "toString"] as const) {
+      expect(members.has(key)).toBe(true);
+      expect(Object.prototype.hasOwnProperty.call(value, key)).toBe(true);
+      expect(value[key]).toBe(true);
+      expect(Object.prototype.hasOwnProperty.call(typed, key)).toBe(true);
+      expect(typed[key]).toBe(true);
+    }
+    expect(members.values().sort()).toEqual([
+      "__proto__",
+      "constructor",
+      "toString",
+    ]);
+
+    expect(members.toggle("__proto__")).toBe(false);
+    expect(members.has("__proto__")).toBe(false);
+    expect(members.toggle("__proto__")).toBe(true);
+    members.delete("constructor");
+    expect(members.has("constructor")).toBe(false);
+  });
+
   it("does not write on a no-op add or delete", () => {
     const { createSetItem } = freshMock();
     const seen = createSetItem({ key: "seen3", scope: StorageScope.Memory });

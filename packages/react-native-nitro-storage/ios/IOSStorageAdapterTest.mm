@@ -176,6 +176,35 @@ int main() {
         assert(!containsKey(migrated.getAllKeysDisk(), kLegacyKey));
         assert([suite boolForKey:@"__nitro_storage_legacy_disk_migration_v1__"]);
 
+        // Length-delimited keys must never alias a legacy key before NUL.
+        const std::string nulKey = std::string(kHostKey) + '\0' + "caf\xc3\xa9";
+        const std::string nulValue = std::string("before\0after", 12) + " \xf0\x9f\x98\x80";
+        NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
+        [standard setObject:@"host-value" forKey:nsKey(kHostKey)];
+        assert(!migrated.hasDisk(nulKey));
+        assert(!migrated.getDisk(nulKey).has_value());
+        migrated.setDisk(nulKey, nulValue);
+        assert(migrated.getDisk(nulKey).value() == nulValue);
+        assert([[standard stringForKey:nsKey(kHostKey)] isEqualToString:@"host-value"]);
+        migrated.deleteDisk(nulKey);
+        assert([[standard stringForKey:nsKey(kHostKey)] isEqualToString:@"host-value"]);
+        migrated.setDiskBatch({nulKey}, {nulValue});
+        assert(migrated.getDiskBatch({nulKey})[0].value() == nulValue);
+        migrated.deleteDiskBatch({nulKey});
+        assert([[standard stringForKey:nsKey(kHostKey)] isEqualToString:@"host-value"]);
+
+        // Legacy suite migration and enumeration preserve full UTF-8 strings.
+        NSString* fullKey = [[NSString alloc] initWithBytes:nulKey.data()
+            length:nulKey.size() encoding:NSUTF8StringEncoding];
+        NSString* fullValue = [[NSString alloc] initWithBytes:nulValue.data()
+            length:nulValue.size() encoding:NSUTF8StringEncoding];
+        [suite setObject:fullValue forKey:fullKey];
+        assert(containsKey(migrated.getAllKeysDisk(), nulKey));
+        IOSStorageAdapterCpp nulMigrated;
+        assert(nulMigrated.getDisk(nulKey).value() == nulValue);
+        nulMigrated.deleteDisk(nulKey);
+        assert([[standard stringForKey:nsKey(kHostKey)] isEqualToString:@"host-value"]);
+
         cleanupState();
         std::cout << "IOSStorageAdapterCpp disk-scoping tests passed." << std::endl;
     }

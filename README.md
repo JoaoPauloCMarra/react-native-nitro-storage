@@ -35,6 +35,7 @@ pagination, conflict resolution, or remote synchronization.
 - [Legacy Key Migration And Secure Resilience](#legacy-key-migration-and-secure-resilience)
 - [React Hooks](#react-hooks)
 - [Storage Scopes](#storage-scopes)
+- [Prefix Queries](#prefix-queries)
 - [Secure Storage](#secure-storage)
 - [Batch Operations](#batch-operations)
 - [Events And Observability](#events-and-observability)
@@ -77,7 +78,7 @@ before installing this package, then rebuild the native app so the generated
 Nitro bindings and native runtime use the same major-minor version:
 
 ```sh
-bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.10.3
+bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.10.4
 bunx expo prebuild
 ```
 
@@ -392,6 +393,26 @@ const tokenActions = useStorageActions(tokenItem); // { set, merge, reset, remov
 | `StorageScope.Memory` | In-process memory                                                                                 | Session-only state, fast counters, and render-time caches.                   |
 | `StorageScope.Disk`   | SQLite WAL on iOS/Android (imports UserDefaults / SharedPreferences once); configured web backend | Preferences, feature flags, onboarding state, and non-secret persisted data. |
 | `StorageScope.Secure` | Keychain on iOS, Android Keystore-backed preferences                                              | Refresh tokens, credentials, API tokens, and biometric-protected values.     |
+
+## Prefix Queries
+
+Prefix queries use literal, case-sensitive matching on every backend. `User::`
+and `user::` are separate namespaces; `%`, `_`, and `\\` are literal characters.
+Raw enumeration returns the original strings and preserves arbitrary keys as own
+properties on an ordinary object, including `__proto__`.
+
+Disk and Secure strings preserve embedded NUL characters in keys and values,
+including batch operations. Earlier versions could truncate strings at Android
+JNI or iOS Foundation boundaries; this fix cannot reconstruct previously lost
+suffixes. iOS legacy Disk migration also preserves full keys without aliasing
+shorter host-app defaults keys.
+
+```ts
+storage.setString("User::theme", "dark", StorageScope.Disk);
+storage.setString("user::theme", "light", StorageScope.Disk);
+const settings = storage.getByPrefix("User::", StorageScope.Disk);
+// settings["User::theme"] === "dark"; no lowercase namespace entries.
+```
 
 ## Secure Storage
 

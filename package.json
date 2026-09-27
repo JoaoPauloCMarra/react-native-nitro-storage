@@ -24,7 +24,7 @@
     "typecheck:rn087": "bun scripts/verify-rn087-types.ts",
     "test:types": "bun run --cwd packages/react-native-nitro-storage test:types",
     "test": "bun run --cwd packages/react-native-nitro-storage test",
-    "test:lifecycle": "node scripts/package-doc-lifecycle.test.js && bun scripts/assert-publish-workflow.js && bun test ./scripts/assert-publish-workflow.test.js",
+    "test:lifecycle": "node scripts/package-doc-lifecycle.test.js && bun scripts/assert-publish-workflow.js && bun test ./scripts/assert-publish-workflow.test.js && bun test ./scripts/benchmark-enumeration.test.ts",
     "test:coverage": "bun run --cwd packages/react-native-nitro-storage test:coverage",
     "benchmark": "bun run build && bun run --cwd packages/react-native-nitro-storage benchmark",
     "test:cpp": "bun run --cwd packages/react-native-nitro-storage test:cpp",
@@ -59,7 +59,8 @@
     "example:e2e:integrity": "agent-device test e2e/qa-integrity.ad --retries 1 --artifacts-dir \"$(mktemp -d \"${TMPDIR:-/tmp}/agent-device.XXXXXXXX\")\"",
     "example:e2e:keychain": "agent-device test e2e/qa-keychain.ad --retries 1 --artifacts-dir \"$(mktemp -d \"${TMPDIR:-/tmp}/agent-device.XXXXXXXX\")\"",
     "example:e2e:stress": "agent-device test e2e/qa-stress.ad --retries 1 --artifacts-dir \"$(mktemp -d \"${TMPDIR:-/tmp}/agent-device.XXXXXXXX\")\"",
-    "example:smoke:ci": "node scripts/assert-example-smoke.js"
+    "example:smoke:ci": "node scripts/assert-example-smoke.js",
+    "benchmark:enumeration": "bun scripts/benchmark-enumeration.ts"
   },
   "devDependencies": {
     "@react-native/jest-preset": "0.86.3",

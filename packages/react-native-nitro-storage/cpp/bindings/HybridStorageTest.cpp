@@ -495,12 +495,22 @@ void testRemoveByPrefix() {
     storage.set("session:token", "t1", 1.0);
     storage.set("session:user", "u1", 1.0);
     storage.set("profile:user", "p1", 1.0);
+    storage.set("User::token", "upper", 1.0);
+    storage.set("user::token", "lower", 1.0);
+
+    storage.removeByPrefix("", 1.0);
+    assert(storage.has("User::token", 1.0));
+    assert(storage.has("user::token", 1.0));
 
     storage.removeByPrefix("session:", 1.0);
 
     assert(!storage.has("session:token", 1.0));
     assert(!storage.has("session:user", 1.0));
     assert(storage.has("profile:user", 1.0));
+
+    storage.removeByPrefix("User::", 1.0);
+    assert(!storage.has("User::token", 1.0));
+    assert(storage.has("user::token", 1.0));
 }
 
 void testGetKeysByPrefix() {

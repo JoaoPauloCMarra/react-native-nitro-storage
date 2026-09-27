@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes are always listed first in each release section.
 
+## [0.10.4] - 2026-09-27
+
+### Breaking changes
+
+- None.
+
+### Fixed
+
+- Disk prefix queries and namespace removal now distinguish ASCII case, so clearing `user` does not remove `User` keys.
+- Android Disk and Secure storage preserve embedded NUL characters in keys and values across scalar and batch operations, preventing truncated-key collisions.
+- iOS Secure storage preserves embedded NUL keys and values, and legacy Disk migration no longer aliases a shorter host-app defaults key when a key contains NUL.
+- Memory prefix reads return the original raw string, including values beginning with the reserved internal prefix.
+- Raw enumeration, export, and set items preserve arbitrary keys such as `__proto__`, `constructor`, and `toString` as own properties.
+
 ## [0.10.3] - 2026-09-18
 
 ### Breaking changes
