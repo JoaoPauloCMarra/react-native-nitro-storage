@@ -1598,8 +1598,8 @@ export function createStorageCore(
   function createStorageItem<T = undefined>(
     config: StorageItemConfig<T>,
   ): StorageItem<T> {
+    assertValidStorageKey(config.key);
     const storageKey = prefixKey(config.namespace, config.key);
-    assertValidStorageKey(storageKey);
     const serialize = config.serialize ?? defaultSerialize;
     const deserialize = config.deserialize ?? defaultDeserialize;
     const isMemory = config.scope === StorageScope.Memory;

@@ -5,7 +5,11 @@ import {
   storage,
   StorageScope,
 } from "../index.web";
-import type { WebStorageBackend } from "../web-storage-backend";
+import type {
+  WebStorageBackend,
+  WebStorageChangeEvent,
+} from "../web-storage-backend";
+import type { StorageChangeEvent } from "../storage-events";
 
 function createStorageMock(): Storage {
   const store = new Map<string, string>();
@@ -33,9 +37,33 @@ function createStorageMock(): Storage {
 
 function createMapBackend(name: string) {
   const store = new Map<string, string>();
-  const backend: WebStorageBackend & { store: Map<string, string> } = {
+  const subscribers = new Set<(event: WebStorageChangeEvent) => void>();
+  const backend: WebStorageBackend & {
+    store: Map<string, string>;
+    emitExternal: (event: WebStorageChangeEvent) => void;
+    notifyOnly: (event: WebStorageChangeEvent) => void;
+  } = {
     name,
     store,
+    notifyOnly: (event) => {
+      subscribers.forEach((listener) => listener(event));
+    },
+    emitExternal: (event) => {
+      if (event.key === null) {
+        store.clear();
+      } else if (event.newValue === null) {
+        store.delete(event.key);
+      } else {
+        store.set(event.key, event.newValue);
+      }
+      subscribers.forEach((listener) => listener(event));
+    },
+    subscribe: (listener) => {
+      subscribers.add(listener);
+      return () => {
+        subscribers.delete(listener);
+      };
+    },
     getItem: (key) => store.get(key) ?? null,
     setItem: (key, value) => {
       store.set(key, value);
@@ -157,6 +185,56 @@ describe("one backend shared by Disk and Secure", () => {
 
     expect(token.get()).toBe("");
     expect(theme.get()).toBe("dark");
+  });
+});
+
+describe("subscribe events from one shared backend", () => {
+  it("keeps other-tab secure writes out of Disk", () => {
+    const backend = createMapBackend("shared-sub");
+    setWebDiskStorageBackend(backend);
+    setWebSecureStorageBackend(backend);
+    storage.setString("theme", "dark", StorageScope.Disk);
+    storage.getAllKeys(StorageScope.Secure);
+    const diskEvents: StorageChangeEvent[] = [];
+    const secureEvents: StorageChangeEvent[] = [];
+    const unsubscribeDisk = storage.subscribe(StorageScope.Disk, (event) =>
+      diskEvents.push(event),
+    );
+    const unsubscribeSecure = storage.subscribe(StorageScope.Secure, (event) =>
+      secureEvents.push(event),
+    );
+
+    backend.emitExternal({ key: "__secure_token", newValue: "s3cret" });
+
+    expect(storage.getAllKeys(StorageScope.Disk)).toEqual(["theme"]);
+    expect(Object.keys(storage.export(StorageScope.Disk))).toEqual(["theme"]);
+    expect(diskEvents).toEqual([]);
+    expect(storage.getAllKeys(StorageScope.Secure)).toEqual(["token"]);
+    expect(secureEvents).toHaveLength(1);
+
+    backend.emitExternal({ key: "other-tab-disk", newValue: "v" });
+    expect(storage.getAllKeys(StorageScope.Secure)).toEqual(["token"]);
+    expect(secureEvents).toHaveLength(1);
+    expect(storage.getAllKeys(StorageScope.Disk).sort()).toEqual([
+      "other-tab-disk",
+      "theme",
+    ]);
+    unsubscribeDisk();
+    unsubscribeSecure();
+  });
+
+  it("re-reads each scope's keys when the shared backend reports a clear", () => {
+    const backend = createMapBackend("shared-clear");
+    setWebDiskStorageBackend(backend);
+    setWebSecureStorageBackend(backend);
+    storage.setString("theme", "dark", StorageScope.Disk);
+    storage.setString("token", "t", StorageScope.Secure);
+    backend.store.delete("theme");
+
+    backend.notifyOnly({ key: null, newValue: null });
+
+    expect(storage.getAllKeys(StorageScope.Disk)).toEqual([]);
+    expect(storage.getAllKeys(StorageScope.Secure)).toEqual(["token"]);
   });
 });
 

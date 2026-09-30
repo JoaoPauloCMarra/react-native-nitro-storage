@@ -301,6 +301,12 @@ describe("empty keys", () => {
     expect(getStorageErrorCode(caught)).toBe("invalid_key");
   });
 
+  it("rejects an empty item key even with a namespace", () => {
+    expect(() =>
+      createStorageItem({ key: "", namespace: "ns", scope: StorageScope.Disk }),
+    ).toThrow("invalid_key");
+  });
+
   it("rejects empty raw keys before reaching native", () => {
     expect(() => storage.setString("", "v", StorageScope.Disk)).toThrow(
       "invalid_key",

@@ -489,6 +489,22 @@ function subscribeToBackendChanges(scope: NonMemoryScope): void {
   }
 
   const unsubscribe = backend.subscribe((event: WebStorageChangeEvent) => {
+    if (webDiskStorageBackend !== webSecureStorageBackend) {
+      applyExternalChangeEvent(scope, event.key, event.newValue);
+      return;
+    }
+    if (event.key === null) {
+      getInternals().clearScopeRawCache(scope);
+      reconcileWebScopeKeyIndex(scope);
+      notifyAllListeners(getInternals().getScopedListeners(scope));
+      return;
+    }
+    const eventScope = isSecureWebStorageKey(event.key)
+      ? StorageScope.Secure
+      : StorageScope.Disk;
+    if (eventScope !== scope) {
+      return;
+    }
     applyExternalChangeEvent(scope, event.key, event.newValue);
   });
   externalSyncUnsubscribers.set(scope, unsubscribe);
