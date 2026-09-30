@@ -4,11 +4,13 @@ Use `migrateFromMMKV(mmkv, item, deleteAfterMigration?)` when an app already sto
 
 The helper reads in this order:
 
-1. `mmkv.getString(key)`
+1. `mmkv.getString(key)`, then `JSON.parse` on the string. If parsing succeeds, the parsed value is written; otherwise the raw string is written.
 2. `mmkv.getNumber(key)`
 3. `mmkv.getBoolean(key)`
 
 It writes through `item.set()`, so custom serialization, validation, TTL behavior, and listeners remain active.
+
+Because of the `JSON.parse` step, a string item can receive a non-string value: MMKV strings such as `"12345"`, `"true"`, or `"null"` are written as a number, a boolean, or `null`, while the item type still says `string`. For string items, add `validate` with an `onValidationError` fallback, or copy the raw value with `storage.setString(key, mmkv.getString(key), scope)` instead.
 
 ## Basic Migration
 

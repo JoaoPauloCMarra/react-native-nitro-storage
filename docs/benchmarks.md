@@ -28,22 +28,14 @@ Native Disk/Secure baselines require a device or simulator run and are not part 
 
 ## Release Checklist
 
-Before publishing:
+Before publishing, run the full release gate:
 
 ```sh
-bun run codegen:check
-bun run lint:check
-bun run format:check
-bun run typecheck
-bun run test:types
-bun run test
-bun run test:cpp
-bun run build
-bun run benchmark
-bun run --cwd packages/react-native-nitro-storage check:pack
+bun run release:preflight
 ```
 
-Keep the dry-publish output in the release notes when validating a version locally.
+It runs `check:ci` (including the benchmark), the example checks, the package
+audit, and the publish dry run.
 
 ## 2026-09-27 Memory enumeration experiment
 

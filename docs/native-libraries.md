@@ -6,15 +6,17 @@ EncryptedSharedPreferences. Web Disk stays on the configured web backend
 
 ## Kept
 
-| Library    | Where                                            | Why                                                                                                                                                                     |
-| ---------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| SQLite WAL | iOS `SqliteDiskStore`, Android `DiskSqliteStore` | Transactional batch writes, prefix queries without loading a plist/XML map, and crash-safe persistence. Closest Disk engine to a dedicated mmap KV without adding MMKV. |
+| Library    | Where                                            | Why                                                                                                                                                    |
+| ---------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| SQLite WAL | iOS `SqliteDiskStore`, Android `DiskSqliteStore` | Transactional batch writes, literal prefix queries in SQL, and crash-safe persistence. Closest Disk engine to a dedicated mmap KV without adding MMKV. |
 
 Existing UserDefaults suite keys and Android `NitroStorage` preferences are
 copied into SQLite once, on first open. A marker in the SQLite `meta` table
 (`suite_v1` on iOS, `prefs_v1` on Android) records completion, so later launches
-skip the import. On iOS the suite domain is kept for downgrade safety. Later Disk reads
-and writes use SQLite.
+skip the import. On iOS the suite domain is kept for downgrade safety, and Disk
+key enumeration still merges its keys. On Android the legacy `NitroStorage`
+preferences are cleared once the import marker commits, so `clear(Disk)` leaves
+no pre-SQLite copy behind. Later Disk reads and writes use SQLite.
 
 ## Evaluated and not shipped
 

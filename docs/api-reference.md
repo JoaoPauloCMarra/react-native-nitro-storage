@@ -14,28 +14,28 @@ const item = createStorageItem<T>({
 
 `StorageItemConfig<T>`:
 
-| Field                        | Type                             | Purpose                                                             |
-| ---------------------------- | -------------------------------- | ------------------------------------------------------------------- |
-| `key`                        | `string`                         | Storage key. Combined with `namespace` when provided.               |
-| `scope`                      | `StorageScope`                   | Memory, Disk, or Secure.                                            |
-| `defaultValue`               | `T`                              | Value returned when no stored value exists.                         |
-| `serialize`                  | `(value: T) => string`           | Custom string encoder. Defaults to primitive/JSON serialization.    |
-| `deserialize`                | `(value: string) => T`           | Custom string decoder.                                              |
-| `validate`                   | `(value: unknown) => value is T` | Runtime guard for stored data.                                      |
-| `onValidationError`          | `(invalidValue: unknown) => T`   | Replacement value when validation fails.                            |
-| `expiration`                 | `{ ttlMs: number }`              | Time-to-live for the value.                                         |
-| `onExpired`                  | `(key: string) => void`          | Called when a read detects TTL expiry.                              |
-| `readCache`                  | `boolean`                        | Reuse raw cache entries for reads, including cached missing values. |
-| `coalesceDiskWrites`         | `boolean`                        | Buffer Disk writes until the next flush.                            |
-| `coalesceSecureWrites`       | `boolean`                        | Buffer Secure writes until the next flush.                          |
-| `namespace`                  | `string`                         | Prefix keys as `namespace:key`.                                     |
-| `biometric`                  | `boolean`                        | Store through biometric secure storage.                             |
-| `biometricLevel`             | `BiometricLevel`                 | Require biometric/passcode or biometric-only access.                |
-| `accessControl`              | `AccessControl`                  | Platform secure accessibility setting.                              |
-| `group`                      | `string`                         | Register the item for group cleanup and inspection.                 |
-| `renameFrom`                 | `string \| readonly string[]`    | Copy a legacy key on first read, then remove it.                    |
-| `fallbackToCacheOnReadError` | `boolean`                        | Return the last cached value when a backend read fails.             |
-| `onReadError`                | `(error: unknown) => void`       | Observe a backend read failure before fallback or rethrow.          |
+| Field                        | Type                             | Purpose                                                                                                                                                      |
+| ---------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `key`                        | `string`                         | Storage key. Combined with `namespace` when provided. Must not be empty (`invalid_key`).                                                                     |
+| `scope`                      | `StorageScope`                   | Memory, Disk, or Secure.                                                                                                                                     |
+| `defaultValue`               | `T`                              | Value returned when no stored value exists.                                                                                                                  |
+| `serialize`                  | `(value: T) => string`           | Custom string encoder. Defaults to primitive/JSON serialization.                                                                                             |
+| `deserialize`                | `(value: string) => T`           | Custom string decoder.                                                                                                                                       |
+| `validate`                   | `(value: unknown) => value is T` | Runtime guard for stored data.                                                                                                                               |
+| `onValidationError`          | `(invalidValue: unknown) => T`   | Replacement value when validation fails.                                                                                                                     |
+| `expiration`                 | `{ ttlMs: number }`              | Time-to-live for the value.                                                                                                                                  |
+| `onExpired`                  | `(key: string) => void`          | Called when a read detects TTL expiry.                                                                                                                       |
+| `readCache`                  | `boolean`                        | Reuse raw cache entries for reads, including cached missing values. Items without `readCache` or `fallbackToCacheOnReadError` do not fill the cache on read. |
+| `coalesceDiskWrites`         | `boolean`                        | Buffer Disk writes until the next flush.                                                                                                                     |
+| `coalesceSecureWrites`       | `boolean`                        | Buffer Secure writes until the next flush.                                                                                                                   |
+| `namespace`                  | `string`                         | Prefix keys as `namespace:key`.                                                                                                                              |
+| `biometric`                  | `boolean`                        | Store through biometric secure storage.                                                                                                                      |
+| `biometricLevel`             | `BiometricLevel`                 | Require biometric/passcode or biometric-only access.                                                                                                         |
+| `accessControl`              | `AccessControl`                  | Platform secure accessibility setting.                                                                                                                       |
+| `group`                      | `string`                         | Register the item for group cleanup and inspection.                                                                                                          |
+| `renameFrom`                 | `string \| readonly string[]`    | Copy a legacy key on first read, then remove it.                                                                                                             |
+| `fallbackToCacheOnReadError` | `boolean`                        | Return the last cached value when a backend read fails with `keychain_locked`. Other errors still throw.                                                     |
+| `onReadError`                | `(error: unknown) => void`       | Observe a backend read failure before fallback or rethrow.                                                                                                   |
 
 `StorageItem<T>`:
 
@@ -65,6 +65,20 @@ const unsubscribe = profileItem.subscribeSelector(
 );
 ```
 
+## Scoped Item Factories
+
+`memoryItem(config)`, `diskItem(config)`, and `secureItem(config)` take the same
+config as `createStorageItem` without the `scope` field.
+
+```ts
+const draft = memoryItem<string>({ key: "draft", defaultValue: "" });
+const theme = diskItem<"light" | "dark">({
+  key: "theme",
+  defaultValue: "light",
+});
+const token = secureItem<string>({ key: "token", defaultValue: "" });
+```
+
 ## createSetItem
 
 ```ts
@@ -85,9 +99,11 @@ flags.getTyped();
 ## React Hooks
 
 ```ts
-const [value, setValue] = useStorage(item);
+const [value, setValue, actions] = useStorage(item);
 const [selected, setItem] = useStorageSelector(item, selector, isEqual);
 const setOnly = useSetStorage(item);
+const readOnly = useStorageValue(item);
+const writeOnly = useStorageActions(item);
 ```
 
 See [react-hooks.md](react-hooks.md).
@@ -128,7 +144,8 @@ See [react-hooks.md](react-hooks.md).
 | `getMetricsSnapshot()`                           | Read aggregated metrics.                                                                  |
 | `getScopedMetricsSnapshot()`                     | Read metrics grouped by storage scope.                                                    |
 | `resetMetrics()`                                 | Clear metrics counters.                                                                   |
-| `getCapabilities()`                              | Read runtime storage capabilities.                                                        |
+| `getCacheMetrics()`                              | Read raw-cache hits, misses, live entries, and estimated bytes.                           |
+| `getCapabilities()`                              | Read runtime storage capabilities. Native `backend.disk` is `"sqlite"`.                   |
 | `getSecurityCapabilities()`                      | Read secure backend capability metadata.                                                  |
 | `getSecureMetadata(key)`                         | Read secure metadata for one key without returning its value.                             |
 | `getAllSecureMetadata()`                         | Read secure metadata for all secure keys without values.                                  |
@@ -259,6 +276,21 @@ the native or web adapter. `isStorageError(error, code)` matches one exact code
 without parsing platform message text. See [secure-storage.md](secure-storage.md)
 for recovery semantics.
 
+| Code                          | Raised when                                                                      |
+| ----------------------------- | -------------------------------------------------------------------------------- |
+| `keychain_locked`             | The protected store is locked.                                                   |
+| `authentication_required`     | The item needs user authentication, or the user cancelled the prompt.            |
+| `key_invalidated`             | The protecting key was invalidated, for example by a biometric enrolment change. |
+| `biometric_unavailable`       | The requested biometric level is not available on this device or OS version.     |
+| `storage_corruption`          | Stored secure data could not be decrypted.                                       |
+| `storage_compensation_failed` | A multi-step write failed and restoring the previous state also failed.          |
+| `unsupported`                 | The operation is not available on this platform or environment.                  |
+| `invalid_key`                 | A storage key is empty.                                                          |
+
+`StorageCompositeError` and `StorageCompensationError` describe errors that
+carry a primary failure plus secondary failures from reconciliation or
+compensation steps.
+
 `isKeychainLockedError(error)` is deprecated. It remains available for
 compatibility and returns `true` for `keychain_locked`,
 `authentication_required`, and `key_invalidated`.
@@ -273,9 +305,10 @@ getWebSecureStorageBackend();
 await flushWebStorageBackends();
 ```
 
-The web entry also exports `describeWebBackendCapabilities(backend)` and
-`isIndexedDBWebBackend(backend)`. The native entry keeps the web backend
-setters, getters, and flush function as typed no-ops for shared code.
+Every entry, including native and `/testing`, exports
+`describeWebBackendCapabilities(backend)` and `isIndexedDBWebBackend(backend)`.
+The native and testing entries keep the web backend setters, getters, and flush
+function as typed no-ops for shared code.
 
 See [web-backends.md](web-backends.md).
 
@@ -339,6 +372,18 @@ Common public types:
 - `PlatformStorage`
 - `PlatformScope`
 - `WebBackendCapabilities`
+- `StorageCapabilities`
+- `StorageCacheMetrics`
+- `StorageExportOptions`
+- `StorageEventObserverOptions`
+- `StorageCompositeError`
+- `StorageCompensationError`
+- `SetStorageItem<T>`
+- `SetItemConfig<T>`
+- `StorageClearOptions`
+- `StorageKeyRef`
+- `StorageActions<T>`
+- `StorageSetter<T>`
 
 `getCapabilities().writeBuffering` describes real per-mode durability:
 
@@ -350,4 +395,4 @@ Common public types:
 
 `describeWebBackendCapabilities(backend)` reports a backend's `buffered`, `flushable`, `closable`, and `subscribable` capabilities from the same typed contract used by the built-in backends.
 
-The IndexedDB subpath exports `createIndexedDBBackend()` and `IndexedDBBackendOptions`.
+The IndexedDB subpath exports `createIndexedDBBackend()` and `IndexedDBBackendOptions`. The root export of `createIndexedDBBackend` is deprecated; import it from `react-native-nitro-storage/indexeddb-backend`.

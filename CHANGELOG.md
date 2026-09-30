@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes are always listed first in each release section.
 
+## [0.11.0] - 2026-09-30
+
+### Breaking changes
+
+- **iOS `has()` on Secure keys throws while the keychain is locked.** `item.has()` and `storage.has(key, StorageScope.Secure)` now throw `keychain_locked` instead of returning `false`, matching `hasSecureBiometric` and Android. Migration: wrap Secure existence checks that can run while the device is locked in `try`/`catch` and retry after unlock when `isStorageError(error, "keychain_locked")`.
+- **`fallbackToCacheOnReadError` applies only to `keychain_locked`.** Other read errors such as `authentication_required`, `key_invalidated`, and `storage_corruption` now throw instead of returning the cached value. Migration: catch those codes where you relied on the fallback, and handle them explicitly (prompt the user, or recreate the credential).
+- **Native `getCapabilities().backend.disk` is `"sqlite"`.** It was `"platform-preferences"`, although native Disk has used SQLite WAL since 0.10.3. Migration: compare against `"sqlite"` if you branch on this string.
+- **Empty storage keys are rejected.** `createStorageItem({ key: "" })`, `setString("")`, `deleteString("")`, and `import({ "": value })` throw an error with the new `invalid_key` code. On native an empty key was also the clear signal, so writing it cleared pending writes and caches for the whole scope. Migration: rename any empty key; handle `invalid_key` if your `StorageErrorCode` switch is exhaustive.
+- **Deprecated:** the root export of `createIndexedDBBackend`. Migration: import it from `react-native-nitro-storage/indexeddb-backend`. The root export still works in this release.
+
+### Fixed
+
+- Deleting an item, `deleteString()`, and transaction rollbacks read the previous value only when an event listener or an unredacted event observer needs it. Deleting or expiring a biometric item no longer shows a Face ID or passcode prompt on iOS, and a cancelled prompt no longer blocks the delete.
+- Memory `setBatch()` keeps string values that start with the reserved escape prefix intact.
+- Memory `clear(scope, { except })` and `deleteString()` drop TTL deadlines, so a later write to the same key no longer expires early or fires `onExpired`.
+- A late native change notification for an older write no longer overwrites a newer cached value for `readCache` items and their subscribers.
+- Reads fill the Disk/Secure raw cache only for items with `readCache` or `fallbackToCacheOnReadError`, so other Secure reads no longer keep plaintext values in the JavaScript heap.
+- Web: when one backend instance is registered for both Disk and Secure, Disk enumeration and export skip Secure keys, and `clear()` removes only the cleared scope's keys.
+- Web: window `storage` events update a scope only while it uses the default `localStorage` backend, and only for events from `localStorage`. Writes to `localStorage` in another tab no longer add phantom keys to IndexedDB-backed scopes.
+- Web IndexedDB backend: cross-tab messages that arrive during startup hydration are applied after the snapshot instead of being overwritten.
+- `react-native-nitro-storage/testing` notifies Disk and Secure subscribers, so hooks re-render for those scopes, and it exports the web backend setters, getters, and `flushWebStorageBackends` as no-ops like the native entry.
+- `describeWebBackendCapabilities`, `isIndexedDBWebBackend`, and `WebBackendCapabilities` are exported from the main entry types.
+- iOS Secure writes update `kSecAttrAccessible` on existing Keychain items, so a changed access control level reaches items that already exist.
+- iOS Secure key listing throws for unexpected Keychain statuses instead of returning an empty list.
+- iOS Secure batch writes notify listeners for the keys that were applied before a failure is rethrown.
+- iOS resolves the Disk database path once instead of on every Disk call, runs the legacy Disk migration on first Disk use instead of at module creation, and a corrupt Disk database no longer leaks a file descriptor per call or blocks Memory and Secure scopes.
+- Android creates the Secure master key and preferences on first Secure use instead of at app start, so a Keystore failure surfaces as a Secure error instead of crashing the app at launch.
+- Android reads of `BiometryOrPasscode` items open only that store, so a device-credential authentication is enough.
+- Android clears the legacy `NitroStorage` SharedPreferences after they are imported into SQLite, so `clear(Disk)` leaves no pre-SQLite copy.
+- The podspec uses React Native's minimum iOS version and excludes test sources; the Android build no longer pins `kotlin-stdlib`.
+- The Expo config plugin loads `expo/config-plugins`, and `expo` (`>=52.0.0`) is declared as an optional peer dependency.
+- The IndexedDB backend no longer installs `pagehide` and `visibilitychange` listeners; they started no IndexedDB work.
+
+### Documentation
+
+- Android biometric protection is checked when a biometric store is first opened in a process; later reads in that process do not authenticate again, and the package never shows a prompt on Android. Apps must run their own `BiometricPrompt` before gated reads. The previous "30-second window" wording was wrong.
+- iOS biometric reads block the JavaScript thread while the system prompt is visible.
+- README web backend example uses separate stores for Disk and Secure, the events example uses the `(namespace, scope, listener)` signature, the auth-token example no longer enables `fallbackToCacheOnReadError`, and the error code table lists every code.
+- Compatibility: tested on React Native 0.86.3 / Expo SDK 57; supported from React Native 0.76 / Expo SDK 52, where Android `ndkVersion` must be 27 or newer.
+- `SECURITY.md` names the supported `0.11.x` line and private vulnerability reporting.
+
 ## [0.10.5] - 2026-09-30
 
 ### Breaking changes
@@ -193,14 +234,17 @@ Breaking changes are always listed first in each release section.
 ### Changed
 
 - `getCapabilities().writeBuffering` now reports real per-mode durability: native Secure writes report buffering only while `setSecureWritesAsync(true)` is active on Android, and web backends report buffering only for IndexedDB-based backends.
-- The IndexedDB backend reports affected keys when `flush()` fails and starts a best-effort flush on `pagehide` and hidden visibility changes.
+- The IndexedDB backend reports affected keys when `flush()` fails and adds `pagehide` and hidden-visibility listeners. Those listeners started no IndexedDB work and were removed in 0.11.0.
 - `setIfVersion()` is documented as optimistic (no backend-level atomicity); CAS guarantees are covered by race tests.
 
 ## [0.7.0] - 2026-07-30
 
+### Breaking changes
+
+- Android secure key discovery, existence checks, and cleanup now surface locked, unavailable, or invalidated biometric-store errors instead of treating inaccessible protected values as absent. Catch storage errors around these operations and use `isKeychainLockedError()` when retrying after device authentication is appropriate.
+
 ### Changes
 
-- **Breaking change:** Android secure key discovery, existence checks, and cleanup now surface locked, unavailable, or invalidated biometric-store errors instead of treating inaccessible protected values as absent. Catch storage errors around these operations and use `isKeychainLockedError()` when retrying after device authentication is appropriate.
 - Upgrade the validated package baseline to Expo SDK 57, React Native 0.86.2, and Nitro Modules/Nitrogen 0.36.4.
 - Preserve each item/value relationship in heterogeneous `setBatch()` calls so TypeScript rejects values assigned to the wrong storage item.
 - Serialize native key-index hydration with concurrent mutations so `has`, `size`, and key queries cannot remain stale after a racing write.
@@ -208,6 +252,15 @@ Breaking changes are always listed first in each release section.
 - Preflight biometric store access before aggregate secure mutations and surface native commit or corruption-recovery failures.
 
 ## [0.6.0] - 2026-06-15
+
+### Breaking changes
+
+All new APIs are additive — existing code keeps working. These behavior and
+type changes can affect advanced consumers:
+
+- TTL expiry now emits a `"expire"` change event instead of `"remove"`. Previously, a disk/secure value expiring on read emitted `operation: "remove"` and an expiring memory value emitted no event at all. If you subscribe to storage events and branch on `operation === "remove"` to detect expiry, also handle `"expire"` (or use the new `storage.subscribeExpired()`).
+- `StorageChangeOperation` gained the `"expire"` and `"clearGroup"` members. Exhaustive `switch` statements over a change event's `operation` need cases for the new members.
+- `useStorage()` now returns a three-element tuple `[value, setter, actions]` (was two). Array destructuring such as `const [value, setStore] = useStorage(item)` is unaffected; only code that annotated the result with an explicit two-element tuple type needs to widen the annotation.
 
 ### Added
 
@@ -224,16 +277,7 @@ Breaking changes are always listed first in each release section.
 
 ### Changed
 
-- Faster writes when nothing is subscribed: the native write/notify path now takes a lock-free fast path (per-scope atomic listener counts) and skips locking and copying the listener vector when a scope has no listeners. Applies to both iOS and Android via the shared C++ `HybridStorage`, and is thread-safe (verified under the C++ AddressSanitizer, ThreadSanitizer, and UndefinedBehaviorSanitizer suites).
-
-### Breaking Changes
-
-All new APIs are additive — existing code keeps working. These behavior and
-type changes can affect advanced consumers:
-
-- TTL expiry now emits a `"expire"` change event instead of `"remove"`. Previously, a disk/secure value expiring on read emitted `operation: "remove"` and an expiring memory value emitted no event at all. If you subscribe to storage events and branch on `operation === "remove"` to detect expiry, also handle `"expire"` (or use the new `storage.subscribeExpired()`).
-- `StorageChangeOperation` gained the `"expire"` and `"clearGroup"` members. Exhaustive `switch` statements over a change event's `operation` need cases for the new members.
-- `useStorage()` now returns a three-element tuple `[value, setter, actions]` (was two). Array destructuring such as `const [value, setStore] = useStorage(item)` is unaffected; only code that annotated the result with an explicit two-element tuple type needs to widen the annotation.
+- Writes skip listener locking when nothing is subscribed: the native write/notify path now takes a lock-free fast path (per-scope atomic listener counts) and skips locking and copying the listener vector when a scope has no listeners. Applies to both iOS and Android via the shared C++ `HybridStorage`, and is thread-safe (verified under the C++ AddressSanitizer, ThreadSanitizer, and UndefinedBehaviorSanitizer suites).
 
 ## [0.5.9] - 2026-06-11
 
@@ -266,7 +310,7 @@ type changes can affect advanced consumers:
 
 ### Changed
 
-- Speed up iOS Secure batch operations by reusing the resolved Keychain access group and access-control level across each batch instead of re-reading configuration per key.
+- iOS Secure batch operations reuse the resolved Keychain access group and access-control level across each batch instead of re-reading configuration per key.
 - Refactor iOS Secure set/get/delete helpers so single-item and batch paths share Keychain status handling and cache updates.
 - Strengthen TypeScript inference parity on web by exporting `StorageSetter` and preserving tuple value types from `getBatch()`.
 
@@ -452,7 +496,7 @@ type changes can affect advanced consumers:
 - Group secure raw batch writes by per-item access control so secure batch paths stay fast even with mixed access-control settings.
 - Optimize C++ batch listener dispatch by copying scoped listeners once per batch operation.
 - Avoid duplicate secure biometric clearing calls by relying on secure clear paths that already include biometric cleanup.
-- Optimize web secure/disk key bookkeeping with an indexed key cache (faster `size`, `getAllKeys`, and namespace clears without repeated `localStorage` scans).
+- Optimize web secure/disk key bookkeeping with an indexed key cache (`size`, `getAllKeys`, and namespace clears no longer rescan `localStorage`).
 - Improve iOS secure key union performance by deduplicating with an `unordered_set`.
 - Extract shared React hooks into `src/storage-hooks.ts` to reduce native/web entrypoint duplication.
 - Expand benchmark coverage to include Disk and Secure scope throughput checks and tighten regression thresholds.
