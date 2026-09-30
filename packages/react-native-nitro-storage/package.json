@@ -124,10 +124,10 @@
     "registry": "https://registry.npmjs.org/"
   },
   "devDependencies": {
-    "@expo/config-plugins": "^57.0.6",
     "@react-native/babel-preset": "^0.86.3",
     "@testing-library/react-native": "^13.3.3",
-    "@types/react": "~19.2.18"
+    "@types/react": "~19.2.18",
+    "expo": "~57.0.26"
   },
   "peerDependencies": {
     "react": ">=18.2.0",
