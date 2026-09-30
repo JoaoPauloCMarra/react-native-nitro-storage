@@ -134,7 +134,14 @@ static bool isInternalDiskKey(NSString* key) {
         [key isEqualToString:kLegacyDiskMigrationMarkerKey];
 }
 
+static NSString* const kSuiteSqliteMigrationMarker = @"suite_v1";
+
 static void migrateSuiteIntoSqlite() {
+    auto& store = NitroSqliteDiskStore();
+    const std::string marker = stdStringFromNSString(kSuiteSqliteMigrationMarker);
+    if (store.hasMigrationMarker(marker)) {
+        return;
+    }
     NSDictionary<NSString*, id>* entries =
         [NitroDiskDefaults() persistentDomainForName:kDiskSuiteName] ?: @{};
     std::vector<std::pair<std::string, std::string>> pairs;
@@ -149,7 +156,7 @@ static void migrateSuiteIntoSqlite() {
         }
         pairs.emplace_back(stdStringFromNSString(key), stdStringFromNSString((NSString*)value));
     }
-    NitroSqliteDiskStore().migrateIfAbsent(pairs);
+    store.migrateOnce(marker, pairs);
 }
 
 static void runLegacyDiskMigrationCutover(
@@ -323,6 +330,14 @@ void resetSqliteDiskStoreForTesting() {
     [files removeItemAtPath:path error:nil];
     [files removeItemAtPath:[path stringByAppendingString:@"-wal"] error:nil];
     [files removeItemAtPath:[path stringByAppendingString:@"-shm"] error:nil];
+}
+
+void resetSharedSqliteDiskStoreForTesting() {
+    SqliteDiskStore::resetShared();
+}
+
+bool sqliteDiskStoreHasKeyForTesting(const std::string& key) {
+    return NitroSqliteDiskStore().has(key);
 }
 #endif
 

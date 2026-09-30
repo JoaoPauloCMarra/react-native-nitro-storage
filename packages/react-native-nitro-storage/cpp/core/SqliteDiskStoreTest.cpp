@@ -80,6 +80,39 @@ int main() {
     }
 
     {
+        SqliteDiskStore store(path);
+        assert(!store.hasMigrationMarker("suite_v1"));
+
+        store.set("existing", "kept");
+        store.migrateOnce("suite_v1", {{"existing", "overwritten"}, {"first", "1"}});
+        assert(store.hasMigrationMarker("suite_v1"));
+        assert(store.get("existing").value() == "kept");
+        assert(store.get("first").value() == "1");
+
+        store.migrateOnce("suite_v1", {{"second", "2"}, {"first", "changed"}});
+        assert(!store.has("second"));
+        assert(store.get("first").value() == "1");
+
+        assert(!store.hasMigrationMarker("empty_v1"));
+        store.migrateOnce("empty_v1", {});
+        assert(store.hasMigrationMarker("empty_v1"));
+        store.migrateOnce("empty_v1", {{"late", "x"}});
+        assert(!store.has("late"));
+
+        store.clear();
+        assert(store.hasMigrationMarker("suite_v1"));
+    }
+
+    {
+        SqliteDiskStore reopened(path);
+        assert(reopened.hasMigrationMarker("suite_v1"));
+        assert(reopened.hasMigrationMarker("empty_v1"));
+        assert(!reopened.hasMigrationMarker("other_v1"));
+        reopened.migrateOnce("suite_v1", {{"after-reopen", "x"}});
+        assert(!reopened.has("after-reopen"));
+    }
+
+    {
         SqliteDiskStore& shared = SqliteDiskStore::shared(path);
         shared.set("persisted", "ok");
         SqliteDiskStore::resetShared();

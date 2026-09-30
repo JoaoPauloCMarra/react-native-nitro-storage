@@ -87,9 +87,9 @@
     "react-native": "0.86.3",
     "react-native-nitro-modules": "0.37.1",
     "@types/react": "~19.2.18",
-    "expo": "~57.0.25",
+    "expo": "~57.0.26",
     "expo-asset": "~57.0.18",
-    "expo-constants": "~57.0.19",
+    "expo-constants": "~57.0.20",
     "expo-font": "~57.0.4",
     "expo-linking": "~57.0.11"
   },

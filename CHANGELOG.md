@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes are always listed first in each release section.
 
+## [0.10.5] - 2026-09-30
+
+### Breaking changes
+
+- None.
+
+### Fixed
+
+- iOS no longer re-reads the whole UserDefaults suite and re-imports it into SQLite on every cold start. The import now runs once and records completion in the SQLite `meta` table, like Android. Existing values stay readable, and the suite domain is kept so a downgrade still sees its data.
+
 ## [0.10.4] - 2026-09-27
 
 ### Breaking changes
