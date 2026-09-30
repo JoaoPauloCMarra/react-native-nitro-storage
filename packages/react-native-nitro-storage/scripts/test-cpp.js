@@ -1,6 +1,7 @@
 const { execFileSync } = require("child_process");
-const path = require("path");
 const fs = require("fs");
+const os = require("os");
+const path = require("path");
 
 const coverageEnabled = process.argv.includes("--coverage");
 const sanitizerArg = process.argv.find((arg) => arg.startsWith("--sanitize="));
@@ -218,6 +219,24 @@ function sanitizerRuntimeEnv() {
   return process.env;
 }
 
+function runIosAdapterTest(binaryPath, baseEnv) {
+  const isolatedHome = fs.mkdtempSync(
+    path.join(os.tmpdir(), "nitro-storage-ios-adapter-"),
+  );
+  try {
+    runCommand(binaryPath, [], {
+      env: {
+        ...baseEnv,
+        HOME: isolatedHome,
+        CFFIXED_USER_HOME: isolatedHome,
+        __CFPREFERENCES_AVOID_DAEMON: "1",
+      },
+    });
+  } finally {
+    fs.rmSync(isolatedHome, { recursive: true, force: true });
+  }
+}
+
 function runCoverage(hybridOutputFile) {
   const hybridProfile = path.join(buildDir, "hybrid.profraw");
   const mergedProfile = path.join(buildDir, "coverage.profdata");
@@ -233,7 +252,12 @@ function runCoverage(hybridOutputFile) {
     runCommand(hybridOutputFile, [], {
     env: { ...process.env, LLVM_PROFILE_FILE: hybridProfile },
   });
-    runCommand(sqliteOutputFile, [], { env: sanitizerRuntimeEnv() });
+    runCommand(sqliteOutputFile, [], {
+    env: {
+      ...sanitizerRuntimeEnv(),
+      LLVM_PROFILE_FILE: path.join(buildDir, "sqlite.profraw"),
+    },
+  });
 
   runCommand(profdata, [
     "merge",
@@ -375,14 +399,17 @@ try {
   if (coverageEnabled) {
     runCoverage(hybridOutputFile);
     if (iosAdapterOutputFile) {
-      runCommand(iosAdapterOutputFile, [], { env: sanitizerRuntimeEnv() });
+      runIosAdapterTest(iosAdapterOutputFile, {
+        ...sanitizerRuntimeEnv(),
+        LLVM_PROFILE_FILE: path.join(buildDir, "ios-adapter.profraw"),
+      });
     }
   } else {
     const sanitizerEnv = sanitizerRuntimeEnv();
     runCommand(hybridOutputFile, [], { env: sanitizerEnv });
     runCommand(sqliteOutputFile, [], { env: sanitizerEnv });
     if (iosAdapterOutputFile) {
-      runCommand(iosAdapterOutputFile, [], { env: sanitizerEnv });
+      runIosAdapterTest(iosAdapterOutputFile, sanitizerEnv);
     }
   }
   console.log("✅ C++ tests passed!");

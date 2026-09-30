@@ -61,7 +61,12 @@ std::string escapeLikePrefix(const std::string& prefix) {
 
 SqliteDiskStore::SqliteDiskStore(std::string path) : path_(std::move(path)) {
     std::lock_guard<std::mutex> lock(mutex_);
-    openLocked();
+    try {
+        openLocked();
+    } catch (...) {
+        closeLocked();
+        throw;
+    }
 }
 
 SqliteDiskStore::~SqliteDiskStore() {

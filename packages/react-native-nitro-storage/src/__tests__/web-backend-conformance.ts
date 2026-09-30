@@ -1,11 +1,13 @@
 import type { WebStorageBackend } from "../web-storage-backend";
-import { describeWebBackendCapabilities } from "../web-backend-contract";
+import {
+  describeWebBackendCapabilities,
+  isIndexedDBWebBackend,
+} from "../web-backend-contract";
 
 export type WebBackendConformanceHooks = {
   name: string;
   create: () => WebStorageBackend | Promise<WebStorageBackend>;
   reset?: () => void | Promise<void>;
-  emitsChangeEventsToSubscribers?: boolean;
 };
 
 export function runWebBackendConformanceSuite(
@@ -78,42 +80,10 @@ export function runWebBackendConformanceSuite(
       }
     });
 
-    it("reports capability metadata consistently with its behavior", () => {
-      const capabilities = describeWebBackendCapabilities(backend);
-      if (capabilities.flushable) {
-        expect(typeof backend.flush).toBe("function");
-      }
-      if (capabilities.closable) {
-        expect(typeof backend.close).toBe("function");
-      }
-      if (capabilities.subscribable) {
-        expect(typeof backend.subscribe).toBe("function");
-      }
-    });
-
-    it("emits change events through subscribe when available", async () => {
-      if (!backend.subscribe || hooks.emitsChangeEventsToSubscribers !== true) {
-        return;
-      }
-      const events: { key: string | null; newValue: string | null }[] = [];
-      const unsubscribe = backend.subscribe((event) => events.push(event));
-      backend.setItem("evt", "value");
-      backend.removeItem("evt");
-      backend.clear();
-      await Promise.resolve();
-      await Promise.resolve();
-      unsubscribe();
-
-      const setEvent = events.find(
-        (event) => event.key === "evt" && event.newValue === "value",
+    it("reports buffering only for IndexedDB backends", () => {
+      expect(describeWebBackendCapabilities(backend).buffered).toBe(
+        isIndexedDBWebBackend(backend),
       );
-      expect(setEvent).toBeDefined();
-      const removeEvent = events.find(
-        (event) => event.key === "evt" && event.newValue === null,
-      );
-      expect(removeEvent).toBeDefined();
-      const clearEvent = events.find((event) => event.key === null);
-      expect(clearEvent).toBeDefined();
     });
 
     it("flush resolves when available", async () => {

@@ -1,6 +1,7 @@
 require "json"
 
 package = JSON.parse(File.read(File.join(__dir__, "package.json")))
+ios_deployment_target = defined?(min_ios_version_supported) ? min_ios_version_supported : "15.1"
 
 Pod::Spec.new do |s|
   s.name         = "react-native-nitro-storage"
@@ -10,7 +11,7 @@ Pod::Spec.new do |s|
   s.license      = package["license"]
   s.authors      = package["author"]
 
-  s.platforms    = { :ios => "13.0" }
+  s.platforms    = { :ios => ios_deployment_target }
   s.source       = { :git => "https://github.com/JoaoPauloCMarra/react-native-nitro-storage.git", :tag => "v#{s.version}" }
   s.module_name  = "NitroStorage"
 
@@ -20,7 +21,8 @@ Pod::Spec.new do |s|
   ]
   s.exclude_files = [
     "cpp/**/*Test.cpp",
-    "cpp/build/**"
+    "cpp/build/**",
+    "ios/**/*Test.mm"
   ]
 
   s.pod_target_xcconfig = {

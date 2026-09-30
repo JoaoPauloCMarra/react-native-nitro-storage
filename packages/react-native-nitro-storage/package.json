@@ -1,6 +1,6 @@
 {
   "name": "react-native-nitro-storage",
-  "version": "0.10.5",
+  "version": "0.11.0",
   "description": "Synchronous React Native storage powered by Nitro Modules and JSI: typed Memory, Disk, Keychain/Android Keystore secure storage, biometric auth, MMKV migration, Expo, Zustand/Jotai persistence, and web IndexedDB support.",
   "main": "lib/commonjs/index.js",
   "module": "lib/module/index.js",
@@ -33,6 +33,8 @@
   "files": [
     "src",
     "lib",
+    "testing",
+    "indexeddb-backend",
     "cpp",
     "android",
     "ios",
@@ -54,6 +56,7 @@
     "!android/.cxx",
     "!scripts"
   ],
+  "sideEffects": false,
   "scripts": {
     "build": "bob build",
     "clean": "rimraf lib nitrogen/generated",
@@ -123,15 +126,21 @@
     "registry": "https://registry.npmjs.org/"
   },
   "devDependencies": {
-    "@expo/config-plugins": "^57.0.6",
     "@react-native/babel-preset": "^0.86.3",
     "@testing-library/react-native": "^13.3.3",
-    "@types/react": "~19.2.18"
+    "@types/react": "~19.2.18",
+    "expo": "~57.0.26"
   },
   "peerDependencies": {
     "react": ">=18.2.0",
-    "react-native": ">=0.75.0",
-    "react-native-nitro-modules": ">=0.37.0 <0.38.0"
+    "react-native": ">=0.77.0",
+    "react-native-nitro-modules": ">=0.37.0 <0.38.0",
+    "expo": ">=53.0.0"
+  },
+  "peerDependenciesMeta": {
+    "expo": {
+      "optional": true
+    }
   },
   "react-native-builder-bob": {
     "source": "src",

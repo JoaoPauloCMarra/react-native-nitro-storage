@@ -7,6 +7,7 @@ import {
   assertBatchScope,
   assertValidScope,
   toVersionToken,
+  assertValidStorageKey,
   prefixKey,
   isNamespaced,
   escapeCollidingRawValue,
@@ -57,7 +58,7 @@ import {
   type StorageKeyChangeEvent,
 } from "./storage-events";
 import type { StorageSetter } from "./storage-hooks";
-import type { SecureStorageMetadata } from "./storage-runtime";
+import { isStorageError, type SecureStorageMetadata } from "./storage-runtime";
 import { StorageScope, AccessControl, BiometricLevel } from "./Storage.types";
 
 export type TransactionContext = {
@@ -507,6 +508,26 @@ export function createStorageCore(
     return scope !== StorageScope.Secure || !eventObserverRedactSecureValues;
   }
 
+  function readPreviousEventValue(
+    scope: StorageScope,
+    key: string,
+    representation: StorageRawCacheRepresentation = "plain",
+  ): string | undefined {
+    if (!shouldReadPreviousEventValues(scope)) {
+      return undefined;
+    }
+    return getEventRawValueForRepresentation(scope, key, representation);
+  }
+
+  function toMemoryStoredValue(value: unknown): unknown {
+    return typeof value === "string" ? escapeCollidingRawValue(value) : value;
+  }
+
+  function deleteMemoryKey(key: string): void {
+    memoryStore.delete(key);
+    memoryExpirationDeadlines.delete(key);
+  }
+
   function eventForGlobalObserver(
     event: StorageChangeEvent,
   ): StorageChangeEvent {
@@ -707,6 +728,7 @@ export function createStorageCore(
 
   function setRawValue(key: string, value: string, scope: StorageScope): void {
     assertValidScope(scope);
+    assertValidStorageKey(key);
     const storedValue = escapeCollidingRawValue(value);
     const oldValue =
       scope === StorageScope.Memory ? getEventRawValue(scope, key) : undefined;
@@ -745,9 +767,10 @@ export function createStorageCore(
 
   function removeRawValue(key: string, scope: StorageScope): void {
     assertValidScope(scope);
-    const oldValue = getEventRawValue(scope, key);
+    assertValidStorageKey(key);
+    const oldValue = readPreviousEventValue(scope, key);
     if (scope === StorageScope.Memory) {
-      memoryStore.delete(key);
+      deleteMemoryKey(key);
       notifyKeyListeners(memoryListeners, key);
       emitKeyChange(scope, key, oldValue, undefined, "remove", "memory");
       return;
@@ -851,7 +874,7 @@ export function createStorageCore(
         const previousValues = shouldReadPreviousEventValues(scope)
           ? removeKeys.map((key) => getEventRawValue(scope, key))
           : [];
-        removeKeys.forEach((key) => memoryStore.delete(key));
+        removeKeys.forEach(deleteMemoryKey);
         removeKeys.forEach((key) => {
           notifyKeyListeners(memoryListeners, key);
         });
@@ -1521,14 +1544,18 @@ export function createStorageCore(
         scope,
         () => {
           assertValidScope(scope);
+          keys.forEach(assertValidStorageKey);
           if (keys.length === 0) return;
           const values = keys.map((k) => data[k] as string);
           const storedValues = values.map(escapeCollidingRawValue);
+          const readPrevious =
+            scope === StorageScope.Memory ||
+            shouldReadPreviousEventValues(scope);
           const changes = keys.map((key, index) =>
             createKeyChange(
               scope,
               key,
-              getEventRawValue(scope, key),
+              readPrevious ? getEventRawValue(scope, key) : undefined,
               values[index],
               "import",
               scope === StorageScope.Memory ? "memory" : adapter.changeSource,
@@ -1571,6 +1598,7 @@ export function createStorageCore(
   function createStorageItem<T = undefined>(
     config: StorageItemConfig<T>,
   ): StorageItem<T> {
+    assertValidStorageKey(config.key);
     const storageKey = prefixKey(config.namespace, config.key);
     const serialize = config.serialize ?? defaultSerialize;
     const deserialize = config.deserialize ?? defaultDeserialize;
@@ -1750,7 +1778,7 @@ export function createStorageCore(
         const raw = readBackendRaw(() =>
           adapter.backend.getSecureBiometric(storageKey),
         );
-        if (readCache) {
+        if (readCache || fallbackToCacheOnReadError) {
           cacheRawValue(
             resolveNonMemoryScope(),
             storageKey,
@@ -1764,7 +1792,9 @@ export function createStorageCore(
       const raw = readBackendRaw(() =>
         adapter.backend.get(storageKey, config.scope),
       );
-      cacheRawValue(resolveNonMemoryScope(), storageKey, raw);
+      if (readCache || fallbackToCacheOnReadError) {
+        cacheRawValue(resolveNonMemoryScope(), storageKey, raw);
+      }
       return raw;
     };
 
@@ -1775,7 +1805,10 @@ export function createStorageCore(
         return read();
       } catch (error) {
         onReadError?.(error);
-        if (fallbackToCacheOnReadError) {
+        if (
+          fallbackToCacheOnReadError &&
+          isStorageError(error, "keychain_locked")
+        ) {
           const scope = resolveNonMemoryScope();
           const cached = readCachedRawValue(
             scope,
@@ -2425,13 +2458,11 @@ export function createStorageCore(
     const removeStoredRaw = (
       operation: StorageChangeOperation = "remove",
     ): void => {
-      const oldValue = isBiometric
-        ? getEventRawValueForRepresentation(
-            config.scope,
-            storageKey,
-            "biometric",
-          )
-        : getEventRawValue(config.scope, storageKey);
+      const oldValue = readPreviousEventValue(
+        config.scope,
+        storageKey,
+        isBiometric ? "biometric" : "plain",
+      );
       if (isBiometric) {
         invalidateRawCache(StorageScope.Secure, storageKey);
         scheduleRenameSourceCleanup();
@@ -2512,9 +2543,7 @@ export function createStorageCore(
         } else {
           memoryExpirationDeadlines.delete(storageKey);
         }
-        const storedValue =
-          typeof value === "string" ? escapeCollidingRawValue(value) : value;
-        memoryStore.set(storageKey, storedValue);
+        memoryStore.set(storageKey, toMemoryStoredValue(value));
         notifyKeyListeners(memoryListeners, storageKey);
         emitKeyChange(
           config.scope,
@@ -3018,7 +3047,7 @@ export function createStorageCore(
 
           // Atomic write: update all values in memoryStore, invalidate caches, then batch-notify
           items.forEach(({ item, value }) => {
-            memoryStore.set(item.key, value);
+            memoryStore.set(item.key, toMemoryStoredValue(value));
             asInternal(
               item as StorageItem<unknown>,
             )._invalidateParsedCacheOnly();
@@ -3473,9 +3502,13 @@ export function createStorageCore(
         const rollbackSource =
           scope === StorageScope.Memory ? "memory" : adapter.changeSource;
         const rollbackErrors: { label: string; error: unknown }[] = [];
+        const readRollbackEvents = shouldReadPreviousEventValues(scope);
         const readRollbackEventValue = (
           entry: TransactionRollbackEntry,
         ): string | undefined => {
+          if (!readRollbackEvents) {
+            return undefined;
+          }
           try {
             return getEventRawValueForRepresentation(
               scope,

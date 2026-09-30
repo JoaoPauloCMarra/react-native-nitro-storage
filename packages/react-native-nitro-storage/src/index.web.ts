@@ -1,4 +1,5 @@
 import { resolveWebWriteBuffering } from "./capabilities";
+import { createIndexedDBBackend as createIndexedDBBackendFromSubpath } from "./indexeddb-backend";
 import { unescapeCollidingRawValue } from "./internal";
 import {
   assertAccessControlLevel,
@@ -111,20 +112,26 @@ function getInternals(): StorageCoreInternals {
   return internals;
 }
 
+const DEFAULT_DISK_BACKEND_NAME = "localStorage:disk";
+const DEFAULT_SECURE_BACKEND_NAME = "localStorage:secure";
+
+function isSecureWebStorageKey(key: string): boolean {
+  return (
+    key.startsWith(SECURE_WEB_PREFIX) || key.startsWith(BIOMETRIC_WEB_PREFIX)
+  );
+}
+
 function createDefaultDiskBackend(): WebDiskStorageBackend {
   return createLocalStorageWebBackend({
-    name: "localStorage:disk",
-    includeKey: (key) =>
-      !key.startsWith(SECURE_WEB_PREFIX) &&
-      !key.startsWith(BIOMETRIC_WEB_PREFIX),
+    name: DEFAULT_DISK_BACKEND_NAME,
+    includeKey: (key) => !isSecureWebStorageKey(key),
   });
 }
 
 function createDefaultSecureBackend(): WebSecureStorageBackend {
   return createLocalStorageWebBackend({
-    name: "localStorage:secure",
-    includeKey: (key) =>
-      key.startsWith(SECURE_WEB_PREFIX) || key.startsWith(BIOMETRIC_WEB_PREFIX),
+    name: DEFAULT_SECURE_BACKEND_NAME,
+    includeKey: isSecureWebStorageKey,
   });
 }
 
@@ -227,7 +234,9 @@ function replaceWebScopeKeyIndex(
   keyIndex.clear();
   for (const key of keys) {
     if (scope === StorageScope.Disk) {
-      keyIndex.add(key);
+      if (!isSecureWebStorageKey(key)) {
+        keyIndex.add(key);
+      }
       continue;
     }
 
@@ -432,23 +441,41 @@ function applyExternalChangeEvent(
   );
 }
 
+function usesDefaultLocalStorageBackend(scope: NonMemoryScope): boolean {
+  return (
+    getWebBackend(scope)?.name ===
+    (scope === StorageScope.Disk
+      ? DEFAULT_DISK_BACKEND_NAME
+      : DEFAULT_SECURE_BACKEND_NAME)
+  );
+}
+
 function handleWebStorageEvent(event: StorageEvent): void {
+  if (
+    typeof globalThis.localStorage === "undefined" ||
+    event.storageArea !== globalThis.localStorage
+  ) {
+    return;
+  }
+
   const key = event.key;
   if (key === null) {
-    applyExternalChangeEvent(StorageScope.Disk, null, null);
-    applyExternalChangeEvent(StorageScope.Secure, null, null);
+    if (usesDefaultLocalStorageBackend(StorageScope.Disk)) {
+      applyExternalChangeEvent(StorageScope.Disk, null, null);
+    }
+    if (usesDefaultLocalStorageBackend(StorageScope.Secure)) {
+      applyExternalChangeEvent(StorageScope.Secure, null, null);
+    }
     return;
   }
 
-  if (
-    key.startsWith(SECURE_WEB_PREFIX) ||
-    key.startsWith(BIOMETRIC_WEB_PREFIX)
-  ) {
-    applyExternalChangeEvent(StorageScope.Secure, key, event.newValue);
+  const scope = isSecureWebStorageKey(key)
+    ? StorageScope.Secure
+    : StorageScope.Disk;
+  if (!usesDefaultLocalStorageBackend(scope)) {
     return;
   }
-
-  applyExternalChangeEvent(StorageScope.Disk, key, event.newValue);
+  applyExternalChangeEvent(scope, key, event.newValue);
 }
 
 function subscribeToBackendChanges(scope: NonMemoryScope): void {
@@ -462,6 +489,22 @@ function subscribeToBackendChanges(scope: NonMemoryScope): void {
   }
 
   const unsubscribe = backend.subscribe((event: WebStorageChangeEvent) => {
+    if (webDiskStorageBackend !== webSecureStorageBackend) {
+      applyExternalChangeEvent(scope, event.key, event.newValue);
+      return;
+    }
+    if (event.key === null) {
+      getInternals().clearScopeRawCache(scope);
+      reconcileWebScopeKeyIndex(scope);
+      notifyAllListeners(getInternals().getScopedListeners(scope));
+      return;
+    }
+    const eventScope = isSecureWebStorageKey(event.key)
+      ? StorageScope.Secure
+      : StorageScope.Disk;
+    if (eventScope !== scope) {
+      return;
+    }
     applyExternalChangeEvent(scope, event.key, event.newValue);
   });
   externalSyncUnsubscribers.set(scope, unsubscribe);
@@ -581,7 +624,24 @@ const WebStorage: Storage = {
     }
     try {
       withWebBackendOperation(scope, "clear", (backend) => {
-        backend.clear();
+        if (webDiskStorageBackend !== webSecureStorageBackend) {
+          backend.clear();
+          return;
+        }
+        const ownedKeys = backend
+          .getAllKeys()
+          .filter((key) =>
+            scope === StorageScope.Secure
+              ? isSecureWebStorageKey(key)
+              : !isSecureWebStorageKey(key),
+          );
+        if (backend.removeMany) {
+          backend.removeMany(ownedKeys);
+          return;
+        }
+        ownedKeys.forEach((key) => {
+          backend.removeItem(key);
+        });
       });
     } catch (error) {
       throwAfterWebMutationFailure(scope, "clear", error);
@@ -1135,4 +1195,11 @@ export {
   useStorageSelector,
   useStorageValue,
 } from "./storage-hooks";
-export { createIndexedDBBackend } from "./indexeddb-backend";
+
+/**
+ * @deprecated Import `createIndexedDBBackend` from
+ * `react-native-nitro-storage/indexeddb-backend` instead. The root export
+ * will be removed in a future minor release.
+ */
+export const createIndexedDBBackend: typeof createIndexedDBBackendFromSubpath =
+  createIndexedDBBackendFromSubpath;

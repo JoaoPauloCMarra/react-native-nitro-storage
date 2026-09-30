@@ -47,6 +47,16 @@ config.resolver.blockList = Array.isArray(config.resolver.blockList)
 
 // Web platform: exclude native-only deps, use web entry for local package
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (moduleName === "react-native-nitro-storage/indexeddb-backend") {
+    return context.resolveRequest(
+      context,
+      path.resolve(
+        monorepoRoot,
+        "packages/react-native-nitro-storage/src/indexeddb-backend.ts",
+      ),
+      platform,
+    );
+  }
   if (platform === "web") {
     if (moduleName === "react-native-nitro-modules") {
       return { type: "empty" };

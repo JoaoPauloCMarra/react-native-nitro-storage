@@ -47,7 +47,14 @@ export const recoveryCodeItem = createStorageItem<string>({
 
 `BiometricLevel.BiometryOnly` does not allow passcode fallback. Use `BiometricLevel.BiometryOrPasscode` when passcode fallback is acceptable.
 
-On Android 11 and newer, the two levels use separate Android Keystore keys with distinct allowed authenticators. Android 10 and older support `BiometryOrPasscode`; `BiometryOnly` reports `biometric_unavailable` because the older Keystore API cannot enforce that distinction safely for this storage backend. Android authorization remains valid for a 30-second window after successful authentication.
+On Android 11 and newer, the two levels use separate Android Keystore keys with distinct allowed authenticators. Android 10 and older support `BiometryOrPasscode`; `BiometryOnly` reports `biometric_unavailable` because the older Keystore API cannot enforce that distinction safely for this storage backend.
+
+### Platform prompt behaviour
+
+- **iOS:** reading a biometric item runs `SecItemCopyMatching` with user interaction allowed. The system shows the Face ID, Touch ID, or passcode sheet, and the synchronous JSI call blocks the JavaScript thread until the user answers. JavaScript timers, JavaScript-driven animations, and other JSI calls wait during that time. Read biometric items from a user action, not during render. Deleting a biometric item does not read it first unless an event listener or an unredacted event observer needs the previous value, so a delete does not show a prompt.
+- **Android errors:** if the default Secure master key or store cannot be created (for example a Keystore key that exists but is unusable), Secure calls throw `storage_corruption`. This is not a temporary state: do not retry in a loop. Secure scope stays unavailable until the app data is cleared or the app is reinstalled; Memory and Disk keep working.
+- **Android:** Nitro Storage never shows a prompt. Each biometric level is an `EncryptedSharedPreferences` file whose Tink keyset is wrapped by an Android Keystore key that requires user authentication within the last 30 seconds. That key is used only when the store is first opened in a process: `EncryptedSharedPreferences` decrypts the keyset once and keeps it in memory, and later reads and writes in the same process do not check authentication again. After the first successful open, biometric values stay readable without authentication until the process ends.
+- **What Android apps must do:** run `androidx.biometric.BiometricPrompt` in the app before every read that must be gated, and treat the storage check as a one-time guard per process. Enable the config plugin option `addBiometricPermissions` so the app can declare `USE_BIOMETRIC` and `USE_FINGERPRINT` for its own prompt. Reading a `BiometryOrPasscode` item opens only the `BiometryOrPasscode` store, so a device-credential authentication is enough for that level.
 
 ## Access Control
 
@@ -60,6 +67,8 @@ On Android 11 and newer, the two levels use separate Android Keystore keys with 
 | `AccessControl.WhenPasscodeSetThisDeviceOnly`  | The secret must stay on this device and require a passcode.       |
 | `AccessControl.WhenUnlockedThisDeviceOnly`     | The secret should not migrate through backup/restore.             |
 | `AccessControl.AfterFirstUnlockThisDeviceOnly` | Background refresh is needed, but migration is not allowed.       |
+
+On iOS the level applies on every write, including updates of an item that already exists, so changing `accessControl` or `storage.setAccessControl()` moves existing items to the new level on their next write. On iOS, `item.has()` and `storage.has(key, StorageScope.Secure)` throw `keychain_locked` while the keychain is locked, and a Keychain status error for any other unexpected status, instead of returning `false`. A biometric item that the Keychain reports as needing authentication counts as present, so `has()` on a biometric item returns `true` without a prompt; while the device is locked the same status also returns `true`. Listing, counting, and prefix queries on Secure keys throw a Keychain status error for unexpected statuses instead of returning an empty result.
 
 ## Secure Auth Item Map
 
@@ -172,13 +181,16 @@ Recovery depends on the exact stable code:
 
 `isKeychainLockedError()` remains available for compatibility but is
 deprecated. It groups all three codes and must not be used to select retry
-behavior. The package does not block the synchronous JSI call, sleep, or retry
-internally; the application owns lifecycle scheduling and cancellation.
+behavior. The package does not sleep or retry internally; the application owns
+lifecycle scheduling and cancellation. Biometric reads on iOS block the
+synchronous JSI call while the system prompt is visible.
 
-Do not enable `fallbackToCacheOnReadError` for access or refresh tokens unless
-the application explicitly accepts stale or revoked credentials. A cached
-value can hide the distinction between temporary unavailability and credential
-recovery.
+`fallbackToCacheOnReadError` returns the last value read in this process only
+when a read fails with `keychain_locked`. Every other error still throws. Only
+iOS reports `keychain_locked`; Android and web never do, so the fallback has no
+effect there. Do not
+enable it for access or refresh tokens unless the application explicitly
+accepts stale credentials while the device is locked.
 
 ## Android Secure Write Mode
 
@@ -204,13 +216,13 @@ entries, and surfaces native clear failures.
 ## iOS Legacy Disk Migration
 
 Older releases tracked observed Disk keys in `standardUserDefaults`. On iOS,
-adapter initialization copies a valid registry into the Nitro suite domain and
+the first Disk operation copies a valid registry into the Nitro suite domain and
 removes each legacy source only after a target readback and synchronization
 check. `NSUserDefaults` is not transactional, so the migration stops on any
 failed synchronization or readback without deleting the source or registry.
 Malformed registries, same-domain or fallback stores, conflicting target
 values, and failed persistence therefore remain available for recovery. The
-migration is retryable on a later initialization; do not delete the registry
+migration is retryable on a later launch; do not delete the registry
 manually while an upgrade is in progress.
 
 After that cutover, suite string keys are imported into the SQLite WAL Disk
@@ -237,10 +249,12 @@ See [web-backends.md](web-backends.md) for backend contracts and IndexedDB setup
 Before releasing secure-storage changes, run:
 
 ```sh
-bun run test -- --filter=react-native-nitro-storage
-bun run test:cpp -- --filter=react-native-nitro-storage
-(cd packages/react-native-nitro-storage && bun run check:pack)
+bun run test
+bun run test:cpp
+bun run audit:package
 ```
+
+`bun run release:preflight` runs these checks together with the full release gate.
 
 Also run the [physical-device Keychain lifecycle protocol](keychain-lifecycle-testing.md)
 when changing biometric, Keychain, or error-classification behavior.

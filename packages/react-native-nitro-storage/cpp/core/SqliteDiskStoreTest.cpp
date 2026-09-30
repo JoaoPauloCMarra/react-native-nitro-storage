@@ -1,13 +1,58 @@
 #include "SqliteDiskStore.hpp"
 
 #include <cassert>
+#include <dirent.h>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <unistd.h>
 #include <vector>
 
 using NitroStorage::SqliteDiskStore;
+
+namespace {
+
+int openFileDescriptorCount() {
+    int count = 0;
+    DIR* directory = opendir("/dev/fd");
+    assert(directory != nullptr);
+    while (readdir(directory) != nullptr) {
+        ++count;
+    }
+    closedir(directory);
+    return count;
+}
+
+void testConstructorReleasesConnectionWhenOpenFails(const std::string& path) {
+    const std::string corruptPath = path + ".corrupt";
+    {
+        std::ofstream file(corruptPath, std::ios::binary);
+        file << std::string(8192, 'x');
+    }
+    const int before = openFileDescriptorCount();
+    int failures = 0;
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        try {
+            SqliteDiskStore store(corruptPath);
+        } catch (const std::exception&) {
+            ++failures;
+        }
+        try {
+            (void)SqliteDiskStore::shared(corruptPath);
+        } catch (const std::exception&) {
+            ++failures;
+        }
+    }
+    assert(failures == 40);
+    assert(openFileDescriptorCount() == before);
+    SqliteDiskStore::resetShared();
+    std::filesystem::remove(corruptPath);
+    std::filesystem::remove(corruptPath + "-wal");
+    std::filesystem::remove(corruptPath + "-shm");
+}
+
+} // namespace
 
 int main() {
     const auto path = (std::filesystem::temp_directory_path() /
@@ -119,6 +164,8 @@ int main() {
         SqliteDiskStore reopened(path);
         assert(reopened.get("persisted").value() == "ok");
     }
+
+    testConstructorReleasesConnectionWhenOpenFails(path);
 
     std::filesystem::remove(path);
     std::filesystem::remove(path + "-wal");

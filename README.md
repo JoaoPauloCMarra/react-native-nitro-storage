@@ -61,10 +61,23 @@ Peer dependencies:
 | Package                      | Version            |
 | ---------------------------- | ------------------ |
 | `react`                      | `>=18.2.0`         |
-| `react-native`               | `>=0.75.0`         |
+| `react-native`               | `>=0.77.0`         |
 | `react-native-nitro-modules` | `>=0.37.0 <0.38.0` |
 
 Nitro peer requirement: `react-native-nitro-modules >=0.37.0 <0.38.0`.
+
+| Tested on                                  | Supported floor                     |
+| ------------------------------------------ | ----------------------------------- |
+| React Native `0.86.3` / Expo SDK `57.0.26` | React Native `0.77` / Expo SDK `53` |
+
+Nitro Storage supports React Native 0.77 or newer and Expo SDK 53 or newer,
+which is the minimum for Nitro Modules 0.37: its Android package does not
+compile against React Native 0.76. It is tested on React Native 0.86.3 and Expo
+SDK 57.
+
+The `react-native-nitro-storage/testing` and
+`react-native-nitro-storage/indexeddb-backend` subpaths also resolve when Metro
+package exports are disabled (the default before React Native 0.79).
 
 The package gate uses React Native `0.86.3` and the Strict TypeScript API.
 `check:ci` also compiles the public source against React Native `0.87.0`'s
@@ -78,7 +91,7 @@ before installing this package, then rebuild the native app so the generated
 Nitro bindings and native runtime use the same major-minor version:
 
 ```sh
-bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.10.5
+bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.11.0
 bunx expo prebuild
 ```
 
@@ -125,11 +138,15 @@ Add the config plugin before prebuilding native iOS and Android projects:
 }
 ```
 
-| Option                    | Default                  | What it does                                                   |
-| ------------------------- | ------------------------ | -------------------------------------------------------------- |
-| `faceIDPermission`        | Built-in Face ID message | Sets `NSFaceIDUsageDescription`.                               |
-| `addBiometricPermissions` | `false`                  | Adds Android biometric and fingerprint permissions.            |
-| `configureAndroidBackup`  | `true`                   | Writes Android backup rules that exclude secure storage files. |
+| Option                    | Default                  | What it does                                                    |
+| ------------------------- | ------------------------ | --------------------------------------------------------------- |
+| `faceIDPermission`        | Built-in Face ID message | Sets `NSFaceIDUsageDescription`.                                |
+| `addBiometricPermissions` | `false`                  | Adds Android `USE_BIOMETRIC` and `USE_FINGERPRINT` permissions. |
+| `configureAndroidBackup`  | `true`                   | Writes Android backup rules that exclude secure storage files.  |
+
+Nitro Storage does not show a biometric prompt on Android. Enable
+`addBiometricPermissions` when your app runs its own `BiometricPrompt` before it
+reads biometric items; the permissions are for that prompt.
 
 Android adapter initialization is owned by the package through an Android
 manifest initializer, so apps should not edit `MainApplication` to call
@@ -165,7 +182,10 @@ application state.
 Native storage calls are synchronous JSI operations. Keep values and batches
 small enough for the JavaScript event loop; native and configured web-backend
 failures throw errors. Secure cache fallback is opt-in through
-`fallbackToCacheOnReadError`.
+`fallbackToCacheOnReadError` and applies only to `keychain_locked` read errors,
+which only iOS reports.
+Storage keys must be non-empty strings; an empty key throws an `invalid_key`
+error before it reaches native storage.
 
 ## Auth Tokens
 
@@ -194,9 +214,9 @@ boundary. `createSecureAuthStorage` already namespaces keys, notifies
 subscribers, and migrates legacy keys.
 
 Do not enable `fallbackToCacheOnReadError` for access or refresh tokens unless
-the application explicitly accepts stale or revoked credentials. Handle
-temporary secure-storage errors and retry from application lifecycle state
-instead.
+the application explicitly accepts stale credentials while the keychain is
+locked. Handle temporary secure-storage errors and retry from application
+lifecycle state instead.
 
 ## Typed Storage Items
 
@@ -310,8 +330,11 @@ storage.clear(StorageScope.Disk, {
 ## Legacy Key Migration And Secure Resilience
 
 `renameFrom` migrates an old key to a new one on first read and deletes the
-legacy entry. Secure items can fall back to the last cached value when the
-keychain is locked instead of throwing.
+legacy entry. Secure items that set `fallbackToCacheOnReadError` return the last
+value read in this process when a read fails with `keychain_locked`. Every other
+read error, such as `authentication_required`, `key_invalidated`, or
+`storage_corruption`, still throws. Only iOS reports `keychain_locked`, so the fallback has an effect only on iOS; Android and web never use it. Use the fallback for values where a stale
+copy is acceptable, not for credentials.
 
 ```ts
 import {
@@ -319,11 +342,11 @@ import {
   createSecureAuthStorage,
 } from "react-native-nitro-storage";
 
-const accessToken = secureItem<string>({
-  key: "accessToken",
-  namespace: "auth",
-  defaultValue: "",
-  renameFrom: "authToken", // copied + cleaned up on first read
+const cachedProfile = secureItem<{ name: string } | null>({
+  key: "profile",
+  namespace: "account",
+  defaultValue: null,
+  renameFrom: "userProfile", // copied + cleaned up on first read
   fallbackToCacheOnReadError: true,
   onReadError: (error) => reportSecureReadError(error),
 });
@@ -333,7 +356,7 @@ const auth = createSecureAuthStorage(
     accessToken: { renameFrom: "authToken" },
     refreshToken: { renameFrom: "refreshToken" },
   },
-  { namespace: "auth", group: "session", fallbackToCacheOnReadError: true },
+  { namespace: "auth", group: "session" },
 );
 ```
 
@@ -488,6 +511,33 @@ can also throw when a protected store is locked or its key is invalidated. Use
 `authentication_required`, and rebuild the affected credential for
 `key_invalidated`.
 
+Changing the access control level applies to later writes of existing items
+too: on iOS every Secure write now updates `kSecAttrAccessible` of an item that
+already exists. On iOS, `item.has()` and `storage.has(key, StorageScope.Secure)` throw
+`keychain_locked` while the keychain is locked, and a Keychain status error for
+any other unexpected status, instead of returning `false`. A biometric item that
+the Keychain reports as needing authentication counts as present, so `has()` on
+a biometric item returns `true` without a prompt; while the device is locked the
+same status also returns `true`. Listing, counting, and prefix queries on Secure
+keys throw a Keychain status error for unexpected statuses instead of returning
+an empty result. Deleting an item reads its previous value only when an event listener
+or an unredacted event observer needs it, so deleting a biometric item does not
+show a biometric prompt.
+
+Biometric behaviour differs by platform:
+
+- **iOS:** `getSecureBiometric` reads run through the Keychain with user
+  interaction allowed. The system shows the Face ID, Touch ID, or passcode sheet
+  and the synchronous JSI call blocks the JavaScript thread until the user
+  answers. Read biometric items from a user action, not during render.
+- **Android:** Nitro Storage never shows a prompt. Each biometric store is an
+  `EncryptedSharedPreferences` file whose Keystore key requires recent user
+  authentication. The key is checked only when the store is first opened in a
+  process; later reads and writes in that process use the already-decrypted
+  keyset and do not check authentication again. Run your own `BiometricPrompt`
+  before every read that must be gated. Reading a `BiometryOrPasscode` item
+  opens only that store, so a device-credential authentication is enough.
+
 ## Batch Operations
 
 `getBatch()` preserves tuple value types, so IDEs infer each result from the
@@ -527,9 +577,17 @@ removeBatch([themeItem, localeItem], StorageScope.Disk);
 ## Events And Observability
 
 ```ts
-const unsubscribe = storage.subscribeNamespace("settings", (event) => {
-  console.log(event.key, event.operation, event.source);
-});
+const unsubscribe = storage.subscribeNamespace(
+  "settings",
+  StorageScope.Disk,
+  (event) => {
+    if (event.type === "key") {
+      console.log(event.key, event.operation, event.source);
+    } else {
+      console.log(event.changes.length, event.operation, event.source);
+    }
+  },
+);
 
 storage.setEventObserver((event) => {
   console.log(event.type, event.scope);
@@ -549,9 +607,10 @@ unsubscribe();
 `getMetricsSnapshot()` aggregates each operation across scopes for backward
 compatibility. `getScopedMetricsSnapshot()` adds the numeric scope suffix for
 per-scope analysis, for example `item:set:1`. `getCacheMetrics()` reports live
-Disk/Secure raw-cache hits, misses, entries, and estimated bytes. The cache is
-unbounded; `resetMetrics()` zeros the hit/miss counters and leaves entries in
-place.
+Disk/Secure raw-cache hits, misses, entries, and estimated bytes. Reads fill
+the cache only for items with `readCache` or `fallbackToCacheOnReadError`. The
+cache is unbounded; `resetMetrics()` zeros the hit/miss counters and leaves
+entries in place.
 
 The example app includes hidden integrity, keychain, and Disk/Secure stress
 labs at `nitrostorage://e2e-integrity`, `nitrostorage://e2e-keychain`, and
@@ -621,11 +680,18 @@ import {
 } from "react-native-nitro-storage";
 import { createIndexedDBBackend } from "react-native-nitro-storage/indexeddb-backend";
 
-const backend = await createIndexedDBBackend("app-storage", "kv");
+const diskBackend = await createIndexedDBBackend("app-storage", "disk");
+const secureBackend = await createIndexedDBBackend("app-storage", "secure");
 
-setWebDiskStorageBackend(backend);
-setWebSecureStorageBackend(backend);
+setWebDiskStorageBackend(diskBackend);
+setWebSecureStorageBackend(secureBackend);
 ```
+
+Use one backend instance per scope. If one instance is registered for both
+scopes, Disk enumeration skips Secure keys and each scope's `clear()` removes
+only its own keys, but separate stores keep the two scopes fully isolated.
+Import `createIndexedDBBackend` from the `react-native-nitro-storage/indexeddb-backend`
+subpath; the root export is deprecated.
 
 Web reads and mutations stay synchronous against the backend's in-memory
 contract; use `flushWebStorageBackends()` for asynchronous persistence
@@ -635,11 +701,19 @@ function as typed no-ops for cross-platform code.
 Browser storage cannot provide iOS Keychain or Android Keystore guarantees. Web
 Secure scope is only as strong as the backend you configure.
 
+Cross-tab `storage` events update a scope only while that scope uses the
+default `localStorage` backend. Custom backends sync through their own
+`subscribe()` channel; the IndexedDB backend uses a `BroadcastChannel`.
+
 ## Testing
 
-The `react-native-nitro-storage/testing` entrypoint is a faithful in-memory
-implementation of the full public surface, so unit tests and Storybook run
-without native modules. Mock the package with it, or use it directly.
+The `react-native-nitro-storage/testing` entrypoint is an in-memory
+implementation with the same runtime exports as the main entry, so unit tests
+and Storybook run without native modules. Item subscribers and hooks re-render
+for Memory, Disk, and Secure writes. It does not model platform behaviour:
+there are no keychain locks, biometric prompts, access-control levels,
+coalesced native write timing, or web backends (the web backend functions are
+no-ops). Mock the package with it, or use it directly.
 
 ```ts
 import {
@@ -674,13 +748,23 @@ backends. The full reference lives in
 ## Error Contract
 
 Native and web adapters tag classified failures with stable error codes. Use
-`getStorageErrorCode(error)` or `isStorageError(error, code)` to branch on them:
-`keychain_locked` reports a locked Keychain that a retry can recover after
-authentication, secure-scope write or biometric failures carry their own
-codes, and invalid inputs (bad scope, malformed keys, numeric guard
-violations) are rejected before reaching native storage. Errors never swallow
-the underlying cause silently: the original platform message is preserved on
-the error for diagnostics.
+`getStorageErrorCode(error)` or `isStorageError(error, code)` to branch on them.
+Errors never swallow the underlying cause silently: the original platform
+message is preserved on the error for diagnostics.
+
+| Code                          | Meaning                                                                                                                 |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `keychain_locked`             | The protected store is locked. Retry after the device unlocks.                                                          |
+| `authentication_required`     | The item needs user authentication, or the user cancelled the prompt.                                                   |
+| `key_invalidated`             | The protecting key was invalidated, for example by a biometric enrolment change.                                        |
+| `biometric_unavailable`       | The requested biometric level is not available on this device or OS version.                                            |
+| `storage_corruption`          | Stored secure data could not be decrypted, or (Android) the Secure master key or store cannot be created. Do not retry. |
+| `storage_compensation_failed` | A multi-step write failed and restoring the previous state also failed.                                                 |
+| `unsupported`                 | The operation is not available on this platform or environment.                                                         |
+| `invalid_key`                 | The storage key is empty. Keys must be non-empty strings.                                                               |
+
+Invalid scopes and non-finite numeric levels are rejected with untagged errors
+before they reach native storage.
 
 ## Platform Support
 
@@ -716,8 +800,10 @@ the error for diagnostics.
   upgrading the package so the Android manifest initializer is merged.
 - **Secure values fail after Android restore:** keep `configureAndroidBackup:
 true` or provide equivalent backup exclusions.
-- **Biometric prompt does not appear:** set `biometric: true` on the item and
-  add native biometric permissions when your app needs them.
+- **Biometric prompt does not appear on Android:** this is expected. The
+  package never prompts on Android; run `BiometricPrompt` in your app before
+  reading the item, and enable `addBiometricPermissions` for that prompt. On
+  iOS, set `biometric: true` on the item and a `faceIDPermission` message.
 - **Web secure storage is unavailable:** configure a secure backend before using
   Secure scope on web.
 - **TypeScript cannot infer `getBatch()` tuple values:** pass readonly tuples

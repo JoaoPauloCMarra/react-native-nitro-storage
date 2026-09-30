@@ -1,4 +1,9 @@
-import { assertAccessControlLevel } from "./shared";
+import { createIndexedDBBackend as createIndexedDBBackendFromSubpath } from "./indexeddb-backend";
+import {
+  assertAccessControlLevel,
+  notifyAllListeners,
+  notifyKeyListeners,
+} from "./shared";
 import type { NonMemoryScope } from "./shared";
 import {
   createStorageCore,
@@ -11,12 +16,15 @@ import type {
   StorageCapabilities,
 } from "./storage-runtime";
 import { StorageScope, AccessControl } from "./Storage.types";
+import type {
+  WebDiskStorageBackend,
+  WebSecureStorageBackend,
+} from "./web-storage-backend";
 
 export { StorageScope, AccessControl, BiometricLevel } from "./Storage.types";
 export { isKeychainLockedError } from "./shared";
 export { migrateFromMMKV } from "./migration";
 export { getStorageErrorCode, isStorageError } from "./storage-runtime";
-export { createIndexedDBBackend } from "./indexeddb-backend";
 export {
   describeWebBackendCapabilities,
   isIndexedDBWebBackend,
@@ -43,6 +51,8 @@ export type {
   StorageMetricsObserver,
   StorageSelectorListener,
   StorageSelectorSubscribeOptions,
+  StorageCompositeError,
+  StorageCompensationError,
   StorageVersion,
   Validator,
   VersionedValue,
@@ -63,6 +73,13 @@ export type {
 } from "./storage-events";
 export type { StorageActions, StorageSetter } from "./storage-hooks";
 export type {
+  WebDiskStorageBackend,
+  WebSecureStorageBackend,
+  WebStorageBackend,
+  WebStorageChangeEvent,
+  WebStorageScope,
+} from "./web-storage-backend";
+export type {
   SetItemConfig,
   SetStorageItem,
   StorageBatchSetItem,
@@ -80,7 +97,9 @@ type InMemoryBackend = StorageCoreBackend & {
   resetState: () => void;
 };
 
-function createInMemoryBackend(): InMemoryBackend {
+type ChangeNotifier = (scope: NonMemoryScope, key: string | null) => void;
+
+function createInMemoryBackend(notify: ChangeNotifier): InMemoryBackend {
   const stores = new Map<number, Map<string, string>>([
     [StorageScope.Disk, new Map()],
     [StorageScope.Secure, new Map()],
@@ -99,15 +118,18 @@ function createInMemoryBackend(): InMemoryBackend {
     get: (key, scope) => storeFor(scope).get(key),
     set: (key, value, scope) => {
       storeFor(scope).set(key, value);
+      notify(scope as NonMemoryScope, key);
     },
     remove: (key, scope) => {
       storeFor(scope).delete(key);
       if (scope === StorageScope.Secure) {
         biometricStore.delete(key);
       }
+      notify(scope as NonMemoryScope, key);
     },
     clear: (scope) => {
       storeFor(scope).clear();
+      notify(scope as NonMemoryScope, null);
     },
     has: (key, scope) => storeFor(scope).has(key),
     getAllKeys: (scope) => Array.from(storeFor(scope).keys()),
@@ -124,6 +146,9 @@ function createInMemoryBackend(): InMemoryBackend {
           store.set(key, value);
         }
       });
+      keys.forEach((key) => {
+        notify(scope as NonMemoryScope, key);
+      });
     },
     getBatch: (keys, scope) => {
       const store = storeFor(scope);
@@ -135,12 +160,16 @@ function createInMemoryBackend(): InMemoryBackend {
       if (scope === StorageScope.Secure) {
         keys.forEach((key) => biometricStore.delete(key));
       }
+      keys.forEach((key) => {
+        notify(scope as NonMemoryScope, key);
+      });
     },
     removeByPrefix: (prefix, scope) => {
       const store = storeFor(scope);
       for (const key of Array.from(store.keys())) {
         if (key.startsWith(prefix)) {
           store.delete(key);
+          notify(scope as NonMemoryScope, key);
         }
       }
     },
@@ -149,13 +178,16 @@ function createInMemoryBackend(): InMemoryBackend {
     setSecureBiometricWithLevel: (key, value) => {
       biometricStore.set(key, value);
       storeFor(StorageScope.Secure).delete(key);
+      notify(StorageScope.Secure, key);
     },
     deleteSecureBiometric: (key) => {
       biometricStore.delete(key);
+      notify(StorageScope.Secure, key);
     },
     hasSecureBiometric: (key) => biometricStore.has(key),
     clearSecureBiometric: () => {
       biometricStore.clear();
+      notify(StorageScope.Secure, null);
     },
     resetState: () => {
       stores.forEach((store) => {
@@ -167,23 +199,37 @@ function createInMemoryBackend(): InMemoryBackend {
 }
 
 function buildTestingModule() {
-  const backend = createInMemoryBackend();
+  let coreInternals: StorageCoreInternals | undefined;
+  const backend = createInMemoryBackend((scope, key) => {
+    if (!coreInternals) {
+      return;
+    }
+    const listeners = coreInternals.getScopedListeners(scope);
+    if (key === null) {
+      notifyAllListeners(listeners);
+      return;
+    }
+    notifyKeyListeners(listeners, key);
+  });
 
   const buildAdapter = (
-    _internals: StorageCoreInternals,
-  ): StorageCoreAdapter => ({
-    backend,
-    changeSource: "native",
-    applyAccessControlOnSecureRawWrite: true,
-    ensureScopeSubscription: (_scope: NonMemoryScope) => {},
-    maybeCleanupScopeSubscription: (_scope: NonMemoryScope) => {},
-    onWillEmitChanges: () => {},
-    getSecureMetadataProfile: () => ({
-      backend: TEST_SECURE_BACKEND,
-      encrypted: "unavailable",
-      hardwareBacked: "unavailable",
-    }),
-  });
+    adapterInternals: StorageCoreInternals,
+  ): StorageCoreAdapter => {
+    coreInternals = adapterInternals;
+    return {
+      backend,
+      changeSource: "native",
+      applyAccessControlOnSecureRawWrite: true,
+      ensureScopeSubscription: (_scope: NonMemoryScope) => {},
+      maybeCleanupScopeSubscription: (_scope: NonMemoryScope) => {},
+      onWillEmitChanges: () => {},
+      getSecureMetadataProfile: () => ({
+        backend: TEST_SECURE_BACKEND,
+        encrypted: "unavailable",
+        hardwareBacked: "unavailable",
+      }),
+    };
+  };
 
   const core = createStorageCore(buildAdapter);
   const { internals } = core;
@@ -276,6 +322,25 @@ export const migrateToLatest = defaultModule.migrateToLatest;
 export const runTransaction = defaultModule.runTransaction;
 export const createSecureAuthStorage = defaultModule.createSecureAuthStorage;
 
+export function setWebSecureStorageBackend(
+  _backend?: WebSecureStorageBackend,
+): void {}
+
+export function getWebSecureStorageBackend():
+  WebSecureStorageBackend | undefined {
+  return undefined;
+}
+
+export function setWebDiskStorageBackend(
+  _backend?: WebDiskStorageBackend,
+): void {}
+
+export function getWebDiskStorageBackend(): WebDiskStorageBackend | undefined {
+  return undefined;
+}
+
+export async function flushWebStorageBackends(): Promise<void> {}
+
 export function resetNitroStorageMock(): void {
   defaultModule.reset();
 }
@@ -283,3 +348,11 @@ export function resetNitroStorageMock(): void {
 export function createNitroStorageMock(): NitroStorageTestModule {
   return buildTestingModule();
 }
+
+/**
+ * @deprecated Import `createIndexedDBBackend` from
+ * `react-native-nitro-storage/indexeddb-backend` instead. The root export
+ * will be removed in a future minor release.
+ */
+export const createIndexedDBBackend: typeof createIndexedDBBackendFromSubpath =
+  createIndexedDBBackendFromSubpath;

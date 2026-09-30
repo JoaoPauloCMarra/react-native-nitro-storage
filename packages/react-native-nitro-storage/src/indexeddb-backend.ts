@@ -111,53 +111,10 @@ export async function createIndexedDBBackend(
     options.onError?.(normalized);
   }
 
-  function handleLifecycleFlush(): void {
-    if (closed || pendingWrites.size === 0) {
-      return;
-    }
-    void Promise.all(Array.from(pendingWrites)).catch(() => {
-      // Errors are surfaced through flush() and onError; the page may be
-      // hidden, so the flush result is intentionally not awaited here.
-    });
-  }
+  let hydrated = false;
+  const queuedChannelEvents: WebStorageChangeEvent[] = [];
 
-  function installLifecycleFlush(): () => void {
-    if (typeof globalThis === "undefined" || !globalThis.addEventListener) {
-      return () => {};
-    }
-
-    const onPageHide = () => {
-      handleLifecycleFlush();
-    };
-    const onVisibilityChange = () => {
-      if (
-        typeof document !== "undefined" &&
-        document.visibilityState === "hidden"
-      ) {
-        handleLifecycleFlush();
-      }
-    };
-    globalThis.addEventListener("pagehide", onPageHide);
-    globalThis.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      globalThis.removeEventListener("pagehide", onPageHide);
-      globalThis.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }
-
-  const removeLifecycleFlush = installLifecycleFlush();
-
-  channel?.addEventListener("message", (event: MessageEvent) => {
-    if (closed) {
-      return;
-    }
-
-    const data = event.data as
-      (WebStorageChangeEvent & { sourceId?: string }) | undefined;
-    if (!data || data.sourceId === sourceId) {
-      return;
-    }
-
+  function applyChannelEvent(data: WebStorageChangeEvent): void {
     if (data.key === null) {
       cache.clear();
     } else if (data.newValue === null) {
@@ -170,6 +127,25 @@ export async function createIndexedDBBackend(
       key: data.key,
       newValue: data.newValue,
     });
+  }
+
+  channel?.addEventListener("message", (event: MessageEvent) => {
+    if (closed) {
+      return;
+    }
+
+    const data = event.data as
+      (WebStorageChangeEvent & { sourceId?: string }) | undefined;
+    if (!data || data.sourceId === sourceId) {
+      return;
+    }
+
+    if (!hydrated) {
+      queuedChannelEvents.push({ key: data.key, newValue: data.newValue });
+      return;
+    }
+
+    applyChannelEvent(data);
   });
 
   function publish(event: WebStorageChangeEvent): void {
@@ -203,6 +179,9 @@ export async function createIndexedDBBackend(
       reject(tx.error ?? new Error("Failed to load IndexedDB entries."));
     };
   });
+
+  hydrated = true;
+  queuedChannelEvents.splice(0).forEach(applyChannelEvent);
 
   function trackWrite(tx: IDBTransaction, keys: string[] | null): void {
     const pending = new Promise<void>((resolve) => {
@@ -381,7 +360,6 @@ export async function createIndexedDBBackend(
         return;
       }
       closed = true;
-      removeLifecycleFlush();
       subscribers.clear();
       channel?.close();
       db.close();

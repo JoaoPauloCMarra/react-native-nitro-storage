@@ -4,6 +4,8 @@ Nitro Storage runs on web through synchronous backend contracts. Disk and Secure
 
 The default web backend is localStorage-style. Configure custom backends when you need IndexedDB persistence, tests with isolated storage, cross-tab sync, or a platform-specific secret wrapper.
 
+Register a separate backend instance for each scope. If one instance is registered for both scopes, Disk enumeration skips the `__secure_` and `__bio_` keys that Secure scope writes, and each scope's `clear()` removes only its own keys, but separate stores keep the scopes fully isolated.
+
 ## Backend Contract
 
 ```ts
@@ -102,7 +104,7 @@ The IndexedDB backend exposes `close()` and rejects later synchronous operations
 
 ### Persistence Lifecycle
 
-IndexedDB transactions cannot block a page unload, so in-flight writes may be aborted when the page closes. The backend mitigates this by starting a flush on `pagehide` and on `visibilitychange` (hidden), and `flush()` awaits every pending transaction. When persistence fails, `flush()` throws an error that names the affected keys, and `onError` receives each individual failure.
+IndexedDB transactions cannot block a page unload, so in-flight writes may be aborted when the page closes. The backend does not install `pagehide` or `visibilitychange` handlers, because there is no synchronous way to finish a pending transaction there. `flush()` awaits every pending transaction. When persistence fails, `flush()` throws an error that names the affected keys, and `onError` receives each individual failure.
 
 ```ts
 const backend = await createIndexedDBBackend("app-secure", "keyvalue", {
@@ -119,7 +121,9 @@ Treat IndexedDB persistence as best-effort under abrupt termination: keep a dura
 
 ## Cross-tab Updates
 
-The IndexedDB backend uses `BroadcastChannel` when available. Other tabs receive cache invalidation events and update their in-memory copy.
+The IndexedDB backend uses `BroadcastChannel` when available. Other tabs receive cache invalidation events and update their in-memory copy. Messages that arrive while a new backend is still loading its snapshot are applied after the snapshot, so they are not overwritten.
+
+The window `storage` event updates a scope only while that scope uses the default `localStorage` backend, and only for events from `localStorage`. Custom backends must sync through `subscribe(listener)`.
 
 If you provide your own backend, implement `subscribe(listener)` to keep Nitro Storage caches aligned with external writes.
 

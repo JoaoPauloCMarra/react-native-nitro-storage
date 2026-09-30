@@ -72,6 +72,14 @@ export function assertValidScope(scope: StorageScope): void {
   }
 }
 
+export function assertValidStorageKey(key: string): void {
+  if (typeof key !== "string" || key.length === 0) {
+    throw new Error(
+      "[nitro-error:invalid_key] NitroStorage: storage keys must be non-empty strings.",
+    );
+  }
+}
+
 export type ScopedBatchItem = {
   key: string;
   scope: StorageScope;

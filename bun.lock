@@ -29,8 +29,6 @@
       "version": "1.0.0",
       "dependencies": {
         "@babel/runtime": "^7.29.7",
-        "@expo-google-fonts/inter": "^0.4.2",
-        "@expo-google-fonts/jetbrains-mono": "^0.4.1",
         "expo": "~57.0.26",
         "expo-asset": "~57.0.18",
         "expo-build-properties": "~57.0.22",
@@ -60,18 +58,22 @@
     },
     "packages/react-native-nitro-storage": {
       "name": "react-native-nitro-storage",
-      "version": "0.10.5",
+      "version": "0.11.0",
       "devDependencies": {
-        "@expo/config-plugins": "^57.0.6",
         "@react-native/babel-preset": "^0.86.3",
         "@testing-library/react-native": "^13.3.3",
         "@types/react": "~19.2.18",
+        "expo": "~57.0.26",
       },
       "peerDependencies": {
+        "expo": ">=53.0.0",
         "react": ">=18.2.0",
-        "react-native": ">=0.75.0",
+        "react-native": ">=0.77.0",
         "react-native-nitro-modules": ">=0.37.0 <0.38.0",
       },
+      "optionalPeers": [
+        "expo",
+      ],
     },
   },
   "trustedDependencies": [
@@ -376,10 +378,6 @@
     "@eslint/object-schema": ["@eslint/object-schema@3.0.5", "", {}, "sha512-vqTaUEgxzm+YDSdElad6PiRoX4t8VGDjCtt05zn4nU810UIx/uNEV7/lZJ6KwFThKZOzOxzXy48da+No7HZaMw=="],
 
     "@eslint/plugin-kit": ["@eslint/plugin-kit@0.7.2", "", { "dependencies": { "@eslint/core": "^1.2.1", "levn": "^0.4.1" } }, "sha512-+CNAzxglkrpNf/kKywqQfk74QjtceuOE7Qm+AF8miRvPF/wmmK5+OJOgVh3AVTT3RP2mH3+FOaxlE5v72owk0A=="],
-
-    "@expo-google-fonts/inter": ["@expo-google-fonts/inter@0.4.2", "", {}, "sha512-syfiImMaDmq7cFi0of+waE2M4uSCyd16zgyWxdPOY7fN2VBmSLKEzkfbZgeOjJq61kSqPBNNtXjggiQiSD6gMQ=="],
-
-    "@expo-google-fonts/jetbrains-mono": ["@expo-google-fonts/jetbrains-mono@0.4.1", "", {}, "sha512-CslACrtMOcRwoWXCO7OMEI+9w3fukWSoBtvNz46OqPoogEuuoY0tkDY1O8sFumk8t0pC6Cx0Xr95O0TOQhpkug=="],
 
     "@expo-google-fonts/material-symbols": ["@expo-google-fonts/material-symbols@0.4.25", "", {}, "sha512-MlwOpcYPLYu2+aDAwqv29l3sknNNxA36Jcu07Tg9+MTEvXk2SPcO8eQmwwDeVBbv5Wb6ToD1LmE+e0lLv/9WvA=="],
 

@@ -29,41 +29,66 @@ declare global {
   var __keychainReport: KeychainReport | undefined;
 }
 
+function errorDetail(error: unknown): string {
+  return (
+    getStorageErrorCode(error) ??
+    (error instanceof Error ? error.message : String(error))
+  );
+}
+
+function runSecureRoundTrip(): LabCase {
+  const key = "__e2e_secure_roundtrip__";
+  try {
+    storage.setString(key, "secure-sentinel", StorageScope.Secure);
+    storage.flushSecureWrites();
+    const value = storage.getString(key, StorageScope.Secure);
+    const metadata = storage.getSecureMetadata(key);
+    storage.deleteString(key, StorageScope.Secure);
+    storage.flushSecureWrites();
+    const afterDelete = storage.getSecureMetadata(key);
+    const failures = [
+      value === "secure-sentinel" ? null : `get=${String(value)}`,
+      metadata.exists && metadata.kind === "secure"
+        ? null
+        : `metadata=${metadata.kind}`,
+      metadata.valueExposed === false ? null : "value exposed",
+      storage.getString(key, StorageScope.Secure) === undefined
+        ? null
+        : "delete kept value",
+      !afterDelete.exists && afterDelete.kind === "missing"
+        ? null
+        : `after-delete=${afterDelete.kind}`,
+    ].filter((failure): failure is string => failure !== null);
+    return failures.length === 0
+      ? {
+          name: "secure-roundtrip",
+          status: "pass",
+          detail: `${Platform.OS}:${metadata.backend}`,
+        }
+      : {
+          name: "secure-roundtrip",
+          status: "fail",
+          detail: failures.join(", "),
+        };
+  } catch (error) {
+    let detail = errorDetail(error);
+    try {
+      storage.deleteString(key, StorageScope.Secure);
+    } catch (cleanupError) {
+      detail = `${detail}; cleanup=${errorDetail(cleanupError)}`;
+    }
+    return { name: "secure-roundtrip", status: "fail", detail };
+  }
+}
+
 function runKeychainSweep(): KeychainReport {
-  const capabilities = storage.getSecurityCapabilities();
-  const cases: LabCase[] = [
-    {
-      name: "platform",
-      status: "pass",
-      detail: Platform.OS,
-    },
-    {
-      name: "secure-backend",
-      status: "pass",
-      detail: capabilities.secureStorage.backend,
-    },
-    {
-      name: "biometric-prompt",
-      status: ["available", "unavailable", "unknown"].includes(
-        capabilities.biometric.prompt,
-      )
-        ? "pass"
-        : "fail",
-      detail: capabilities.biometric.prompt,
-    },
-  ];
+  const cases: LabCase[] = [runSecureRoundTrip()];
 
   if (Platform.OS !== "ios") {
     cases.push({
       name: "biometric-write",
       status: "skip",
       detail: `not ios (${Platform.OS})`,
-    });
-  } else if (capabilities.biometric.prompt === "unavailable") {
-    cases.push({
-      name: "biometric-write",
-      status: "skip",
-      detail: "biometric prompt unavailable",
     });
   } else {
     try {
@@ -88,8 +113,7 @@ function runKeychainSweep(): KeychainReport {
       cases.push({
         name: "biometric-write",
         status: code === "authentication_required" ? "skip" : "fail",
-        detail:
-          code ?? (error instanceof Error ? error.message : String(error)),
+        detail: errorDetail(error),
       });
     }
   }
@@ -131,7 +155,7 @@ export default function KeychainLabScreen() {
           label="summary"
           value={summary}
         />
-        <Card title="Capabilities" subtitle="No real tokens">
+        <Card title="Secure checks" subtitle="No real tokens">
           {(report?.cases ?? []).map((item) => (
             <StatusRow
               key={item.name}

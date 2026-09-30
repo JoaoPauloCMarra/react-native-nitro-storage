@@ -1,11 +1,11 @@
+const fs = require("fs");
+const path = require("path");
 const {
   withInfoPlist,
   withAndroidManifest,
   withDangerousMod,
   createRunOncePlugin,
-} = require("@expo/config-plugins");
-const fs = require("fs");
-const path = require("path");
+} = require("expo/config-plugins");
 const pkg = require("./package.json");
 
 const DATA_EXTRACTION_RULES_RESOURCE =
@@ -84,63 +84,61 @@ function writeAndroidBackupFiles(projectRoot) {
   );
 }
 
+const DEFAULT_FACE_ID_PERMISSION =
+  "Allow $(PRODUCT_NAME) to use Face ID for secure authentication";
+
+const BIOMETRIC_PERMISSIONS = [
+  "android.permission.USE_BIOMETRIC",
+  "android.permission.USE_FINGERPRINT",
+];
+
+function applyInfoPlist(infoPlist, props = {}) {
+  const { faceIDPermission } = props;
+  if (typeof faceIDPermission === "string" && faceIDPermission.trim() !== "") {
+    infoPlist.NSFaceIDUsageDescription = faceIDPermission;
+  } else if (!infoPlist.NSFaceIDUsageDescription) {
+    infoPlist.NSFaceIDUsageDescription = DEFAULT_FACE_ID_PERMISSION;
+  }
+  return infoPlist;
+}
+
+function applyAndroidManifest(androidManifest, props = {}) {
+  const { addBiometricPermissions = false, configureAndroidBackup = true } =
+    props;
+
+  if (configureAndroidBackup) {
+    ensureBackupAttributes(androidManifest);
+  }
+
+  if (!addBiometricPermissions) {
+    return androidManifest;
+  }
+
+  if (!androidManifest.manifest["uses-permission"]) {
+    androidManifest.manifest["uses-permission"] = [];
+  }
+
+  const permissions = androidManifest.manifest["uses-permission"];
+  for (const name of BIOMETRIC_PERMISSIONS) {
+    const present = permissions.some((p) => p.$?.["android:name"] === name);
+    if (!present) {
+      permissions.push({ $: { "android:name": name } });
+    }
+  }
+
+  return androidManifest;
+}
+
 const withNitroStorage = (config, props = {}) => {
-  const defaultFaceIDPermission =
-    "Allow $(PRODUCT_NAME) to use Face ID for secure authentication";
-  const {
-    faceIDPermission,
-    addBiometricPermissions = false,
-    configureAndroidBackup = true,
-  } = props;
+  const { configureAndroidBackup = true } = props;
 
   config = withInfoPlist(config, (config) => {
-    if (
-      typeof faceIDPermission === "string" &&
-      faceIDPermission.trim() !== ""
-    ) {
-      config.modResults.NSFaceIDUsageDescription = faceIDPermission;
-    } else if (!config.modResults.NSFaceIDUsageDescription) {
-      config.modResults.NSFaceIDUsageDescription = defaultFaceIDPermission;
-    }
+    applyInfoPlist(config.modResults, props);
     return config;
   });
 
   config = withAndroidManifest(config, (config) => {
-    if (configureAndroidBackup) {
-      ensureBackupAttributes(config.modResults);
-    }
-
-    if (!addBiometricPermissions) {
-      return config;
-    }
-
-    if (!config.modResults.manifest["uses-permission"]) {
-      config.modResults.manifest["uses-permission"] = [];
-    }
-
-    const permissions = config.modResults.manifest["uses-permission"];
-
-    const biometricPermission = {
-      $: { "android:name": "android.permission.USE_BIOMETRIC" },
-    };
-    const fingerprintPermission = {
-      $: { "android:name": "android.permission.USE_FINGERPRINT" },
-    };
-
-    const hasBiometric = permissions.some(
-      (p) => p.$?.["android:name"] === "android.permission.USE_BIOMETRIC",
-    );
-    const hasFingerprint = permissions.some(
-      (p) => p.$?.["android:name"] === "android.permission.USE_FINGERPRINT",
-    );
-
-    if (!hasBiometric) {
-      permissions.push(biometricPermission);
-    }
-    if (!hasFingerprint) {
-      permissions.push(fingerprintPermission);
-    }
-
+    applyAndroidManifest(config.modResults, props);
     return config;
   });
 
@@ -164,6 +162,8 @@ module.exports = createRunOncePlugin(
 );
 module.exports.withNitroStorage = withNitroStorage;
 module.exports._internal = {
+  applyInfoPlist,
+  applyAndroidManifest,
   dataExtractionRulesXml,
   fullBackupContentXml,
   ensureBackupAttributes,

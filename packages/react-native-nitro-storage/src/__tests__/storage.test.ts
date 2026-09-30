@@ -379,7 +379,7 @@ describe("createStorageItem", () => {
     expect(capabilities.platform).toBe("native");
     expect(capabilities.writeBuffering.disk).toBe(true);
     expect(capabilities.writeBuffering.secure).toBe(false);
-    expect(capabilities.backend.disk).toBe("platform-preferences");
+    expect(capabilities.backend.disk).toBe("sqlite");
     expect(capabilities.backend.secure).toBe("platform-secure-storage");
   });
 
@@ -631,21 +631,6 @@ describe("createStorageItem", () => {
 
     mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath(42));
     expect(item.get()).toBe(42);
-  });
-
-  it("works with Memory scope converted to Disk for native verification", () => {
-    const item = createStorageItem({
-      key: "memory-key",
-      scope: StorageScope.Disk,
-      defaultValue: "test",
-    });
-
-    item.set("value");
-    expect(mockHybridObject.set).toHaveBeenCalledWith(
-      "memory-key",
-      serializeWithPrimitiveFastPath("value"),
-      StorageScope.Disk,
-    );
   });
 
   it("works with Disk scope", () => {
@@ -2988,11 +2973,12 @@ describe("pending coalesced tombstones", () => {
         );
 
         item.delete();
+        const readsAfterDelete = mockHybridObject.get.mock.calls.length;
         nowSpy.mockReturnValue(1_250);
         expect(item.get()).toBe("default");
         nowSpy.mockReturnValue(1_600);
         expect(item.get()).toBe("default");
-        expect(mockHybridObject.get).toHaveBeenCalledTimes(1);
+        expect(mockHybridObject.get).toHaveBeenCalledTimes(readsAfterDelete);
       } finally {
         nowSpy.mockRestore();
       }
@@ -3811,11 +3797,11 @@ describe("createSecureAuthStorage", () => {
     );
 
     auth.token.set("val");
-    mockHybridObject.get.mockReturnValue(serializeWithPrimitiveFastPath("val"));
-
-    // The item was created — ttlMs presence is verified by the factory accepting it
-    // without throwing. We verify the item is functional.
-    expect(auth.token.get()).toBe("val");
+    const stored = mockHybridObject.set.mock.calls.at(-1)?.[1] as string;
+    expect(JSON.parse(stored)).toMatchObject({
+      __nitroStorageEnvelope: true,
+      expiresAt: expect.any(Number),
+    });
   });
 
   it("items with biometric flag set correctly", () => {

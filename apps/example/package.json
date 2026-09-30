@@ -7,7 +7,7 @@
     "start": "env -u NO_COLOR expo start -d",
     "ios": "env -u NO_COLOR expo run:ios",
     "android": "bun run android:assemble && env -u NO_COLOR expo run:android --binary android/app/build/outputs/apk/debug/app-debug.apk",
-    "doctor": "env -u NO_COLOR bunx expo-doctor",
+    "doctor": "env -u NO_COLOR bunx expo-doctor@1.20.4",
     "install-check": "env -u NO_COLOR bunx expo install --check",
     "config:introspect": "env -u NO_COLOR bunx expo config --type introspect --json > /tmp/nitro-storage-expo-config.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
@@ -20,8 +20,6 @@
   },
   "dependencies": {
     "@babel/runtime": "^7.29.7",
-    "@expo-google-fonts/inter": "^0.4.2",
-    "@expo-google-fonts/jetbrains-mono": "^0.4.1",
     "expo": "~57.0.26",
     "expo-asset": "~57.0.18",
     "expo-build-properties": "~57.0.22",

@@ -75,10 +75,16 @@ async function main() {
     projectRoot,
     "packages/react-native-nitro-storage"
   );
-  execCommand("bun run codegen", { cwd: packageDir });
+  if (!execCommand("bun run codegen", { cwd: packageDir })) {
+    log("Failed to generate Nitro bindings", "red");
+    process.exit(1);
+  }
 
   log("🔨 Building library...");
-  execCommand("bun run build", { cwd: packageDir });
+  if (!execCommand("bun run build", { cwd: packageDir })) {
+    log("Failed to build library", "red");
+    process.exit(1);
+  }
 
   console.log("");
   log("✅ Setup complete!");

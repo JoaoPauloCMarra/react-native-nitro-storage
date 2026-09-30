@@ -7,6 +7,10 @@ export type WebBackendCapabilities = {
   subscribable: boolean;
 };
 
+export function isIndexedDBBackendName(name: string | undefined): boolean {
+  return name?.startsWith("indexeddb:") ?? false;
+}
+
 export function describeWebBackendCapabilities(
   backend: WebStorageBackend | undefined,
 ): WebBackendCapabilities {
@@ -20,7 +24,7 @@ export function describeWebBackendCapabilities(
   }
 
   return {
-    buffered: backend.name?.startsWith("indexeddb:") ?? false,
+    buffered: isIndexedDBBackendName(backend.name),
     flushable: typeof backend.flush === "function",
     closable: typeof backend.close === "function",
     subscribable: typeof backend.subscribe === "function",
@@ -30,5 +34,5 @@ export function describeWebBackendCapabilities(
 export function isIndexedDBWebBackend(
   backend: WebStorageBackend | undefined,
 ): boolean {
-  return backend?.name?.startsWith("indexeddb:") ?? false;
+  return isIndexedDBBackendName(backend?.name);
 }

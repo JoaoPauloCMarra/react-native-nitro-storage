@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -14,6 +15,7 @@ void runLegacyDiskMigrationCutoverForTesting(NSUserDefaults* defaults);
 void resetSqliteDiskStoreForTesting();
 void resetSharedSqliteDiskStoreForTesting();
 bool sqliteDiskStoreHasKeyForTesting(const std::string& key);
+std::string diskStorePathForTesting();
 }
 
 namespace {
@@ -26,6 +28,7 @@ const char* kSuiteKey = "nitro-storage-ut-suite";
 const char* kConflictKey = "nitro-storage-ut-conflict";
 const char* kSuiteImportedKey = "nitro-storage-ut-suite-imported";
 const char* kSuiteLateKey = "nitro-storage-ut-suite-late";
+const char* kProbeKey = "nitro-storage-ut-probe";
 
 bool containsKey(const std::vector<std::string>& keys, const std::string& needle) {
     return std::find(keys.begin(), keys.end(), needle) != keys.end();
@@ -52,6 +55,10 @@ void cleanupState() {
     [standard synchronize];
 }
 
+void runFirstDiskOperation(IOSStorageAdapterCpp& adapter) {
+    assert(!adapter.hasDisk(kProbeKey));
+}
+
 } // namespace
 
 // Verifies the disk-scoping contract: enumeration and clear must only ever
@@ -62,6 +69,30 @@ int main() {
         cleanupState();
 
         NSUserDefaults* suite = [[NSUserDefaults alloc] initWithSuiteName:@"com.nitrostorage.disk"];
+
+        // A corrupt Disk database must not fail adapter construction. Disk
+        // operations surface the error and retry the lazy migration later.
+        {
+            const std::string diskPath = NitroStorage::diskStorePathForTesting();
+            {
+                std::ofstream corrupt(diskPath, std::ios::binary | std::ios::trunc);
+                corrupt << std::string(8192, 'x');
+            }
+            [suite setObject:@"imported" forKey:nsKey(kSuiteImportedKey)];
+            IOSStorageAdapterCpp corruptDisk;
+            bool diskThrew = false;
+            try {
+                (void)corruptDisk.getDisk(kSuiteImportedKey);
+            } catch (const std::exception&) {
+                diskThrew = true;
+            }
+            assert(diskThrew);
+            NitroStorage::resetSqliteDiskStoreForTesting();
+            assert(corruptDisk.getDisk(kSuiteImportedKey).value() == "imported");
+            assert(NitroStorage::sqliteDiskStoreHasKeyForTesting(kSuiteImportedKey));
+        }
+
+        cleanupState();
 
         // A fallback or same-domain target is a recovery barrier. Exercise
         // the guard with the standard defaults object itself: source,
@@ -85,6 +116,7 @@ int main() {
             setObject:@"legacy-value" forKey:nsKey(kLegacyKey)];
         [suite setObject:@"not-an-array" forKey:@"__nitro_storage_legacy_disk_keys__"];
         IOSStorageAdapterCpp malformed;
+        runFirstDiskOperation(malformed);
         assert([[[NSUserDefaults standardUserDefaults] stringForKey:nsKey(kLegacyKey)] isEqualToString:@"legacy-value"]);
         assert([[suite objectForKey:@"__nitro_storage_legacy_disk_keys__"] isEqualToString:@"not-an-array"]);
         assert(![suite boolForKey:@"__nitro_storage_legacy_disk_migration_v1__"]);
@@ -99,6 +131,7 @@ int main() {
         [suite setObject:@[nsKey(kConflictKey)] forKey:@"__nitro_storage_legacy_disk_keys__"];
         [suite setObject:@"suite-value" forKey:nsKey(kConflictKey)];
         IOSStorageAdapterCpp conflict;
+        runFirstDiskOperation(conflict);
         assert([[[NSUserDefaults standardUserDefaults] stringForKey:nsKey(kConflictKey)] isEqualToString:@"legacy-value"]);
         assert([[[suite stringForKey:nsKey(kConflictKey)] description] isEqualToString:@"suite-value"]);
         assert([suite objectForKey:@"__nitro_storage_legacy_disk_keys__"] != nil);
@@ -113,6 +146,7 @@ int main() {
             setObject:@123 forKey:nsKey(kLegacyKey)];
         [suite setObject:@[nsKey(kLegacyKey)] forKey:@"__nitro_storage_legacy_disk_keys__"];
         IOSStorageAdapterCpp failedCopy;
+        runFirstDiskOperation(failedCopy);
         assert([[NSUserDefaults standardUserDefaults] objectForKey:nsKey(kLegacyKey)] != nil);
         assert([suite objectForKey:@"__nitro_storage_legacy_disk_keys__"] != nil);
         assert(![suite boolForKey:@"__nitro_storage_legacy_disk_migration_v1__"]);
@@ -132,12 +166,15 @@ int main() {
         [suite setObject:@"imported" forKey:nsKey(kSuiteImportedKey)];
         {
             IOSStorageAdapterCpp firstLaunch;
+            assert(!NitroStorage::sqliteDiskStoreHasKeyForTesting(kSuiteImportedKey));
+            runFirstDiskOperation(firstLaunch);
             assert(NitroStorage::sqliteDiskStoreHasKeyForTesting(kSuiteImportedKey));
         }
         [suite setObject:@"late" forKey:nsKey(kSuiteLateKey)];
         NitroStorage::resetSharedSqliteDiskStoreForTesting();
         {
             IOSStorageAdapterCpp secondLaunch;
+            runFirstDiskOperation(secondLaunch);
             assert(!NitroStorage::sqliteDiskStoreHasKeyForTesting(kSuiteLateKey));
             assert(NitroStorage::sqliteDiskStoreHasKeyForTesting(kSuiteImportedKey));
             assert([[suite stringForKey:nsKey(kSuiteImportedKey)] isEqualToString:@"imported"]);

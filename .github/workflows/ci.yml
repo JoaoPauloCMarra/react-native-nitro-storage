@@ -83,6 +83,12 @@ jobs:
       - name: Test lifecycle and release contracts
         run: bun run test:lifecycle
 
+      - name: Benchmark
+        run: bun run benchmark
+
+      - name: Check example smoke contract
+        run: bun run example:smoke:ci
+
       - name: Build package artifacts
         run: bun run build
 

@@ -1,4 +1,5 @@
 #include "HybridStorage.hpp"
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -32,8 +33,8 @@ HybridStorage::HybridStorage()
 #if __APPLE__
     nativeAdapter_ = std::make_shared<::NitroStorage::IOSStorageAdapterCpp>();
 #elif __ANDROID__
-    auto context = ::NitroStorage::AndroidStorageAdapterJava::getContext();
-    nativeAdapter_ = std::make_shared<::NitroStorage::AndroidStorageAdapterCpp>(context);
+    ::NitroStorage::AndroidStorageAdapterJava::ensureInitialized();
+    nativeAdapter_ = std::make_shared<::NitroStorage::AndroidStorageAdapterCpp>();
 #endif
 #endif
 }
@@ -338,8 +339,17 @@ void HybridStorage::setBatch(const std::vector<std::string>& keys, const std::ve
             break;
         case Scope::Secure:
             ensureAdapter();
-            runAdapterOperation(
-                [&] { nativeAdapter_->setSecureBatch(keys, values); }, "Secure setBatch");
+            try {
+                runAdapterOperation(
+                    [&] { nativeAdapter_->setSecureBatch(keys, values); }, "Secure setBatch");
+            } catch (const ::NitroStorage::PartialBatchError& error) {
+                const auto listeners = copyListenersForScope(static_cast<int>(s));
+                const auto applied = std::min(error.appliedCount(), keys.size());
+                for (size_t i = 0; i < applied; ++i) {
+                    notifyListeners(listeners, keys[i], values[i]);
+                }
+                throw;
+            }
             break;
     }
 
@@ -402,8 +412,17 @@ void HybridStorage::removeBatch(const std::vector<std::string>& keys, double sco
             break;
         case Scope::Secure:
             ensureAdapter();
-            runAdapterOperation(
-                [&] { nativeAdapter_->deleteSecureBatch(keys); }, "Secure removeBatch");
+            try {
+                runAdapterOperation(
+                    [&] { nativeAdapter_->deleteSecureBatch(keys); }, "Secure removeBatch");
+            } catch (const ::NitroStorage::PartialBatchError& error) {
+                const auto listeners = copyListenersForScope(static_cast<int>(s));
+                const auto applied = std::min(error.appliedCount(), keys.size());
+                for (size_t i = 0; i < applied; ++i) {
+                    notifyListeners(listeners, keys[i], std::nullopt);
+                }
+                throw;
+            }
             break;
     }
 

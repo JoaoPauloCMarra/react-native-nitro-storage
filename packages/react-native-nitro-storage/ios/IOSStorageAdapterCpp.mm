@@ -100,7 +100,7 @@ static void unregisterLegacyDiskKeys(NSArray<NSString*>* keys) {
 
 // --- Legacy disk key migration ---
 // Versions before the suite domain stored Disk values in standardUserDefaults.
-// A conservative, retryable cutover runs at adapter initialization. A valid
+// A conservative, retryable cutover runs before the first Disk operation. A valid
 // registry is copied into the suite domain and each source is removed only
 // after a target readback confirms the copy. Malformed registries, fallback
 // domains, and persistence failures remain untouched for a later retry.
@@ -108,7 +108,7 @@ static void unregisterLegacyDiskKeys(NSArray<NSString*>* keys) {
 static NSString* const kLegacyDiskMigrationMarkerKey =
     @"__nitro_storage_legacy_disk_migration_v1__";
 
-static std::string NitroDiskStorePath() {
+static std::string ResolveNitroDiskStorePath() {
     NSArray<NSURL*>* urls = [[NSFileManager defaultManager]
         URLsForDirectory:NSApplicationSupportDirectory
                inDomains:NSUserDomainMask];
@@ -123,6 +123,11 @@ static std::string NitroDiskStorePath() {
                        error:nil];
     NSString* path = [[directory URLByAppendingPathComponent:@"nitro-storage-disk.sqlite"] path];
     return stdStringFromNSString(path);
+}
+
+static const std::string& NitroDiskStorePath() {
+    static const std::string path = ResolveNitroDiskStorePath();
+    return path;
 }
 
 static NitroStorage::SqliteDiskStore& NitroSqliteDiskStore() {
@@ -313,14 +318,24 @@ static CFStringRef accessControlAttr(int level) {
     }
 }
 
-IOSStorageAdapterCpp::IOSStorageAdapterCpp() {
+IOSStorageAdapterCpp::IOSStorageAdapterCpp() = default;
+IOSStorageAdapterCpp::~IOSStorageAdapterCpp() {}
+
+void IOSStorageAdapterCpp::ensureDiskMigrated() {
+    if (diskMigrated_.load(std::memory_order_acquire)) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(diskMigrationMutex_);
+    if (diskMigrated_.load(std::memory_order_relaxed)) {
+        return;
+    }
     runLegacyDiskMigrationCutover(
         NitroDiskDefaults(),
         [NSUserDefaults standardUserDefaults]
     );
     migrateSuiteIntoSqlite();
+    diskMigrated_.store(true, std::memory_order_release);
 }
-IOSStorageAdapterCpp::~IOSStorageAdapterCpp() {}
 
 #ifdef NITRO_STORAGE_TESTING
 void resetSqliteDiskStoreForTesting() {
@@ -339,11 +354,16 @@ void resetSharedSqliteDiskStoreForTesting() {
 bool sqliteDiskStoreHasKeyForTesting(const std::string& key) {
     return NitroSqliteDiskStore().has(key);
 }
+
+std::string diskStorePathForTesting() {
+    return NitroDiskStorePath();
+}
 #endif
 
 // --- Disk ---
 
 void IOSStorageAdapterCpp::setDisk(const std::string& key, const std::string& value) {
+    ensureDiskMigrated();
     NitroSqliteDiskStore().set(key, value);
     NSString* nsKey = nsStringFromStdString(key);
     NSUserDefaults* defaults = NitroDiskDefaults();
@@ -355,6 +375,7 @@ void IOSStorageAdapterCpp::setDisk(const std::string& key, const std::string& va
 }
 
 std::optional<std::string> IOSStorageAdapterCpp::getDisk(const std::string& key) {
+    ensureDiskMigrated();
     if (auto stored = NitroSqliteDiskStore().get(key)) {
         return stored;
     }
@@ -367,6 +388,7 @@ std::optional<std::string> IOSStorageAdapterCpp::getDisk(const std::string& key)
 }
 
 void IOSStorageAdapterCpp::deleteDisk(const std::string& key) {
+    ensureDiskMigrated();
     NitroSqliteDiskStore().remove(key);
     NSString* nsKey = nsStringFromStdString(key);
     NSUserDefaults* defaults = NitroDiskDefaults();
@@ -379,6 +401,7 @@ void IOSStorageAdapterCpp::deleteDisk(const std::string& key) {
 }
 
 bool IOSStorageAdapterCpp::hasDisk(const std::string& key) {
+    ensureDiskMigrated();
     if (NitroSqliteDiskStore().has(key)) {
         return true;
     }
@@ -395,6 +418,7 @@ bool IOSStorageAdapterCpp::hasDisk(const std::string& key) {
 }
 
 std::vector<std::string> IOSStorageAdapterCpp::getAllKeysDisk() {
+    ensureDiskMigrated();
     std::unordered_set<std::string> combined;
     for (const auto& key : NitroSqliteDiskStore().getAllKeys()) {
         combined.insert(key);
@@ -422,6 +446,7 @@ std::vector<std::string> IOSStorageAdapterCpp::getAllKeysDisk() {
 }
 
 std::vector<std::string> IOSStorageAdapterCpp::getKeysByPrefixDisk(const std::string& prefix) {
+    ensureDiskMigrated();
     std::unordered_set<std::string> combined;
     for (const auto& key : NitroSqliteDiskStore().getKeysByPrefix(prefix)) {
         combined.insert(key);
@@ -440,6 +465,7 @@ std::vector<std::string> IOSStorageAdapterCpp::getKeysByPrefixDisk(const std::st
 }
 
 size_t IOSStorageAdapterCpp::sizeDisk() {
+    ensureDiskMigrated();
     return getAllKeysDisk().size();
 }
 
@@ -447,6 +473,7 @@ void IOSStorageAdapterCpp::setDiskBatch(
     const std::vector<std::string>& keys,
     const std::vector<std::string>& values
 ) {
+    ensureDiskMigrated();
     NitroSqliteDiskStore().setBatch(keys, values);
     NSUserDefaults* defaults = NitroDiskDefaults();
     NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
@@ -466,6 +493,7 @@ void IOSStorageAdapterCpp::setDiskBatch(
 std::vector<std::optional<std::string>> IOSStorageAdapterCpp::getDiskBatch(
     const std::vector<std::string>& keys
 ) {
+    ensureDiskMigrated();
     std::vector<std::optional<std::string>> results;
     results.reserve(keys.size());
     for (const auto& key : keys) {
@@ -475,6 +503,7 @@ std::vector<std::optional<std::string>> IOSStorageAdapterCpp::getDiskBatch(
 }
 
 void IOSStorageAdapterCpp::deleteDiskBatch(const std::vector<std::string>& keys) {
+    ensureDiskMigrated();
     NitroSqliteDiskStore().removeBatch(keys);
     for (const auto& key : keys) {
         NSString* nsKey = nsStringFromStdString(key);
@@ -489,6 +518,7 @@ void IOSStorageAdapterCpp::deleteDiskBatch(const std::vector<std::string>& keys)
 }
 
 void IOSStorageAdapterCpp::clearDisk() {
+    ensureDiskMigrated();
     NitroSqliteDiskStore().clear();
     NSUserDefaults* defaults = NitroDiskDefaults();
     NSDictionary<NSString*, id>* entries = [defaults persistentDomainForName:kDiskSuiteName] ?: @{};
@@ -537,6 +567,19 @@ static void throwIfDeleteFailed(OSStatus status, const std::string& operation) {
         throw taggedStorageError(
             "keychain_locked",
             "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). " + operation
+        );
+    }
+    throw keychainStatusError(status, operation);
+}
+
+static void throwIfLookupFailed(OSStatus status, const std::string& operation) {
+    if (status == errSecSuccess || status == errSecItemNotFound) {
+        return;
+    }
+    if (status == errSecInteractionNotAllowed) {
+        throw taggedStorageError(
+            "keychain_locked",
+            "NitroStorage: Keychain is locked (errSecInteractionNotAllowed) during " + operation
         );
     }
     throw keychainStatusError(status, operation);
@@ -616,7 +659,8 @@ static void setSecureValue(
 ) {
     NSMutableDictionary* query = baseKeychainQuery(nsKey, kKeychainService, group);
     NSDictionary* updateAttributes = @{
-        (__bridge id)kSecValueData: data
+        (__bridge id)kSecValueData: data,
+        (__bridge id)kSecAttrAccessible: (__bridge id)accessControlAttr(accessControlLevel)
     };
 
     OSStatus status = SecItemUpdate((__bridge CFDictionaryRef)query, (__bridge CFDictionaryRef)updateAttributes);
@@ -743,6 +787,10 @@ static std::vector<std::string> keychainAccountsForService(NSString* service, NS
             "The item is not accessible until the device is unlocked."
         );
     }
+    if (status != errSecSuccess && status != errSecItemNotFound) {
+        if (result) CFRelease(result);
+        throw keychainStatusError(status, "Secure key enumeration");
+    }
     if (status == errSecSuccess && result) {
         id items = (__bridge_transfer id)result;
         NSArray* itemArray = nil;
@@ -813,12 +861,19 @@ bool IOSStorageAdapterCpp::hasSecure(const std::string& key) {
     NSString* group = groupStr.empty() ? nil : nsStringFromStdString(groupStr);
     NSMutableDictionary* secureQuery = baseKeychainQuery(nsKey, kKeychainService, group);
     disableKeychainInteraction(secureQuery);
-    if (SecItemCopyMatching((__bridge CFDictionaryRef)secureQuery, NULL) == errSecSuccess) {
+    const OSStatus secureStatus = SecItemCopyMatching((__bridge CFDictionaryRef)secureQuery, NULL);
+    if (secureStatus == errSecSuccess) {
         return true;
     }
+    throwIfLookupFailed(secureStatus, "Secure has");
     NSMutableDictionary* biometricQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
     disableKeychainInteraction(biometricQuery);
-    return SecItemCopyMatching((__bridge CFDictionaryRef)biometricQuery, NULL) == errSecSuccess;
+    const OSStatus biometricStatus = SecItemCopyMatching((__bridge CFDictionaryRef)biometricQuery, NULL);
+    if (biometricStatus == errSecSuccess || biometricStatus == errSecInteractionNotAllowed) {
+        return true;
+    }
+    throwIfLookupFailed(biometricStatus, "Secure has");
+    return false;
 }
 
 std::vector<std::string> IOSStorageAdapterCpp::getAllKeysSecure() {
@@ -867,12 +922,16 @@ void IOSStorageAdapterCpp::setSecureBatch(
     }
     NSString* group = groupStr.empty() ? nil : nsStringFromStdString(groupStr);
     for (size_t i = 0; i < keys.size() && i < values.size(); ++i) {
-        setSecureValue(
-            nsStringFromStdString(keys[i]),
-            nsDataFromStdString(values[i]),
-            group,
-            accessControlLevel
-        );
+        try {
+            setSecureValue(
+                nsStringFromStdString(keys[i]),
+                nsDataFromStdString(values[i]),
+                group,
+                accessControlLevel
+            );
+        } catch (const std::exception& error) {
+            throw PartialBatchError(i, error.what());
+        }
         markSecureKeySet(keys[i]);
     }
 }
@@ -901,10 +960,14 @@ void IOSStorageAdapterCpp::deleteSecureBatch(const std::vector<std::string>& key
         groupStr = keychainAccessGroup_;
     }
     NSString* group = groupStr.empty() ? nil : nsStringFromStdString(groupStr);
-    for (const auto& key : keys) {
-        deleteSecureValue(nsStringFromStdString(key), group);
-        markSecureKeyRemoved(key);
-        markBiometricKeyRemoved(key);
+    for (size_t i = 0; i < keys.size(); ++i) {
+        try {
+            deleteSecureValue(nsStringFromStdString(keys[i]), group);
+        } catch (const std::exception& error) {
+            throw PartialBatchError(i, error.what());
+        }
+        markSecureKeyRemoved(keys[i]);
+        markBiometricKeyRemoved(keys[i]);
     }
 }
 

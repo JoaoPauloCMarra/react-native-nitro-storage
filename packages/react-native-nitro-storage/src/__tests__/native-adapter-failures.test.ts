@@ -455,7 +455,7 @@ describe("native adapter failure injection", () => {
     expect(biometric.get()).toBe("biometric-before");
   });
 
-  it("writes the native batch sentinel for missing values and decodes it", () => {
+  it("returns the default and no raw value for a missing key", () => {
     const backend = createFailureBackend();
     const core = buildCore(backend);
     const item = core.createStorageItem<string>({
