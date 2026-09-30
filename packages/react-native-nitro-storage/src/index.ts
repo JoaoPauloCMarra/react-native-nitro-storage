@@ -4,6 +4,7 @@ import {
   DEFAULT_SECURE_WRITES_ASYNC,
   resolveNativeWriteBuffering,
 } from "./capabilities";
+import { createIndexedDBBackend as createIndexedDBBackendFromSubpath } from "./indexeddb-backend";
 import { unescapeCollidingRawValue } from "./internal";
 import {
   assertAccessControlLevel,
@@ -86,6 +87,11 @@ export type {
   StorageKeyRef,
   TransactionContext,
 } from "./storage-core";
+export {
+  describeWebBackendCapabilities,
+  isIndexedDBWebBackend,
+  type WebBackendCapabilities,
+} from "./web-backend-contract";
 export type { PlatformScope, PlatformStorage } from "./storage-platform";
 
 let _storageModule: Storage | null = null;
@@ -200,6 +206,10 @@ function buildNativeAdapter(
         return;
       }
 
+      if (consumeSuppressedNativeEvent(scope, key)) {
+        notifyKeyListeners(internals.getScopedListeners(scope), key);
+        return;
+      }
       const oldValue =
         scope === StorageScope.Secure
           ? undefined
@@ -210,9 +220,6 @@ function buildNativeAdapter(
         internals.cacheRawValue(scope, key, value);
       }
       notifyKeyListeners(internals.getScopedListeners(scope), key);
-      if (consumeSuppressedNativeEvent(scope, key)) {
-        return;
-      }
       internals.emitKeyChange(
         scope,
         key,
@@ -315,7 +322,7 @@ export const storage = {
   getCapabilities: (): StorageCapabilities => ({
     platform: "native",
     backend: {
-      disk: "platform-preferences",
+      disk: "sqlite",
       secure: nativeSecureBackend,
     },
     writeBuffering: resolveNativeWriteBuffering(
@@ -392,4 +399,11 @@ export {
   useStorageSelector,
   useStorageValue,
 } from "./storage-hooks";
-export { createIndexedDBBackend } from "./indexeddb-backend";
+
+/**
+ * @deprecated Import `createIndexedDBBackend` from
+ * `react-native-nitro-storage/indexeddb-backend` instead. The root export
+ * will be removed in a future minor release.
+ */
+export const createIndexedDBBackend: typeof createIndexedDBBackendFromSubpath =
+  createIndexedDBBackendFromSubpath;

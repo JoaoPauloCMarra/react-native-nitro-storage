@@ -110,8 +110,14 @@ describe("item 1: import cannot be overwritten by pending writes", () => {
 
   it("flushes pending secure writes before import", () => {
     const mock = createNitroStorageMock();
-    mock.storage.setSecureWritesAsync(true);
-    mock.storage.setString("secret", "stale", StorageScope.Secure);
+    const secret = mock.createStorageItem({
+      key: "secret",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      coalesceSecureWrites: true,
+    });
+    secret.set("stale");
+    expect(secret.get()).toBe("stale");
     mock.storage.import({ secret: "imported" }, StorageScope.Secure);
     mock.storage.flushSecureWrites();
     expect(mock.storage.getString("secret", StorageScope.Secure)).toBe(
@@ -352,7 +358,7 @@ describe("item 9: migrations are failure-atomic", () => {
     expect(mock.migrateToLatest(StorageScope.Disk)).toBe(2);
   });
 
-  it("keeps completed steps persisted when a later step fails on the retry", () => {
+  it("keeps completed steps persisted when a later step fails and then succeeds on retry", () => {
     const mock = createNitroStorageMock();
     let failStep2 = true;
     mock.registerMigration(1, ({ setRaw }) => {

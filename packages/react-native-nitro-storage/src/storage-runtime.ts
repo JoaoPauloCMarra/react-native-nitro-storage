@@ -5,7 +5,8 @@ export type StorageErrorCode =
   | "storage_corruption"
   | "storage_compensation_failed"
   | "biometric_unavailable"
-  | "unsupported";
+  | "unsupported"
+  | "invalid_key";
 
 export type StorageCapabilities = {
   platform: "native" | "web";
@@ -65,6 +66,7 @@ const STORAGE_ERROR_CODES = new Set<StorageErrorCode>([
   "storage_compensation_failed",
   "biometric_unavailable",
   "unsupported",
+  "invalid_key",
 ]);
 
 export function getStorageErrorCode(
