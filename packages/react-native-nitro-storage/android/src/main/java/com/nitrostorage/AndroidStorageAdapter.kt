@@ -65,20 +65,24 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
 
     private val masterKeyAlias = "${context.packageName}.nitro_storage.master_key"
 
-    private val masterKey: MasterKey = try {
-        MasterKey.Builder(context, masterKeyAlias)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
-    } catch (e: Exception) {
-        throw RuntimeException("NitroStorage: Cannot create encryption key. Device may not support AES256-GCM.", e)
+    private val masterKey: MasterKey by lazy {
+        try {
+            createDefaultMasterKey()
+        } catch (e: Exception) {
+            throw e.wrapStorageException(
+                "NitroStorage: Cannot create encryption key. Device may not support AES256-GCM.",
+            )
+        }
     }
 
-    private val encryptedPreferences: SharedPreferences = initializeEncryptedPreferences(
-        "NitroStorageSecure",
-        masterKey,
-        masterKeyAlias,
-        ::createDefaultMasterKey,
-    )
+    private val encryptedPreferences: SharedPreferences by lazy {
+        initializeEncryptedPreferences(
+            "NitroStorageSecure",
+            masterKey,
+            masterKeyAlias,
+            ::createDefaultMasterKey,
+        )
+    }
 
     private val biometricMasterKeyAlias = "${context.packageName}.nitro_storage.biometric_key"
     private val biometricOrPasscodeMasterKeyAlias =
@@ -294,6 +298,36 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         return stores
     }
 
+    private fun <T : Any> firstInExistingBiometricPreferences(
+        lookup: (SharedPreferences) -> T?,
+    ): T? {
+        if (
+            biometricOrPasscodeInitialized ||
+            preferencesFileExists("NitroStorageBiometricOrPasscode")
+        ) {
+            lookup(biometricOrPasscodePreferences)?.let { return it }
+        }
+        if (
+            legacyBiometricInitialized ||
+            preferencesFileExists("NitroStorageBiometric")
+        ) {
+            lookup(legacyBiometricPreferences)?.let { return it }
+        }
+        if (
+            biometricOnlyInitialized ||
+            preferencesFileExists("NitroStorageBiometricOnly")
+        ) {
+            lookup(biometricOnlyPreferences)?.let { return it }
+        }
+        return null
+    }
+
+    private fun biometricPreferencesContain(key: String): Boolean {
+        return firstInExistingBiometricPreferences { preferences ->
+            if (preferences.contains(key)) true else null
+        } ?: false
+    }
+
     private fun biometricPreferencesForLevel(level: Int): SharedPreferences {
         return when (level) {
             1 -> biometricOrPasscodePreferences
@@ -365,14 +399,19 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
     )
 
     private fun captureBiometricEntrySnapshots(key: String): List<BiometricEntrySnapshot> {
-        return existingBiometricPreferences().map { preferences ->
+        val snapshots = mutableListOf<BiometricEntrySnapshot>()
+        firstInExistingBiometricPreferences { preferences ->
             val present = preferences.contains(key)
-            BiometricEntrySnapshot(
-                preferences = preferences,
-                present = present,
-                value = if (present) getSecureSafe(preferences, key) else null,
+            snapshots.add(
+                BiometricEntrySnapshot(
+                    preferences = preferences,
+                    present = present,
+                    value = if (present) getSecureSafe(preferences, key) else null,
+                ),
             )
+            if (present) true else null
         }
+        return snapshots
     }
 
     private fun capturePlainEntrySnapshot(key: String): PlainEntrySnapshot {
@@ -663,7 +702,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             if (inst.encryptedPreferences.contains(key)) {
                 return true
             }
-            return inst.existingBiometricPreferences().any { it.contains(key) }
+            return inst.biometricPreferencesContain(key)
         }
 
         @JvmStatic
@@ -776,13 +815,9 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         fun getSecureBiometric(key: String): String? {
             val inst = getInstanceOrThrow()
             return try {
-                for (preferences in inst.existingBiometricPreferences()) {
-                    val value = inst.getSecureSafe(preferences, key)
-                    if (value != null) {
-                        return value
-                    }
+                inst.firstInExistingBiometricPreferences { preferences ->
+                    inst.getSecureSafe(preferences, key)
                 }
-                null
             } catch (e: Exception) {
                 throw e.wrapStorageException(
                     "NitroStorage: Failed to read biometric storage: ${e.message}",
@@ -809,7 +844,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         fun hasSecureBiometric(key: String): Boolean {
             val inst = getInstanceOrThrow()
             return try {
-                inst.existingBiometricPreferences().any { it.contains(key) }
+                inst.biometricPreferencesContain(key)
             } catch (e: Exception) {
                 throw e.wrapStorageException(
                     "NitroStorage: Failed to inspect biometric storage: ${e.message}",

@@ -143,6 +143,9 @@ internal class DiskSqliteStore(
             arrayOf(PREFS_MIGRATION_KEY),
         ).use { cursor ->
             if (cursor.moveToFirst() && cursor.getString(0) == "1") {
+                if (legacyPreferences.all.isNotEmpty()) {
+                    legacyPreferences.edit().clear().commit()
+                }
                 return
             }
         }
@@ -165,6 +168,7 @@ internal class DiskSqliteStore(
         } finally {
             db.endTransaction()
         }
+        legacyPreferences.edit().clear().commit()
     }
 
     private companion object {

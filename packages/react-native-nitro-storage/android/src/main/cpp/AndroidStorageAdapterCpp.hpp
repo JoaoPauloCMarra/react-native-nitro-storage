@@ -9,16 +9,16 @@ namespace NitroStorage {
 struct AndroidStorageAdapterJava : facebook::jni::JavaClass<AndroidStorageAdapterJava> {
   static constexpr auto kJavaDescriptor = "Lcom/nitrostorage/AndroidStorageAdapter;";
   
-  static facebook::jni::alias_ref<facebook::jni::JObject> getContext() {
+  static void ensureInitialized() {
      static auto method = javaClassStatic()->getStaticMethod<facebook::jni::JObject()>("getContext", "()Landroid/content/Context;");
-     return method(javaClassStatic());
+     method(javaClassStatic());
   }
 
 };
 
 class AndroidStorageAdapterCpp : public NativeStorageAdapter {
 public:
-    explicit AndroidStorageAdapterCpp(facebook::jni::alias_ref<facebook::jni::JObject> context);
+    AndroidStorageAdapterCpp();
     ~AndroidStorageAdapterCpp() override;
     
     void setDisk(const std::string& key, const std::string& value) override;
