@@ -44,6 +44,7 @@ internal class DiskSqliteStore(
     @Synchronized
     fun remove(key: String) {
         db.execSQL("DELETE FROM kv WHERE key = ?", arrayOf(key))
+        removeLegacyKeys(listOf(key))
     }
 
     @Synchronized
@@ -86,6 +87,7 @@ internal class DiskSqliteStore(
         } finally {
             db.endTransaction()
         }
+        removeLegacyKeys(keys.asIterable())
     }
 
     @Synchronized
@@ -135,6 +137,9 @@ internal class DiskSqliteStore(
     @Synchronized
     fun clear() {
         db.execSQL("DELETE FROM kv")
+        if (legacyPreferences.all.isNotEmpty()) {
+            legacyPreferences.edit().clear().apply()
+        }
     }
 
     private fun migrateLegacyPreferences() {
@@ -143,9 +148,6 @@ internal class DiskSqliteStore(
             arrayOf(PREFS_MIGRATION_KEY),
         ).use { cursor ->
             if (cursor.moveToFirst() && cursor.getString(0) == "1") {
-                if (legacyPreferences.all.isNotEmpty()) {
-                    legacyPreferences.edit().clear().commit()
-                }
                 return
             }
         }
@@ -168,7 +170,16 @@ internal class DiskSqliteStore(
         } finally {
             db.endTransaction()
         }
-        legacyPreferences.edit().clear().commit()
+    }
+
+    private fun removeLegacyKeys(keys: Iterable<String>) {
+        val present = keys.filter { legacyPreferences.contains(it) }
+        if (present.isEmpty()) {
+            return
+        }
+        val editor = legacyPreferences.edit()
+        present.forEach { editor.remove(it) }
+        editor.apply()
     }
 
     private companion object {
