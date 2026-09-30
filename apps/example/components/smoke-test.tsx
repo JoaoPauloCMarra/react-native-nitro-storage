@@ -10,7 +10,6 @@ import { Platform, ScrollView, StyleSheet, Text, View } from "react-native";
 import {
   AccessControl,
   BiometricLevel,
-  createIndexedDBBackend,
   createSecureAuthStorage,
   createStorageItem,
   flushWebStorageBackends,
@@ -32,6 +31,7 @@ import {
   storage,
   StorageScope,
 } from "react-native-nitro-storage";
+import { createIndexedDBBackend } from "react-native-nitro-storage/indexeddb-backend";
 import { Button, Colors } from "./shared";
 
 type LogEntry = {
@@ -47,6 +47,8 @@ type SmokeTest = {
   isSupported?: () => boolean;
   unsupportedReason?: string;
 };
+
+const INTEGRITY_PERSIST_KEY = "__integrity_disk_persist__";
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
@@ -794,7 +796,7 @@ function buildTests(): SmokeTest[] {
           storage.getString("__smoke_clr_d__", StorageScope.Disk) === "d",
           "disk should survive memory clear",
         );
-        storage.clear(StorageScope.Disk);
+        storage.clear(StorageScope.Disk, { except: [INTEGRITY_PERSIST_KEY] });
         assert(
           storage.getString("__smoke_clr_d__", StorageScope.Disk) === undefined,
           "disk not cleared",
@@ -891,21 +893,36 @@ function buildTests(): SmokeTest[] {
         storage.setString("__smoke_ca_m__", "m", StorageScope.Memory);
         storage.setString("__smoke_ca_d__", "d", StorageScope.Disk);
         storage.setString("__smoke_ca_s__", "s", StorageScope.Secure);
-        storage.clearAll();
-        assert(
-          storage.getString("__smoke_ca_m__", StorageScope.Memory) ===
-            undefined,
-          "memory not cleared",
+        const preservedPersist = storage.getString(
+          INTEGRITY_PERSIST_KEY,
+          StorageScope.Disk,
         );
-        assert(
-          storage.getString("__smoke_ca_d__", StorageScope.Disk) === undefined,
-          "disk not cleared",
-        );
-        assert(
-          storage.getString("__smoke_ca_s__", StorageScope.Secure) ===
-            undefined,
-          "secure not cleared",
-        );
+        try {
+          storage.clearAll();
+          assert(
+            storage.getString("__smoke_ca_m__", StorageScope.Memory) ===
+              undefined,
+            "memory not cleared",
+          );
+          assert(
+            storage.getString("__smoke_ca_d__", StorageScope.Disk) ===
+              undefined,
+            "disk not cleared",
+          );
+          assert(
+            storage.getString("__smoke_ca_s__", StorageScope.Secure) ===
+              undefined,
+            "secure not cleared",
+          );
+        } finally {
+          if (preservedPersist !== undefined) {
+            storage.setString(
+              INTEGRITY_PERSIST_KEY,
+              preservedPersist,
+              StorageScope.Disk,
+            );
+          }
+        }
       },
     },
     {
@@ -953,47 +970,47 @@ function buildTests(): SmokeTest[] {
 
         setWebDiskStorageBackend(diskBackend);
         setWebSecureStorageBackend(secureBackend);
+        try {
+          const diskItem = createStorageItem({
+            key: "__smoke_web_disk__",
+            scope: StorageScope.Disk,
+            defaultValue: "",
+          });
+          const secureItem = createStorageItem({
+            key: "__smoke_web_secure__",
+            scope: StorageScope.Secure,
+            defaultValue: "",
+          });
 
-        const diskItem = createStorageItem({
-          key: "__smoke_web_disk__",
-          scope: StorageScope.Disk,
-          defaultValue: "",
-        });
-        const secureItem = createStorageItem({
-          key: "__smoke_web_secure__",
-          scope: StorageScope.Secure,
-          defaultValue: "",
-        });
+          diskItem.set("disk");
+          secureItem.set("secure");
 
-        diskItem.set("disk");
-        secureItem.set("secure");
+          assert(diskItem.get() === "disk", "expected disk backend read");
+          assert(secureItem.get() === "secure", "expected secure backend read");
+          assert(
+            getWebDiskStorageBackend() === diskBackend,
+            "disk backend mismatch",
+          );
+          assert(
+            getWebSecureStorageBackend() === secureBackend,
+            "secure backend mismatch",
+          );
 
-        assert(diskItem.get() === "disk", "expected disk backend read");
-        assert(secureItem.get() === "secure", "expected secure backend read");
-        assert(
-          getWebDiskStorageBackend() === diskBackend,
-          "disk backend mismatch",
-        );
-        assert(
-          getWebSecureStorageBackend() === secureBackend,
-          "secure backend mismatch",
-        );
+          await flushWebStorageBackends();
 
-        await flushWebStorageBackends();
-        flushed = true;
-
-        assert(
-          diskStore.has("__smoke_web_disk__"),
-          "expected custom disk backend write",
-        );
-        assert(
-          secureStore.has("__secure___smoke_web_secure__"),
-          "expected custom secure backend write",
-        );
-
-        setWebDiskStorageBackend(undefined);
-        setWebSecureStorageBackend(undefined);
-        assert(flushed, "expected backend flush to run");
+          assert(
+            diskStore.has("__smoke_web_disk__"),
+            "expected custom disk backend write",
+          );
+          assert(
+            secureStore.has("__secure___smoke_web_secure__"),
+            "expected custom secure backend write",
+          );
+          assert(flushed, "expected backend flush to run");
+        } finally {
+          setWebDiskStorageBackend(undefined);
+          setWebSecureStorageBackend(undefined);
+        }
       },
     },
     {

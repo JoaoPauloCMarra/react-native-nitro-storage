@@ -3,6 +3,7 @@ import { Platform, View } from "react-native";
 import {
   createSetItem,
   createStorageItem,
+  getStorageErrorCode,
   storage,
   StorageScope,
 } from "react-native-nitro-storage";
@@ -203,12 +204,25 @@ export function StorageE2eLab() {
             onPress={() => {
               const capabilities = storage.getSecurityCapabilities();
               const prompt = capabilities.biometric.prompt;
-              const valid = ["available", "unavailable", "unknown"].includes(
-                prompt,
-              );
-              setBiometricStatus(
-                valid ? `ok:capability=${prompt}` : "fail:capability",
-              );
+              const key = "__e2e_lab_secure_roundtrip__";
+              try {
+                storage.setString(key, "lab-secure", StorageScope.Secure);
+                storage.flushSecureWrites();
+                const value = storage.getString(key, StorageScope.Secure);
+                const exists = storage.getSecureMetadata(key).exists;
+                storage.deleteString(key, StorageScope.Secure);
+                const removed =
+                  storage.getString(key, StorageScope.Secure) === undefined;
+                setBiometricStatus(
+                  value === "lab-secure" && exists && removed
+                    ? `ok:capability=${prompt}:secure=roundtrip`
+                    : `fail:secure:get=${String(value)}:exists=${exists}:removed=${removed}`,
+                );
+              } catch (error) {
+                setBiometricStatus(
+                  `fail:secure:${getStorageErrorCode(error) ?? String(error)}`,
+                );
+              }
             }}
             style={styles.flex1}
           />

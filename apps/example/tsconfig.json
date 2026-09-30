@@ -5,6 +5,9 @@
     "paths": {
       "react-native-nitro-storage": [
         "../../packages/react-native-nitro-storage/src/index.ts"
+      ],
+      "react-native-nitro-storage/indexeddb-backend": [
+        "../../packages/react-native-nitro-storage/src/indexeddb-backend.ts"
       ]
     }
   },

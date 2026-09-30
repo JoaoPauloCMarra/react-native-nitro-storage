@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Platform, Text, View } from "react-native";
 import {
-  createIndexedDBBackend,
   diskItem,
   migrateFromMMKV,
   secureItem,
@@ -9,6 +8,7 @@ import {
   useStorageActions,
   useStorageValue,
 } from "react-native-nitro-storage";
+import { createIndexedDBBackend } from "react-native-nitro-storage/indexeddb-backend";
 import { Button, Card, Colors, StatusRow, styles } from "./shared";
 
 const secureDemoItem = secureItem<string>({

@@ -8,7 +8,7 @@ import {
   getStorageErrorCode,
   getWebDiskStorageBackend,
   getWebSecureStorageBackend,
-  isKeychainLockedError,
+  isStorageError,
   migrateToLatest,
   registerMigration,
   removeBatch,
@@ -44,7 +44,7 @@ function withKeychainFallback<T>(run: () => T, fallback: T): T {
   try {
     return run();
   } catch (error) {
-    if (isKeychainLockedError(error)) {
+    if (isStorageError(error, "keychain_locked")) {
       return fallback;
     }
     throw error;
@@ -189,7 +189,17 @@ const benchmarkSecureItems = Array.from({ length: 6 }, (_, index) =>
 const HOOK_LABELS = ["initial", "alpha", "beta", "gamma", "delta"];
 const isWebRuntime = Platform.OS === "web";
 
-let migVer = 30_000;
+const MIGRATION_VERSION_KEY = "__nitro_storage_migration_version__";
+let migVer = 0;
+
+function nextMigrationVersion(): number {
+  const stored = Number.parseInt(
+    storage.getString(MIGRATION_VERSION_KEY, StorageScope.Disk) ?? "0",
+    10,
+  );
+  migVer = Math.max(Number.isFinite(stored) ? stored : 0, migVer) + 1;
+  return migVer;
+}
 
 type RuntimeBenchmarkResult = {
   label: string;
@@ -706,7 +716,7 @@ export default function HomeScreen() {
 
       <Card
         title="Secure Scope"
-        subtitle="Hardware encrypted"
+        subtitle={isWebRuntime ? "Web secure backend" : "Keychain / Keystore"}
         indicatorColor={Colors.secure}
       >
         <Input
@@ -1172,7 +1182,7 @@ export default function HomeScreen() {
             testID="mig-run"
             title="Run Migrations"
             onPress={() => {
-              const v = ++migVer;
+              const v = nextMigrationVersion();
               registerMigration(v, ({ getRaw, setRaw }) => {
                 const raw = getRaw(migrationNameItem.key);
                 if (raw !== undefined) {

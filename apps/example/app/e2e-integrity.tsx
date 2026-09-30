@@ -49,6 +49,20 @@ function assert(condition: unknown, message: string): void {
   }
 }
 
+function seedPersistCase(persistKey: string): LabCase {
+  const seeded = runCase("disk-persist-seed", () => {
+    storage.setString(persistKey, "persist-v1", StorageScope.Disk);
+    storage.flushDiskWrites();
+    assert(
+      storage.getString(persistKey, StorageScope.Disk) === "persist-v1",
+      "persist seed failed",
+    );
+  });
+  return seeded.status === "pass"
+    ? { ...seeded, status: "skip", detail: "seeded; relaunch to verify" }
+    : seeded;
+}
+
 function runIntegritySweep(): IntegrityReport {
   const persistKey = "__integrity_disk_persist__";
   const previousPersist = storage.getString(persistKey, StorageScope.Disk);
@@ -388,15 +402,7 @@ function runIntegritySweep(): IntegrityReport {
           status: "pass",
           detail: "found persist-v1",
         }
-      : runCase("disk-persist-seed", () => {
-          storage.setString(persistKey, "persist-v1", StorageScope.Disk);
-          storage.flushDiskWrites();
-          assert(
-            storage.getString(persistKey, StorageScope.Disk) === "persist-v1",
-            "persist seed failed",
-          );
-          return "seeded persist-v1";
-        }),
+      : seedPersistCase(persistKey),
   ];
 
   const report: IntegrityReport = {
