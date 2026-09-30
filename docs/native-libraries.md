@@ -15,8 +15,9 @@ copied into SQLite once, on first open. A marker in the SQLite `meta` table
 (`suite_v1` on iOS, `prefs_v1` on Android) records completion, so later launches
 skip the import. On iOS the suite domain is kept for downgrade safety, and Disk
 key enumeration still merges its keys. On Android the legacy `NitroStorage`
-preferences are cleared once the import marker commits, so `clear(Disk)` leaves
-no pre-SQLite copy behind. Later Disk reads and writes use SQLite.
+preferences are kept after the import for downgrade safety, like the iOS suite;
+Disk deletes remove the key from them and `clear(Disk)` clears them, so a logout
+wipe leaves no pre-SQLite copy behind. Later Disk reads and writes use SQLite.
 
 ## Evaluated and not shipped
 

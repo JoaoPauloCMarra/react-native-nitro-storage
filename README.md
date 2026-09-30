@@ -61,7 +61,7 @@ Peer dependencies:
 | Package                      | Version            |
 | ---------------------------- | ------------------ |
 | `react`                      | `>=18.2.0`         |
-| `react-native`               | `>=0.75.0`         |
+| `react-native`               | `>=0.76.0`         |
 | `react-native-nitro-modules` | `>=0.37.0 <0.38.0` |
 
 Nitro peer requirement: `react-native-nitro-modules >=0.37.0 <0.38.0`.
@@ -73,8 +73,7 @@ Nitro peer requirement: `react-native-nitro-modules >=0.37.0 <0.38.0`.
 React Native `0.76` and Expo SDK `52` apps must set the Android `ndkVersion` to
 27 or newer, because Nitro Modules 0.37 requires NDK r27 and those templates
 default to NDK 26.1. In Expo SDK 52, set it with the `expo-build-properties`
-plugin option `android.ndkVersion`. The peer range still admits React Native
-`0.75`, but that version is not tested.
+plugin option `android.ndkVersion`.
 
 The package gate uses React Native `0.86.3` and the Strict TypeScript API.
 `check:ci` also compiles the public source against React Native `0.87.0`'s
@@ -179,7 +178,8 @@ application state.
 Native storage calls are synchronous JSI operations. Keep values and batches
 small enough for the JavaScript event loop; native and configured web-backend
 failures throw errors. Secure cache fallback is opt-in through
-`fallbackToCacheOnReadError` and applies only to `keychain_locked` read errors.
+`fallbackToCacheOnReadError` and applies only to `keychain_locked` read errors,
+which only iOS reports.
 Storage keys must be non-empty strings; an empty key throws an `invalid_key`
 error before it reaches native storage.
 
@@ -329,7 +329,7 @@ storage.clear(StorageScope.Disk, {
 legacy entry. Secure items that set `fallbackToCacheOnReadError` return the last
 value read in this process when a read fails with `keychain_locked`. Every other
 read error, such as `authentication_required`, `key_invalidated`, or
-`storage_corruption`, still throws. Use the fallback for values where a stale
+`storage_corruption`, still throws. Only iOS reports `keychain_locked`, so the fallback has an effect only on iOS; Android and web never use it. Use the fallback for values where a stale
 copy is acceptable, not for credentials.
 
 ```ts
@@ -509,9 +509,14 @@ can also throw when a protected store is locked or its key is invalidated. Use
 
 Changing the access control level applies to later writes of existing items
 too: on iOS every Secure write now updates `kSecAttrAccessible` of an item that
-already exists. `item.has()` and `storage.has(key, StorageScope.Secure)` throw
-`keychain_locked` on iOS while the keychain is locked instead of returning
-`false`. Deleting an item reads its previous value only when an event listener
+already exists. On iOS, `item.has()` and `storage.has(key, StorageScope.Secure)` throw
+`keychain_locked` while the keychain is locked, and a Keychain status error for
+any other unexpected status, instead of returning `false`. A biometric item that
+the Keychain reports as needing authentication counts as present, so `has()` on
+a biometric item returns `true` without a prompt; while the device is locked the
+same status also returns `true`. Listing, counting, and prefix queries on Secure
+keys throw a Keychain status error for unexpected statuses instead of returning
+an empty result. Deleting an item reads its previous value only when an event listener
 or an unredacted event observer needs it, so deleting a biometric item does not
 show a biometric prompt.
 
@@ -743,16 +748,16 @@ Native and web adapters tag classified failures with stable error codes. Use
 Errors never swallow the underlying cause silently: the original platform
 message is preserved on the error for diagnostics.
 
-| Code                          | Meaning                                                                          |
-| ----------------------------- | -------------------------------------------------------------------------------- |
-| `keychain_locked`             | The protected store is locked. Retry after the device unlocks.                   |
-| `authentication_required`     | The item needs user authentication, or the user cancelled the prompt.            |
-| `key_invalidated`             | The protecting key was invalidated, for example by a biometric enrolment change. |
-| `biometric_unavailable`       | The requested biometric level is not available on this device or OS version.     |
-| `storage_corruption`          | Stored secure data could not be decrypted.                                       |
-| `storage_compensation_failed` | A multi-step write failed and restoring the previous state also failed.          |
-| `unsupported`                 | The operation is not available on this platform or environment.                  |
-| `invalid_key`                 | The storage key is empty. Keys must be non-empty strings.                        |
+| Code                          | Meaning                                                                                                                 |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `keychain_locked`             | The protected store is locked. Retry after the device unlocks.                                                          |
+| `authentication_required`     | The item needs user authentication, or the user cancelled the prompt.                                                   |
+| `key_invalidated`             | The protecting key was invalidated, for example by a biometric enrolment change.                                        |
+| `biometric_unavailable`       | The requested biometric level is not available on this device or OS version.                                            |
+| `storage_corruption`          | Stored secure data could not be decrypted, or (Android) the Secure master key or store cannot be created. Do not retry. |
+| `storage_compensation_failed` | A multi-step write failed and restoring the previous state also failed.                                                 |
+| `unsupported`                 | The operation is not available on this platform or environment.                                                         |
+| `invalid_key`                 | The storage key is empty. Keys must be non-empty strings.                                                               |
 
 Invalid scopes and non-finite numeric levels are rejected with untagged errors
 before they reach native storage.
