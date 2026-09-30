@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Release tag to validate and verify
+        description: Release tag to validate (publish and registry verification run only on GitHub Release events)
         required: true
         type: string
       npm_dist_tag:
@@ -236,16 +236,8 @@ jobs:
           printf '%s\n' "$npm_bin" >> "$GITHUB_PATH"
           "$npm_bin/npm" --version
 
-      - name: Install C++ coverage tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang llvm
-
       - name: Install dependencies
         run: bun install --frozen-lockfile
-
-      - name: Prepare package artifacts
-        run: bun run build
 
       - name: Publish to npm with Trusted Publishing
         working-directory: ${{ env.PACKAGE_DIR }}

@@ -151,49 +151,149 @@ function isPackageVersionPublished(packageName, version) {
   );
 }
 
-function verifyPublishedPackage(packageName, version, expectedGitHead) {
-  const metadata = execCommandWithOutput(
-    `npm view ${shellQuote(`${packageName}@${version}`)} version gitHead --json 2>/dev/null`,
-  );
-  if (!metadata) {
-    log(
-      `✗ ${packageName}@${version} was not found on the registry after publish`,
-      "red",
+const REGISTRY_RETRY_DELAYS_SECONDS = [10, 20, 40, 60, 60, 60];
+
+function isRegistryNotFound(output) {
+  return /E404|404 Not Found|No match found|No version/i.test(output);
+}
+
+function viewRegistryMetadata(packageName, version) {
+  try {
+    const output = execSync(
+      `npm view ${shellQuote(`${packageName}@${version}`)} version gitHead --json`,
+      {
+        encoding: "utf-8",
+        cwd: projectRoot,
+        shell: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
     );
-    process.exit(1);
+    return { ok: true, output: output.trim() };
+  } catch (error) {
+    return {
+      ok: false,
+      output: `${error.stdout ?? ""}${error.stderr ?? ""}`.trim(),
+    };
+  }
+}
+
+function sleepSeconds(seconds) {
+  return new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+}
+
+async function verifyPublishedPackage(
+  packageName,
+  version,
+  expectedGitHead,
+  {
+    delays = REGISTRY_RETRY_DELAYS_SECONDS,
+    view = viewRegistryMetadata,
+    sleep = sleepSeconds,
+    onRetry = () => {},
+  } = {},
+) {
+  let metadata = null;
+  for (let attempt = 1; attempt <= delays.length; attempt += 1) {
+    const result = view(packageName, version);
+    if (result.ok && result.output !== "") {
+      metadata = result.output;
+      break;
+    }
+    if (!result.ok && !isRegistryNotFound(result.output)) {
+      throw new Error(
+        `npm registry lookup failed; refusing to classify it as propagation delay: ${result.output}`,
+      );
+    }
+    if (attempt < delays.length) {
+      onRetry(attempt, delays.length, delays[attempt - 1]);
+      await sleep(delays[attempt - 1]);
+    }
+  }
+
+  if (metadata === null) {
+    throw new Error(
+      `${packageName}@${version} was not found on the registry after publish`,
+    );
   }
 
   let parsed;
   try {
     parsed = JSON.parse(metadata);
   } catch (_error) {
-    log(`✗ Registry verification returned invalid metadata`, "red");
-    process.exit(1);
+    throw new Error("Registry verification returned invalid metadata");
   }
 
-  const publishedVersion = parsed.version ?? parsed["version"];
-  const publishedGitHead = parsed.gitHead ?? parsed["gitHead"];
+  const publishedVersion = typeof parsed === "string" ? parsed : parsed.version;
+  const publishedGitHead = typeof parsed === "string" ? undefined : parsed.gitHead;
   if (publishedVersion !== version) {
-    log(
-      `✗ Registry version ${publishedVersion} does not match published version ${version}`,
-      "red",
+    throw new Error(
+      `Registry version ${publishedVersion} does not match published version ${version}`,
     );
-    process.exit(1);
   }
 
   if (expectedGitHead && publishedGitHead && publishedGitHead !== expectedGitHead) {
-    log(
-      `✗ Registry gitHead ${publishedGitHead} does not match local commit ${expectedGitHead}`,
-      "red",
+    throw new Error(
+      `Registry gitHead ${publishedGitHead} does not match local commit ${expectedGitHead}`,
     );
-    process.exit(1);
   }
 
-  log(
-    `  ✓ Registry verified: ${packageName}@${publishedVersion}${
-      publishedGitHead ? ` (gitHead ${publishedGitHead})` : ""
-    }`,
-  );
+  return { version: publishedVersion, gitHead: publishedGitHead };
+}
+
+const BOOLEAN_FLAGS = new Map([
+  ["--dry-run", "isDryRun"],
+  ["--skip-checks", "skipChecks"],
+  ["--yes", "yes"],
+  ["--allow-dirty", "allowDirty"],
+  ["--skip-pack-preview", "skipPackPreview"],
+  ["--with-coverage", "withCoverage"],
+  ["--verify-npm-lifecycle", "verifyNpmLifecycle"],
+  ["--help", "help"],
+]);
+
+function parsePublishArgs(args) {
+  const options = {
+    isDryRun: false,
+    skipChecks: false,
+    yes: false,
+    allowDirty: false,
+    skipPackPreview: false,
+    withCoverage: false,
+    verifyNpmLifecycle: false,
+    help: false,
+    tag: "latest",
+  };
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--") {
+      continue;
+    }
+    if (BOOLEAN_FLAGS.has(arg)) {
+      options[BOOLEAN_FLAGS.get(arg)] = true;
+      continue;
+    }
+    if (arg === "--tag") {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith("--")) {
+        throw new Error("--tag requires a value, for example --tag next");
+      }
+      options.tag = value;
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("--tag=")) {
+      const value = arg.slice("--tag=".length);
+      if (value === "") {
+        throw new Error("--tag requires a value, for example --tag=next");
+      }
+      options.tag = value;
+      continue;
+    }
+    throw new Error(`Unknown argument: ${arg}`);
+  }
+
+  return options;
 }
 
 function isNpmTrustedPublishingCI() {
@@ -357,9 +457,15 @@ function formatBytes(value) {
 }
 
 async function main() {
-  const args = process.argv.slice(2);
-  const argSet = new Set(args);
-  if (argSet.has("--help")) {
+  let options;
+  try {
+    options = parsePublishArgs(process.argv.slice(2));
+  } catch (error) {
+    log(`✗ ${error.message}`, "red");
+    log("Run with --help to list supported options.", "yellow");
+    process.exit(1);
+  }
+  if (options.help) {
     console.log(`Usage: bun run publish-package[:dry] -- [options]
 
 Options:
@@ -370,20 +476,21 @@ Options:
   --skip-pack-preview       Skip the npm pack summary preview.
   --with-coverage           Run JS/TS and C++ coverage gates before packaging.
   --verify-npm-lifecycle    Run dry-run packaging with lifecycle scripts enabled.
-  --tag=<tag>               npm dist tag, default latest.
+  --tag <tag>, --tag=<tag>  npm dist tag, default latest.
 `);
     return;
   }
 
-  const isDryRun = args.includes("--dry-run");
-  const skipChecks = args.includes("--skip-checks");
-  const yes = args.includes("--yes");
-  const allowDirty = args.includes("--allow-dirty");
-  const skipPackPreview = args.includes("--skip-pack-preview");
-  const withCoverage = args.includes("--with-coverage");
-  const verifyNpmLifecycle = args.includes("--verify-npm-lifecycle");
-  const tag =
-    args.find((arg) => arg.startsWith("--tag="))?.split("=")[1] || "latest";
+  const {
+    isDryRun,
+    skipChecks,
+    yes,
+    allowDirty,
+    skipPackPreview,
+    withCoverage,
+    verifyNpmLifecycle,
+    tag,
+  } = options;
   validateNpmTag(tag);
 
   console.log("");
@@ -568,13 +675,33 @@ Options:
     const gitHead =
       execCommandWithOutput("git rev-parse HEAD", { cwd: projectRoot }) ??
       undefined;
-    verifyPublishedPackage(packageName, version, gitHead);
+    const verified = await verifyPublishedPackage(packageName, version, gitHead, {
+      onRetry: (attempt, total, delay) =>
+        log(
+          `  … Waiting for npm registry propagation (attempt ${attempt}/${total}); next check in ${delay}s`,
+          "yellow",
+        ),
+    });
+    log(
+      `  ✓ Registry verified: ${packageName}@${verified.version}${
+        verified.gitHead ? ` (gitHead ${verified.gitHead})` : ""
+      }`,
+    );
   }
 
   console.log("");
 }
 
-main().catch((error) => {
-  log(`Publish failed: ${error.message}`, "red");
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    log(`Publish failed: ${error.message}`, "red");
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  REGISTRY_RETRY_DELAYS_SECONDS,
+  isRegistryNotFound,
+  parsePublishArgs,
+  verifyPublishedPackage,
+};

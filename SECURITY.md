@@ -4,14 +4,18 @@
 
 Security fixes are shipped for the latest published `0.x` release line.
 
-| Version | Supported |
-| ------- | --------- |
-| `0.8.x` | Yes       |
-| `<0.8`  | No        |
+| Version  | Supported |
+| -------- | --------- |
+| `0.11.x` | Yes       |
+| `< 0.11` | No        |
 
 ## Reporting a Vulnerability
 
-Report security issues through GitHub Security Advisories with:
+Report security issues privately through GitHub private vulnerability reporting: https://github.com/JoaoPauloCMarra/react-native-nitro-storage/security/advisories/new
+
+Never report vulnerabilities in public issues, pull requests, or discussions.
+
+Include:
 
 - affected package version
 - platform and OS version
@@ -23,4 +27,10 @@ Do not publish proof-of-concept exploit details until a fix is available.
 
 ## Storage Boundary
 
-Native Secure scope delegates encryption to platform storage APIs: iOS Keychain and Android Jetpack Security `EncryptedSharedPreferences`. Web Secure scope is API-compatible but defaults to namespaced `localStorage`; use a custom web secure backend when browser-side storage must meet a stricter threat model.
+Memory scope keeps values in process memory only.
+
+Native Disk scope stores values unencrypted in an app-private SQLite database in WAL mode on iOS and Android. Do not store secrets in Disk scope.
+
+Native Secure scope delegates encryption to platform storage APIs: iOS Keychain and Android Jetpack Security `EncryptedSharedPreferences`.
+
+Web Disk and Secure scopes default to namespaced `localStorage`, or to the custom backend set with `setWebDiskStorageBackend` / `setWebSecureStorageBackend`. Web Secure scope is API-compatible but not encrypted by default; use a custom web secure backend when browser-side storage must meet a stricter threat model.
