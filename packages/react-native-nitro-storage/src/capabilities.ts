@@ -1,3 +1,5 @@
+import { isIndexedDBBackendName } from "./web-backend-contract";
+
 export type WriteBuffering = {
   disk: boolean;
   secure: boolean;
@@ -13,16 +15,9 @@ export function resolveWebWriteBuffering(
   secureBackendName: string | undefined,
 ): WriteBuffering {
   return {
-    disk: isIndexedDBWebBackendByName(diskBackendName),
-    secure: isIndexedDBWebBackendByName(secureBackendName),
+    disk: isIndexedDBBackendName(diskBackendName),
+    secure: isIndexedDBBackendName(secureBackendName),
   };
-}
-
-function isIndexedDBWebBackendByName(backendName: string | undefined): boolean {
-  if (!backendName) {
-    return false;
-  }
-  return backendName.startsWith("indexeddb:");
 }
 
 export const DEFAULT_SECURE_WRITES_ASYNC = false;

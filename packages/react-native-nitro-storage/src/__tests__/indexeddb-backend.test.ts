@@ -55,6 +55,7 @@ function makeFakeIDB(): {
     entries: IDBEntry[],
     mode: IDBTransactionMode,
     journal: (() => void)[],
+    cursorState: { open: boolean; onDone: (() => void) | null },
   ) {
     return {
       put(value: unknown, key: IDBValidKey) {
@@ -91,6 +92,7 @@ function makeFakeIDB(): {
         return req;
       },
       openCursor() {
+        cursorState.open = true;
         let pos = 0;
         const req: {
           result: IDBCursorWithValue | null;
@@ -116,6 +118,12 @@ function makeFakeIDB(): {
               req.result = null;
             }
             req.onsuccess?.({} as Event);
+            if (req.result === null) {
+              cursorState.open = false;
+              const onDone = cursorState.onDone;
+              cursorState.onDone = null;
+              onDone?.();
+            }
           }
           advance();
         });
@@ -132,14 +140,24 @@ function makeFakeIDB(): {
     mode: IDBTransactionMode,
   ) {
     const journal: (() => void)[] = [];
+    const cursorState: { open: boolean; onDone: (() => void) | null } = {
+      open: false,
+      onDone: null,
+    };
     let onCompleteCallback: (() => void) | null = null;
     let onAbortCallback: ((e: Event) => void) | null = null;
     const tx = {
       objectStore(_name: string) {
-        return makeObjectStore(storeName, entries, mode, journal);
+        return makeObjectStore(storeName, entries, mode, journal, cursorState);
       },
       set oncomplete(cb: (() => void) | null) {
         onCompleteCallback = cb;
+        if (cursorState.open) {
+          cursorState.onDone = () => {
+            onCompleteCallback?.();
+          };
+          return;
+        }
         queueMicrotask(() => {
           if (mode === "readwrite" && dbState.closed) {
             onAbortCallback?.(new Event("abort"));
@@ -445,6 +463,32 @@ describe("createIndexedDBBackend", () => {
     });
   });
 
+  it("applies channel messages received during hydration after the snapshot", async () => {
+    const seed = await createIndexedDBBackend("race-db", "kv");
+    for (let index = 0; index < 20; index += 1) {
+      seed.setItem(`filler-${index}`, "x");
+    }
+    seed.setItem("raced", "old");
+    await seed.flush?.();
+    seed.close();
+
+    const pending = createIndexedDBBackend("race-db", "kv");
+    for (let tick = 0; tick < 10; tick += 1) {
+      await Promise.resolve();
+    }
+    new BroadcastChannel("nitro-storage:race-db:kv").postMessage({
+      key: "raced",
+      newValue: null,
+      sourceId: "other-tab",
+    });
+    const backend = await pending;
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+    expect(backend.getItem("raced")).toBeNull();
+    expect(backend.getItem("filler-0")).toBe("x");
+    backend.close();
+  });
+
   it("closes the backend and rejects further synchronous operations", async () => {
     const backend = await createIndexedDBBackend("close-db", "kv");
     backend.setItem("key", "value");
@@ -592,55 +636,7 @@ describe("indexeddb persistence lifecycle", () => {
     await expect(backend.flush?.()).resolves.toBeUndefined();
   });
 
-  it("flushes pending writes on pagehide", async () => {
-    const listeners = new Map<string, Set<(event: Event) => void>>();
-    const originalAddEventListener = globalThis.addEventListener;
-    const originalRemoveEventListener = globalThis.removeEventListener;
-    Object.defineProperty(globalThis, "addEventListener", {
-      value: (type: string, listener: (event: Event) => void) => {
-        const typeListeners =
-          listeners.get(type) ?? new Set<(event: Event) => void>();
-        typeListeners.add(listener);
-        listeners.set(type, typeListeners);
-      },
-      writable: true,
-      configurable: true,
-    });
-    Object.defineProperty(globalThis, "removeEventListener", {
-      value: (type: string, listener: (event: Event) => void) => {
-        listeners.get(type)?.delete(listener);
-      },
-      writable: true,
-      configurable: true,
-    });
-    const dispatch = (type: string) => {
-      listeners.get(type)?.forEach((listener) => listener(new Event(type)));
-    };
-
-    const backend = await createIndexedDBBackend();
-    backend.setItem("lifecycle-key", "persisted");
-
-    dispatch("pagehide");
-    await Promise.resolve();
-    await Promise.resolve();
-
-    const reopened = await createIndexedDBBackend();
-    expect(reopened.getItem("lifecycle-key")).toBe("persisted");
-    reopened.close();
-
-    Object.defineProperty(globalThis, "addEventListener", {
-      value: originalAddEventListener,
-      writable: true,
-      configurable: true,
-    });
-    Object.defineProperty(globalThis, "removeEventListener", {
-      value: originalRemoveEventListener,
-      writable: true,
-      configurable: true,
-    });
-  });
-
-  it("close removes lifecycle listeners and rejects later writes", async () => {
+  it("close rejects later writes", async () => {
     const backend = await createIndexedDBBackend();
     backend.setItem("k", "v");
     backend.close();

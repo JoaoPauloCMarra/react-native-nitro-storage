@@ -170,9 +170,11 @@ function dispatchStorageEvent(
   const storageEvent = new Event("storage") as Event & {
     key: string | null;
     newValue: string | null;
+    storageArea: Storage;
   };
   storageEvent.key = key;
   storageEvent.newValue = newValue;
+  storageEvent.storageArea = globalThis.localStorage;
   window.dispatchEvent(storageEvent);
 }
 
