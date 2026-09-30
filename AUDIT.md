@@ -170,4 +170,4 @@ Commits: `7ca4ed4` core JS fixes, `40c8bf8` web, `66c0113` testing entry, `8dd4f
 - Android permanent Secure master-key/store creation failures map to `storage_corruption` instead of `authentication_required`.
 - iOS `hasSecure` biometric branch treats `errSecInteractionNotAllowed` as present; `hasSecureBiometric` keeps throwing `keychain_locked` for that status.
 - Web shared-backend `subscribe()` events are routed only to the owning scope; a whole-backend clear re-reads each scope's keys.
-- `react-native` peer raised to `>=0.76.0` (item 29 closed).
+- `react-native` peer raised to `>=0.77.0` (item 29 closed): Nitro Modules 0.37.1 does not compile its Android package on RN 0.76 (verified by the lead). `/testing` and `/indexeddb-backend` stub folders added; a Metro resolver probe with package exports off resolved them to `src/testing.ts` and `lib/commonjs/indexeddb-backend.js` (before: `FailedToResolveNameError`).

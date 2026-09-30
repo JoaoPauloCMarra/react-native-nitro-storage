@@ -1,0 +1,6 @@
+{
+  "main": "../lib/commonjs/indexeddb-backend.js",
+  "module": "../lib/module/indexeddb-backend.js",
+  "types": "../lib/typescript/indexeddb-backend.d.ts",
+  "sideEffects": false
+}

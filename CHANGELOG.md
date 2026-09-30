@@ -10,7 +10,7 @@ Breaking changes are always listed first in each release section.
 
 ### Breaking changes
 
-- **React Native 0.76 or newer is required.** The `react-native` peer range is now `>=0.76.0` (was `>=0.75.0`). React Native 0.76 and Expo SDK 52 apps must set the Android `ndkVersion` to 27 or newer, because Nitro Modules 0.37 requires NDK r27; in Expo SDK 52 use the `expo-build-properties` option `android.ndkVersion`. Migration: upgrade from React Native 0.75, and raise `ndkVersion` on 0.76 / SDK 52.
+- **React Native 0.77 or newer is required.** The `react-native` peer range is now `>=0.77.0` (was `>=0.75.0`), matching the minimum for Nitro Modules 0.37, whose Android package does not compile against React Native 0.76. Supported: React Native 0.77+ / Expo SDK 53+; tested on React Native 0.86.3 / Expo SDK 57. Migration: upgrade to React Native 0.77 or Expo SDK 53 or newer.
 - **iOS `has()` on Secure keys throws instead of returning `false`.** `item.has()` and `storage.has(key, StorageScope.Secure)` throw `keychain_locked` while the keychain is locked and a Keychain status error for any other unexpected status, matching `hasSecureBiometric` and Android. A biometric item that needs authentication counts as present. Migration: wrap Secure existence checks that can run while the device is locked in `try`/`catch` and retry after unlock when `isStorageError(error, "keychain_locked")`.
 - **iOS Secure key listing throws on unexpected Keychain statuses.** `getAllKeys`, `size`, `getKeysByPrefix`, and `getByPrefix` for Secure scope throw a Keychain status error (for example a misconfigured access group) instead of returning an empty result. Migration: catch errors around Secure enumeration and check the Keychain access group.
 - **Android permanent Secure store failures report `storage_corruption`.** When the default Secure master key or store cannot be created, Secure calls throw `storage_corruption` instead of `authentication_required`. Migration: do not retry these errors; tell the user that secure data must be reset.
@@ -38,7 +38,8 @@ Breaking changes are always listed first in each release section.
 - Android biometric reads and existence checks open stores in the order `BiometryOrPasscode`, legacy biometric, `BiometryOnly` and stop at the first hit (previously `BiometryOnly` first), so reading a `BiometryOrPasscode` item needs only a device-credential authentication. Biometric writes still snapshot every existing store and remove the key from every other store, so no stale duplicates remain.
 - Android Disk deletes also remove the key from the legacy `NitroStorage` SharedPreferences, and `clear(Disk)` clears them, so a logout wipe leaves no pre-SQLite copy. The legacy file is otherwise kept for downgrade safety, like the iOS suite domain.
 - The podspec uses React Native's minimum iOS version and excludes test sources; the Android build no longer pins `kotlin-stdlib`.
-- The Expo config plugin loads `expo/config-plugins`, and `expo` (`>=52.0.0`) is declared as an optional peer dependency.
+- The Expo config plugin loads `expo/config-plugins`, and `expo` (`>=53.0.0`) is declared as an optional peer dependency.
+- The `/testing` and `/indexeddb-backend` subpaths ship stub `package.json` folders, so they resolve when Metro package exports are disabled (the default before React Native 0.79).
 - The IndexedDB backend no longer installs `pagehide` and `visibilitychange` listeners; they started no IndexedDB work.
 
 ### Documentation
@@ -46,7 +47,7 @@ Breaking changes are always listed first in each release section.
 - Android biometric protection is checked when a biometric store is first opened in a process; later reads in that process do not authenticate again, and the package never shows a prompt on Android. Apps must run their own `BiometricPrompt` before gated reads. The previous "30-second window" wording was wrong.
 - iOS biometric reads block the JavaScript thread while the system prompt is visible.
 - README web backend example uses separate stores for Disk and Secure, the events example uses the `(namespace, scope, listener)` signature, the auth-token example no longer enables `fallbackToCacheOnReadError`, and the error code table lists every code.
-- Compatibility: tested on React Native 0.86.3 / Expo SDK 57; supported from React Native 0.76 / Expo SDK 52, where Android `ndkVersion` must be 27 or newer.
+- Compatibility: supports React Native 0.77+ / Expo SDK 53+ (Nitro Modules 0.37 minimum); tested on React Native 0.86.3 / Expo SDK 57.
 - `SECURITY.md` names the supported `0.11.x` line and private vulnerability reporting.
 
 ## [0.10.5] - 2026-09-30

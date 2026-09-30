@@ -1,0 +1,8 @@
+{
+  "main": "../lib/commonjs/testing.js",
+  "module": "../lib/module/testing.js",
+  "types": "../lib/typescript/testing.d.ts",
+  "react-native": "../src/testing.ts",
+  "browser": "../src/testing.ts",
+  "sideEffects": false
+}

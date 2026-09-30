@@ -52,6 +52,8 @@ const requiredFiles = [
   "lib/typescript/testing.d.ts",
   "lib/commonjs/indexeddb-backend.js",
   "lib/typescript/indexeddb-backend.d.ts",
+  "testing/package.json",
+  "indexeddb-backend/package.json",
 ];
 
 const forbiddenPatterns = [

@@ -61,19 +61,23 @@ Peer dependencies:
 | Package                      | Version            |
 | ---------------------------- | ------------------ |
 | `react`                      | `>=18.2.0`         |
-| `react-native`               | `>=0.76.0`         |
+| `react-native`               | `>=0.77.0`         |
 | `react-native-nitro-modules` | `>=0.37.0 <0.38.0` |
 
 Nitro peer requirement: `react-native-nitro-modules >=0.37.0 <0.38.0`.
 
 | Tested on                                  | Supported floor                     |
 | ------------------------------------------ | ----------------------------------- |
-| React Native `0.86.3` / Expo SDK `57.0.26` | React Native `0.76` / Expo SDK `52` |
+| React Native `0.86.3` / Expo SDK `57.0.26` | React Native `0.77` / Expo SDK `53` |
 
-React Native `0.76` and Expo SDK `52` apps must set the Android `ndkVersion` to
-27 or newer, because Nitro Modules 0.37 requires NDK r27 and those templates
-default to NDK 26.1. In Expo SDK 52, set it with the `expo-build-properties`
-plugin option `android.ndkVersion`.
+Nitro Storage supports React Native 0.77 or newer and Expo SDK 53 or newer,
+which is the minimum for Nitro Modules 0.37: its Android package does not
+compile against React Native 0.76. It is tested on React Native 0.86.3 and Expo
+SDK 57.
+
+The `react-native-nitro-storage/testing` and
+`react-native-nitro-storage/indexeddb-backend` subpaths also resolve when Metro
+package exports are disabled (the default before React Native 0.79).
 
 The package gate uses React Native `0.86.3` and the Strict TypeScript API.
 `check:ci` also compiles the public source against React Native `0.87.0`'s
