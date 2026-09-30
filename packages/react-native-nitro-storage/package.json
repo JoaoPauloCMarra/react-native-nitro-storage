@@ -132,7 +132,13 @@
   "peerDependencies": {
     "react": ">=18.2.0",
     "react-native": ">=0.75.0",
-    "react-native-nitro-modules": ">=0.37.0 <0.38.0"
+    "react-native-nitro-modules": ">=0.37.0 <0.38.0",
+    "expo": ">=52.0.0"
+  },
+  "peerDependenciesMeta": {
+    "expo": {
+      "optional": true
+    }
   },
   "react-native-builder-bob": {
     "source": "src",

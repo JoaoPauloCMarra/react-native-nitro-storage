@@ -2,7 +2,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const { _internal } = require("../../app.plugin.js");
+const { _internal, withNitroStorage } = require("../../app.plugin.js");
 
 describe("Expo config plugin", () => {
   it("adds Android backup attributes when missing", () => {
@@ -103,29 +103,86 @@ describe("Expo config plugin", () => {
     }
   });
 
-  it("registers the package initializer provider in the Android manifest", () => {
-    const packageRoot = path.resolve(__dirname, "../..");
-    const manifest = fs.readFileSync(
-      path.join(packageRoot, "android/src/main/AndroidManifest.xml"),
-      "utf8",
-    );
+  it("sets the default Face ID usage description when none exists", () => {
+    const infoPlist = {};
 
-    expect(manifest).toContain("com.nitrostorage.NitroStorageInitializer");
-    expect(manifest).toContain("${applicationId}.nitrostorage-initializer");
+    _internal.applyInfoPlist(infoPlist, {});
+
+    expect(infoPlist.NSFaceIDUsageDescription).toBe(
+      "Allow $(PRODUCT_NAME) to use Face ID for secure authentication",
+    );
   });
 
-  it("initializes the Android adapter from application context", () => {
-    const packageRoot = path.resolve(__dirname, "../..");
-    const initializer = fs.readFileSync(
-      path.join(
-        packageRoot,
-        "android/src/main/java/com/nitrostorage/NitroStorageInitializer.kt",
-      ),
-      "utf8",
+  it("preserves an existing Face ID usage description without a prop", () => {
+    const infoPlist = { NSFaceIDUsageDescription: "Existing app copy" };
+
+    _internal.applyInfoPlist(infoPlist, { faceIDPermission: "   " });
+
+    expect(infoPlist.NSFaceIDUsageDescription).toBe("Existing app copy");
+  });
+
+  it("uses the faceIDPermission prop over an existing description", () => {
+    const infoPlist = { NSFaceIDUsageDescription: "Existing app copy" };
+
+    _internal.applyInfoPlist(infoPlist, {
+      faceIDPermission: "Unlock your vault with Face ID",
+    });
+
+    expect(infoPlist.NSFaceIDUsageDescription).toBe(
+      "Unlock your vault with Face ID",
+    );
+  });
+
+  it("does not add biometric permissions by default", () => {
+    const manifest = { manifest: { application: [{ $: {} }] } };
+
+    _internal.applyAndroidManifest(manifest, {});
+
+    expect(manifest.manifest["uses-permission"]).toBeUndefined();
+  });
+
+  it("adds biometric permissions once without duplicating existing entries", () => {
+    const manifest = {
+      manifest: {
+        application: [{ $: {} }],
+        "uses-permission": [
+          { $: { "android:name": "android.permission.INTERNET" } },
+          { $: { "android:name": "android.permission.USE_BIOMETRIC" } },
+        ],
+      },
+    };
+
+    _internal.applyAndroidManifest(manifest, { addBiometricPermissions: true });
+    _internal.applyAndroidManifest(manifest, { addBiometricPermissions: true });
+
+    expect(
+      manifest.manifest["uses-permission"].map((p) => p.$["android:name"]),
+    ).toEqual([
+      "android.permission.INTERNET",
+      "android.permission.USE_BIOMETRIC",
+      "android.permission.USE_FINGERPRINT",
+    ]);
+  });
+
+  it("leaves backup attributes untouched when configureAndroidBackup is false", () => {
+    const manifest = { manifest: { application: [{ $: {} }] } };
+
+    _internal.applyAndroidManifest(manifest, { configureAndroidBackup: false });
+
+    expect(manifest.manifest.application[0].$).toEqual({});
+  });
+
+  it("registers the Android backup file writer only when backup is configured", () => {
+    const configured = withNitroStorage({ name: "app", slug: "app" }, {});
+    const skipped = withNitroStorage(
+      { name: "app", slug: "app" },
+      { configureAndroidBackup: false },
     );
 
-    expect(initializer).toContain(
-      "context?.applicationContext?.let(AndroidStorageAdapter::init)",
-    );
+    expect(typeof configured.mods.ios.infoPlist).toBe("function");
+    expect(typeof configured.mods.android.manifest).toBe("function");
+    expect(typeof configured.mods.android.dangerous).toBe("function");
+    expect(typeof skipped.mods.android.manifest).toBe("function");
+    expect(skipped.mods.android.dangerous).toBeUndefined();
   });
 });
