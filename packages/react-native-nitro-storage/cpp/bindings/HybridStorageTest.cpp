@@ -131,6 +131,7 @@ public:
     void setSecureBatch(const std::vector<std::string>& keys, const std::vector<std::string>& values) override {
         const auto count = std::min(keys.size(), values.size());
         for (size_t index = 0; index < count; index += 1) {
+            throwIfSecureBatchFailsAt(index);
             secure_[keys[index]] = values[index];
         }
     }
@@ -145,8 +146,9 @@ public:
     }
 
     void deleteSecureBatch(const std::vector<std::string>& keys) override {
-        for (const auto& key : keys) {
-            deleteSecure(key);
+        for (size_t index = 0; index < keys.size(); index += 1) {
+            throwIfSecureBatchFailsAt(index);
+            deleteSecure(keys[index]);
         }
     }
 
@@ -204,8 +206,19 @@ public:
     int secureWritesAsyncCalls() const { return secureWritesAsyncCalls_; }
     const std::string& keychainGroup() const { return keychainGroup_; }
     int biometricLevel() const { return biometricLevel_; }
+    void failSecureBatchAt(size_t index) { failSecureBatchAt_ = index; }
 
 private:
+    void throwIfSecureBatchFailsAt(size_t index) const {
+        if (failSecureBatchAt_.has_value() && *failSecureBatchAt_ == index) {
+            throw ::NitroStorage::PartialBatchError(
+                index,
+                "[nitro-error:keychain_locked] NitroStorage: Keychain is locked"
+            );
+        }
+    }
+
+    std::optional<size_t> failSecureBatchAt_;
     std::map<std::string, std::string> disk_;
     std::map<std::string, std::string> secure_;
     std::map<std::string, std::string> biometric_;
@@ -422,6 +435,51 @@ void testBatchListeners() {
     assert(events[3].first == "b" && !events[3].second.has_value());
 
     unsubscribe();
+    unsubscribe();
+}
+
+void testPartialSecureBatchNotifiesAppliedKeysBeforeThrowing() {
+    auto adapter = std::make_shared<MockAdapter>();
+    auto storage = std::make_shared<HybridStorage>(adapter);
+    std::vector<std::pair<std::string, std::optional<std::string>>> events;
+
+    auto unsubscribe = storage->addOnChange(2.0, [&](const std::string& key, const std::optional<std::string>& value) {
+        events.push_back({key, value});
+    });
+
+    adapter->failSecureBatchAt(2);
+    std::string setError;
+    try {
+        storage->setBatch({"a", "b", "c", "d"}, {"1", "2", "3", "4"}, 2.0);
+    } catch (const std::exception& error) {
+        setError = error.what();
+    }
+    assert(setError.rfind("[nitro-error:keychain_locked]", 0) == 0);
+    assert(events.size() == 2);
+    assert(events[0].first == "a" && events[0].second.value() == "1");
+    assert(events[1].first == "b" && events[1].second.value() == "2");
+    assert(adapter->getSecure("b").value() == "2");
+    assert(!adapter->getSecure("c").has_value());
+
+    events.clear();
+    adapter->failSecureBatchAt(1);
+    std::string removeError;
+    try {
+        storage->removeBatch({"a", "b"}, 2.0);
+    } catch (const std::exception& error) {
+        removeError = error.what();
+    }
+    assert(removeError.rfind("[nitro-error:keychain_locked]", 0) == 0);
+    assert(events.size() == 1);
+    assert(events[0].first == "a" && !events[0].second.has_value());
+    assert(!adapter->getSecure("a").has_value());
+    assert(adapter->getSecure("b").value() == "2");
+
+    events.clear();
+    adapter->failSecureBatchAt(0);
+    expectThrows([&]() { storage->setBatch({"x"}, {"1"}, 2.0); });
+    assert(events.empty());
+
     unsubscribe();
 }
 
@@ -878,6 +936,7 @@ int main() {
     testBatchMissingValue();
     testMemoryAndSecureBatchPaths();
     testBatchListeners();
+    testPartialSecureBatchNotifiesAppliedKeysBeforeThrowing();
     testListenerExceptionsAreIgnored();
     testListenerUnsubscribeStress();
     testSecureConfigPassThrough();

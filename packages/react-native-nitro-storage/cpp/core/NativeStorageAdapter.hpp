@@ -1,10 +1,23 @@
 #pragma once
 
-#include <string>
+#include <cstddef>
 #include <optional>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace NitroStorage {
+
+class PartialBatchError : public std::runtime_error {
+public:
+    PartialBatchError(size_t appliedCount, const std::string& message)
+        : std::runtime_error(message), appliedCount_(appliedCount) {}
+
+    size_t appliedCount() const noexcept { return appliedCount_; }
+
+private:
+    size_t appliedCount_;
+};
 
 class NativeStorageAdapter {
 public:
