@@ -869,7 +869,7 @@ bool IOSStorageAdapterCpp::hasSecure(const std::string& key) {
     NSMutableDictionary* biometricQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
     disableKeychainInteraction(biometricQuery);
     const OSStatus biometricStatus = SecItemCopyMatching((__bridge CFDictionaryRef)biometricQuery, NULL);
-    if (biometricStatus == errSecSuccess) {
+    if (biometricStatus == errSecSuccess || biometricStatus == errSecInteractionNotAllowed) {
         return true;
     }
     throwIfLookupFailed(biometricStatus, "Secure has");
