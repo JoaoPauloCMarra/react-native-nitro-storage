@@ -88,3 +88,18 @@ function consumePlatformStorage(store: PlatformStorage): void {
 consumePlatformStorage(nativeStorage);
 consumePlatformStorage(webStorage);
 consumePlatformStorage(testingStorage);
+
+type NativeExports = keyof typeof import("../src");
+type WebExports = keyof typeof import("../src/index.web");
+type TestingExports = Exclude<
+  keyof typeof import("../src/testing"),
+  "resetNitroStorageMock" | "createNitroStorageMock" | "NitroStorageTestModule"
+>;
+type NativeMatchesWebExports = Assert<Equals<NativeExports, WebExports>>;
+type TestingMatchesNativeExports = Assert<
+  Equals<TestingExports, NativeExports>
+>;
+
+type InvalidKeyIsAStorageErrorCode = Assert<
+  "invalid_key" extends import("../src").StorageErrorCode ? true : false
+>;
