@@ -121,6 +121,12 @@ void SqliteDiskStore::openLocked() {
         "value TEXT NOT NULL"
         ");"
     );
+    execLocked(
+        "CREATE TABLE IF NOT EXISTS meta ("
+        "k TEXT PRIMARY KEY NOT NULL,"
+        "v TEXT NOT NULL"
+        ");"
+    );
     setStmt_ = prepareLocked("INSERT OR REPLACE INTO kv(key, value) VALUES(?1, ?2);");
     getStmt_ = prepareLocked("SELECT value FROM kv WHERE key = ?1;");
     removeStmt_ = prepareLocked("DELETE FROM kv WHERE key = ?1;");
@@ -132,6 +138,8 @@ void SqliteDiskStore::openLocked() {
     insertAbsentStmt_ = prepareLocked(
         "INSERT OR IGNORE INTO kv(key, value) VALUES(?1, ?2);"
     );
+    getMetaStmt_ = prepareLocked("SELECT 1 FROM meta WHERE k = ?1 LIMIT 1;");
+    setMetaStmt_ = prepareLocked("INSERT OR REPLACE INTO meta(k, v) VALUES(?1, ?2);");
 }
 
 void SqliteDiskStore::closeLocked() {
@@ -150,6 +158,8 @@ void SqliteDiskStore::closeLocked() {
     finalize(sizeStmt_);
     finalize(clearStmt_);
     finalize(insertAbsentStmt_);
+    finalize(getMetaStmt_);
+    finalize(setMetaStmt_);
     if (db_ != nullptr) {
         sqlite3_close(db_);
         db_ = nullptr;
@@ -386,6 +396,49 @@ void SqliteDiskStore::clear() {
     }
 }
 
+void SqliteDiskStore::insertAbsentLocked(
+    const std::vector<std::pair<std::string, std::string>>& entries
+) {
+    for (const auto& entry : entries) {
+        sqlite3_reset(insertAbsentStmt_);
+        sqlite3_clear_bindings(insertAbsentStmt_);
+        bindText(insertAbsentStmt_, 1, entry.first);
+        bindText(insertAbsentStmt_, 2, entry.second);
+        const int rc = sqlite3_step(insertAbsentStmt_);
+        sqlite3_reset(insertAbsentStmt_);
+        if (rc != SQLITE_DONE) {
+            throwSqlite(db_, "migrate", rc);
+        }
+    }
+}
+
+bool SqliteDiskStore::hasMigrationMarkerLocked(const std::string& name) {
+    sqlite3_reset(getMetaStmt_);
+    sqlite3_clear_bindings(getMetaStmt_);
+    bindText(getMetaStmt_, 1, name);
+    const int rc = sqlite3_step(getMetaStmt_);
+    sqlite3_reset(getMetaStmt_);
+    if (rc == SQLITE_ROW) {
+        return true;
+    }
+    if (rc == SQLITE_DONE) {
+        return false;
+    }
+    throwSqlite(db_, "hasMigrationMarker", rc);
+}
+
+void SqliteDiskStore::setMigrationMarkerLocked(const std::string& name) {
+    sqlite3_reset(setMetaStmt_);
+    sqlite3_clear_bindings(setMetaStmt_);
+    bindText(setMetaStmt_, 1, name);
+    bindText(setMetaStmt_, 2, "1");
+    const int rc = sqlite3_step(setMetaStmt_);
+    sqlite3_reset(setMetaStmt_);
+    if (rc != SQLITE_DONE) {
+        throwSqlite(db_, "setMigrationMarker", rc);
+    }
+}
+
 void SqliteDiskStore::migrateIfAbsent(
     const std::vector<std::pair<std::string, std::string>>& entries
 ) {
@@ -395,17 +448,32 @@ void SqliteDiskStore::migrateIfAbsent(
     std::lock_guard<std::mutex> lock(mutex_);
     beginLocked();
     try {
-        for (const auto& entry : entries) {
-            sqlite3_reset(insertAbsentStmt_);
-            sqlite3_clear_bindings(insertAbsentStmt_);
-            bindText(insertAbsentStmt_, 1, entry.first);
-            bindText(insertAbsentStmt_, 2, entry.second);
-            const int rc = sqlite3_step(insertAbsentStmt_);
-            sqlite3_reset(insertAbsentStmt_);
-            if (rc != SQLITE_DONE) {
-                throwSqlite(db_, "migrate", rc);
-            }
+        insertAbsentLocked(entries);
+        commitLocked();
+    } catch (...) {
+        rollbackLocked();
+        throw;
+    }
+}
+
+bool SqliteDiskStore::hasMigrationMarker(const std::string& name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return hasMigrationMarkerLocked(name);
+}
+
+void SqliteDiskStore::migrateOnce(
+    const std::string& name,
+    const std::vector<std::pair<std::string, std::string>>& entries
+) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    beginLocked();
+    try {
+        if (hasMigrationMarkerLocked(name)) {
+            commitLocked();
+            return;
         }
+        insertAbsentLocked(entries);
+        setMigrationMarkerLocked(name);
         commitLocked();
     } catch (...) {
         rollbackLocked();

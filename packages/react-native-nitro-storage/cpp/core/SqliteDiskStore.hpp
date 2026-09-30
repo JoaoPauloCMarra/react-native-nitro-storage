@@ -39,6 +39,11 @@ public:
     size_t size();
     void clear();
     void migrateIfAbsent(const std::vector<std::pair<std::string, std::string>>& entries);
+    bool hasMigrationMarker(const std::string& name);
+    void migrateOnce(
+        const std::string& name,
+        const std::vector<std::pair<std::string, std::string>>& entries
+    );
 
 private:
     void openLocked();
@@ -50,6 +55,9 @@ private:
     void setLocked(const std::string& key, const std::string& value);
     std::optional<std::string> getLocked(const std::string& key);
     void removeLocked(const std::string& key);
+    void insertAbsentLocked(const std::vector<std::pair<std::string, std::string>>& entries);
+    bool hasMigrationMarkerLocked(const std::string& name);
+    void setMigrationMarkerLocked(const std::string& name);
     sqlite3_stmt* prepareLocked(const char* sql);
 
     std::string path_;
@@ -63,6 +71,8 @@ private:
     sqlite3_stmt* sizeStmt_ = nullptr;
     sqlite3_stmt* clearStmt_ = nullptr;
     sqlite3_stmt* insertAbsentStmt_ = nullptr;
+    sqlite3_stmt* getMetaStmt_ = nullptr;
+    sqlite3_stmt* setMetaStmt_ = nullptr;
     std::mutex mutex_;
 };
 

@@ -11,7 +11,10 @@ EncryptedSharedPreferences. Web Disk stays on the configured web backend
 | SQLite WAL | iOS `SqliteDiskStore`, Android `DiskSqliteStore` | Transactional batch writes, prefix queries without loading a plist/XML map, and crash-safe persistence. Closest Disk engine to a dedicated mmap KV without adding MMKV. |
 
 Existing UserDefaults suite keys and Android `NitroStorage` preferences are
-copied into SQLite on first open. Later Disk reads and writes use SQLite.
+copied into SQLite once, on first open. A marker in the SQLite `meta` table
+(`suite_v1` on iOS, `prefs_v1` on Android) records completion, so later launches
+skip the import. On iOS the suite domain is kept for downgrade safety. Later Disk reads
+and writes use SQLite.
 
 ## Evaluated and not shipped
 

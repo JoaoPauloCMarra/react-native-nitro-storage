@@ -12,6 +12,8 @@ using NitroStorage::IOSStorageAdapterCpp;
 namespace NitroStorage {
 void runLegacyDiskMigrationCutoverForTesting(NSUserDefaults* defaults);
 void resetSqliteDiskStoreForTesting();
+void resetSharedSqliteDiskStoreForTesting();
+bool sqliteDiskStoreHasKeyForTesting(const std::string& key);
 }
 
 namespace {
@@ -22,6 +24,8 @@ const char* kLegacyGetKey = "nitro-storage-ut-legacy-get";
 const char* kLegacyHasKey = "nitro-storage-ut-legacy-has";
 const char* kSuiteKey = "nitro-storage-ut-suite";
 const char* kConflictKey = "nitro-storage-ut-conflict";
+const char* kSuiteImportedKey = "nitro-storage-ut-suite-imported";
+const char* kSuiteLateKey = "nitro-storage-ut-suite-late";
 
 bool containsKey(const std::vector<std::string>& keys, const std::string& needle) {
     return std::find(keys.begin(), keys.end(), needle) != keys.end();
@@ -40,6 +44,8 @@ void cleanupState() {
     [standard removeObjectForKey:nsKey(kLegacyHasKey)];
     [standard removeObjectForKey:nsKey(kSuiteKey)];
     [standard removeObjectForKey:nsKey(kConflictKey)];
+    [standard removeObjectForKey:nsKey(kSuiteImportedKey)];
+    [standard removeObjectForKey:nsKey(kSuiteLateKey)];
     [standard removeObjectForKey:@"__nitro_storage_legacy_disk_keys__"];
     [standard removeObjectForKey:@"__nitro_storage_legacy_disk_migration_v1__"];
     [standard removePersistentDomainForName:@"com.nitrostorage.disk"];
@@ -118,6 +124,25 @@ int main() {
         assert([[NSUserDefaults standardUserDefaults] objectForKey:nsKey(kLegacyKey)] == nil);
         assert([suite objectForKey:@"__nitro_storage_legacy_disk_keys__"] == nil);
         assert([suite boolForKey:@"__nitro_storage_legacy_disk_migration_v1__"]);
+
+        cleanupState();
+
+        // The suite import into SQLite runs once. A later adapter
+        // initialization does not re-read or re-import the suite domain.
+        [suite setObject:@"imported" forKey:nsKey(kSuiteImportedKey)];
+        {
+            IOSStorageAdapterCpp firstLaunch;
+            assert(NitroStorage::sqliteDiskStoreHasKeyForTesting(kSuiteImportedKey));
+        }
+        [suite setObject:@"late" forKey:nsKey(kSuiteLateKey)];
+        NitroStorage::resetSharedSqliteDiskStoreForTesting();
+        {
+            IOSStorageAdapterCpp secondLaunch;
+            assert(!NitroStorage::sqliteDiskStoreHasKeyForTesting(kSuiteLateKey));
+            assert(NitroStorage::sqliteDiskStoreHasKeyForTesting(kSuiteImportedKey));
+            assert([[suite stringForKey:nsKey(kSuiteImportedKey)] isEqualToString:@"imported"]);
+            assert(secondLaunch.getDisk(kSuiteLateKey).value() == "late");
+        }
 
         cleanupState();
         IOSStorageAdapterCpp adapter;
