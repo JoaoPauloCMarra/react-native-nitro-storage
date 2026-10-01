@@ -21,11 +21,23 @@ std::mutex& sharedMutex() {
     return mutex;
 }
 
+const char* storageErrorTag(int code) {
+    switch (code & 0xff) {
+        case SQLITE_FULL:
+            return "[nitro-error:storage_full] ";
+        case SQLITE_CORRUPT:
+        case SQLITE_NOTADB:
+            return "[nitro-error:storage_corruption] ";
+        default:
+            return "";
+    }
+}
+
 [[noreturn]] void throwSqlite(sqlite3* db, const char* operation, int code) {
     const char* message = db != nullptr ? sqlite3_errmsg(db) : sqlite3_errstr(code);
     throw std::runtime_error(
-        std::string("NitroStorage: Disk SQLite ") + operation + " failed: " +
-        (message != nullptr ? message : "unknown error")
+        std::string(storageErrorTag(code)) + "NitroStorage: Disk SQLite " + operation +
+        " failed: " + (message != nullptr ? message : "unknown error")
     );
 }
 
@@ -172,15 +184,15 @@ void SqliteDiskStore::closeLocked() {
 }
 
 void SqliteDiskStore::execLocked(const char* sql) {
-    char* error = nullptr;
-    const int rc = sqlite3_exec(db_, sql, nullptr, nullptr, &error);
+    const int rc = sqlite3_exec(db_, sql, nullptr, nullptr, nullptr);
     if (rc != SQLITE_OK) {
-        const std::string message = error != nullptr ? error : "unknown error";
-        sqlite3_free(error);
-        throw std::runtime_error(
-            std::string("NitroStorage: Disk SQLite exec failed: ") + message
-        );
+        throwSqlite(db_, "exec", rc);
     }
+}
+
+void SqliteDiskStore::limitPageCountForTesting(int pages) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    execLocked(("PRAGMA max_page_count=" + std::to_string(pages) + ";").c_str());
 }
 
 void SqliteDiskStore::beginLocked() {

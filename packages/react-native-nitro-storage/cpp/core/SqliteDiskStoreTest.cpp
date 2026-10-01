@@ -4,6 +4,7 @@
 #include <dirent.h>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <string>
 #include <unistd.h>
@@ -50,6 +51,69 @@ void testConstructorReleasesConnectionWhenOpenFails(const std::string& path) {
     std::filesystem::remove(corruptPath);
     std::filesystem::remove(corruptPath + "-wal");
     std::filesystem::remove(corruptPath + "-shm");
+}
+
+std::string failureMessage(const std::function<void()>& operation) {
+    try {
+        operation();
+    } catch (const std::exception& error) {
+        return error.what();
+    }
+    return "";
+}
+
+bool startsWith(const std::string& message, const std::string& prefix) {
+    return message.compare(0, prefix.size(), prefix) == 0;
+}
+
+void testCorruptDatabaseReportsStorageCorruption(const std::string& path) {
+    const std::string corruptPath = path + ".not-a-database";
+    {
+        std::ofstream file(corruptPath, std::ios::binary);
+        file << std::string(8192, 'x');
+    }
+    const std::string message = failureMessage([&] {
+        SqliteDiskStore store(corruptPath);
+    });
+    assert(startsWith(message, "[nitro-error:storage_corruption] NitroStorage: Disk SQLite "));
+    std::filesystem::remove(corruptPath);
+    std::filesystem::remove(corruptPath + "-wal");
+    std::filesystem::remove(corruptPath + "-shm");
+}
+
+void testFullDatabaseReportsStorageFull(const std::string& path) {
+    const std::string fullPath = path + ".full";
+    {
+        SqliteDiskStore store(fullPath);
+        store.set("kept", "value");
+        store.limitPageCountForTesting(1);
+        const std::string oversized(1 << 20, 'x');
+
+        const std::string setMessage = failureMessage([&] {
+            store.set("oversized", oversized);
+        });
+        assert(startsWith(
+            setMessage,
+            "[nitro-error:storage_full] NitroStorage: Disk SQLite set failed: "
+        ));
+
+        const std::string batchMessage = failureMessage([&] {
+            store.setBatch({"small", "oversized"}, {"1", oversized});
+        });
+        assert(startsWith(
+            batchMessage,
+            "[nitro-error:storage_full] NitroStorage: Disk SQLite set failed: "
+        ));
+
+        assert(store.get("kept").value() == "value");
+        assert(!store.has("oversized"));
+        assert(!store.has("small"));
+        store.remove("kept");
+        assert(!store.has("kept"));
+    }
+    std::filesystem::remove(fullPath);
+    std::filesystem::remove(fullPath + "-wal");
+    std::filesystem::remove(fullPath + "-shm");
 }
 
 } // namespace
@@ -166,6 +230,8 @@ int main() {
     }
 
     testConstructorReleasesConnectionWhenOpenFails(path);
+    testCorruptDatabaseReportsStorageCorruption(path);
+    testFullDatabaseReportsStorageFull(path);
 
     std::filesystem::remove(path);
     std::filesystem::remove(path + "-wal");

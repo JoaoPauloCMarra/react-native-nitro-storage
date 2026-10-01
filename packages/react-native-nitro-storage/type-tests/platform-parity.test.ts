@@ -103,3 +103,6 @@ type TestingMatchesNativeExports = Assert<
 type InvalidKeyIsAStorageErrorCode = Assert<
   "invalid_key" extends import("../src").StorageErrorCode ? true : false
 >;
+type StorageFullIsAStorageErrorCode = Assert<
+  "storage_full" extends import("../src").StorageErrorCode ? true : false
+>;

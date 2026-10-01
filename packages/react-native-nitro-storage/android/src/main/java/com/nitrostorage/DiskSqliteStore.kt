@@ -9,21 +9,25 @@ internal class DiskSqliteStore(
     context: Context,
     private val legacyPreferences: SharedPreferences,
 ) {
-    private val db: SQLiteDatabase
+    private val db: SQLiteDatabase =
+        SQLiteDatabase.openOrCreateDatabase(File(context.filesDir, DATABASE_NAME), null)
 
     init {
-        val file = File(context.filesDir, DATABASE_NAME)
-        db = SQLiteDatabase.openOrCreateDatabase(file, null)
-        // PRAGMA journal_mode returns a row; Android forbids result-bearing SQL on execSQL.
-        db.rawQuery("PRAGMA journal_mode=WAL", null).close()
-        db.execSQL("PRAGMA synchronous=NORMAL")
-        db.execSQL(
-            "CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)",
-        )
-        db.execSQL(
-            "CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY NOT NULL, v TEXT NOT NULL)",
-        )
-        migrateLegacyPreferences()
+        try {
+            // PRAGMA journal_mode returns a row; Android forbids result-bearing SQL on execSQL.
+            db.rawQuery("PRAGMA journal_mode=WAL", null).close()
+            db.execSQL("PRAGMA synchronous=NORMAL")
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)",
+            )
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY NOT NULL, v TEXT NOT NULL)",
+            )
+            migrateLegacyPreferences()
+        } catch (e: Exception) {
+            db.close()
+            throw e
+        }
     }
 
     @Synchronized

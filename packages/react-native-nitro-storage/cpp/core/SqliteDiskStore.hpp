@@ -44,6 +44,7 @@ public:
         const std::string& name,
         const std::vector<std::pair<std::string, std::string>>& entries
     );
+    void limitPageCountForTesting(int pages);
 
 private:
     void openLocked();

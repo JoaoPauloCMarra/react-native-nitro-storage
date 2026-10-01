@@ -3,6 +3,7 @@ export type StorageErrorCode =
   | "authentication_required"
   | "key_invalidated"
   | "storage_corruption"
+  | "storage_full"
   | "storage_compensation_failed"
   | "biometric_unavailable"
   | "unsupported"
@@ -63,6 +64,7 @@ const STORAGE_ERROR_CODES = new Set<StorageErrorCode>([
   "authentication_required",
   "key_invalidated",
   "storage_corruption",
+  "storage_full",
   "storage_compensation_failed",
   "biometric_unavailable",
   "unsupported",
