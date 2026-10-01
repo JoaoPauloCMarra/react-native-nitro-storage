@@ -1,10 +1,16 @@
 #import "IOSStorageAdapterCpp.hpp"
 #import <Foundation/Foundation.h>
 
+#include "SqliteDiskStore.hpp"
+
+#include <sqlite3.h>
+
 #include <algorithm>
 #include <cassert>
 #include <fstream>
+#include <functional>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -57,6 +63,260 @@ void cleanupState() {
 
 void runFirstDiskOperation(IOSStorageAdapterCpp& adapter) {
     assert(!adapter.hasDisk(kProbeKey));
+}
+
+std::string failureMessage(const std::function<void()>& operation) {
+    try {
+        operation();
+    } catch (const std::exception& error) {
+        return error.what();
+    }
+    return "";
+}
+
+bool startsWith(const std::string& value, const std::string& prefix) {
+    return value.compare(0, prefix.size(), prefix) == 0;
+}
+
+std::vector<std::function<void()>> diskOperations(IOSStorageAdapterCpp& adapter) {
+    return {
+        [&] { adapter.setDisk("k", "v"); },
+        [&] { (void)adapter.getDisk("k"); },
+        [&] { adapter.deleteDisk("k"); },
+        [&] { (void)adapter.hasDisk("k"); },
+        [&] { (void)adapter.getAllKeysDisk(); },
+        [&] { (void)adapter.getKeysByPrefixDisk("k"); },
+        [&] { (void)adapter.sizeDisk(); },
+        [&] { adapter.setDiskBatch({"k"}, {"v"}); },
+        [&] { (void)adapter.getDiskBatch({"k"}); },
+        [&] { adapter.deleteDiskBatch({"k"}); },
+    };
+}
+
+std::string fileContents(const std::string& path) {
+    std::ifstream file(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+}
+
+void testCorruptDiskIsReportedOnEveryCallAndRecoveredOnlyByClear() {
+    cleanupState();
+    const std::string tag = "[nitro-error:storage_corruption] NitroStorage: Disk SQLite ";
+    const std::string diskPath = NitroStorage::diskStorePathForTesting();
+    const std::string garbage(8192, 'x');
+    for (const char* suffix : {"", "-wal", "-shm"}) {
+        std::ofstream corrupt(diskPath + suffix, std::ios::binary | std::ios::trunc);
+        corrupt << garbage;
+    }
+    NSUserDefaults* suite = [[NSUserDefaults alloc] initWithSuiteName:@"com.nitrostorage.disk"];
+    [suite setObject:@"imported" forKey:nsKey(kSuiteImportedKey)];
+
+    IOSStorageAdapterCpp adapter;
+    for (int round = 0; round < 2; ++round) {
+        for (const auto& operation : diskOperations(adapter)) {
+            assert(startsWith(failureMessage(operation), tag));
+        }
+    }
+    assert(fileContents(diskPath) == garbage);
+
+    adapter.clearDisk();
+    assert(adapter.sizeDisk() == 0);
+    assert(!adapter.getDisk(kSuiteImportedKey).has_value());
+    assert([suite objectForKey:nsKey(kSuiteImportedKey)] == nil);
+    adapter.setDisk("k", "v");
+    assert(adapter.getDisk("k").value() == "v");
+    NitroStorage::resetSharedSqliteDiskStoreForTesting();
+    IOSStorageAdapterCpp nextLaunch;
+    assert(nextLaunch.getDisk("k").value() == "v");
+    assert(nextLaunch.sizeDisk() == 1);
+
+    nextLaunch.setDiskBatch({"a", "b", "c"}, {"1", "2", "3"});
+    NitroStorage::resetSharedSqliteDiskStoreForTesting();
+    {
+        const std::string contents = fileContents(diskPath);
+        assert(contents.size() >= 3 * 4096);
+        std::fstream file(diskPath, std::ios::binary | std::ios::in | std::ios::out);
+        file.seekp(4096);
+        file << std::string(contents.size() - 4096, 'x');
+    }
+    IOSStorageAdapterCpp corruptedLater;
+    assert(startsWith(failureMessage([&] { (void)corruptedLater.getDisk("a"); }), tag));
+    assert(startsWith(failureMessage([&] { corruptedLater.setDisk("a", "x"); }), tag));
+    corruptedLater.clearDisk();
+    assert(corruptedLater.sizeDisk() == 0);
+    corruptedLater.setDisk("after", "ok");
+    assert(corruptedLater.getDisk("after").value() == "ok");
+    corruptedLater.clearDisk();
+    assert(corruptedLater.sizeDisk() == 0);
+}
+
+void testClearOnAFullDatabaseRecreatesItAndFreesSpace() {
+    cleanupState();
+    const std::string diskPath = NitroStorage::diskStorePathForTesting();
+    NSUserDefaults* suite = [[NSUserDefaults alloc] initWithSuiteName:@"com.nitrostorage.disk"];
+    {
+        IOSStorageAdapterCpp writer;
+        std::vector<std::string> keys;
+        for (int index = 0; index < 200; ++index) {
+            keys.push_back("bulk-" + std::to_string(index));
+        }
+        writer.setDiskBatch(keys, std::vector<std::string>(keys.size(), std::string(4000, 'b')));
+    }
+    NitroStorage::resetSharedSqliteDiskStoreForTesting();
+    sqlite3* raw = nullptr;
+    assert(sqlite3_open_v2(diskPath.c_str(), &raw, SQLITE_OPEN_READWRITE, nullptr) == SQLITE_OK);
+    assert(sqlite3_exec(
+        raw,
+        "CREATE TRIGGER grow_on_delete BEFORE DELETE ON kv BEGIN "
+        "INSERT OR REPLACE INTO kv(key, value) VALUES('grow', hex(zeroblob(1048576))); END;",
+        nullptr, nullptr, nullptr
+    ) == SQLITE_OK);
+    sqlite3_close(raw);
+    const size_t sizeBefore = fileContents(diskPath).size();
+    assert(sizeBefore > 500000);
+
+    IOSStorageAdapterCpp adapter;
+    assert(adapter.sizeDisk() == 200);
+    [suite setObject:@"late" forKey:nsKey(kSuiteLateKey)];
+    auto& store = NitroStorage::SqliteDiskStore::shared(diskPath);
+    store.limitPageCountForTesting(1);
+    assert(startsWith(
+        failureMessage([&] { store.clear(); }),
+        "[nitro-error:storage_full] NitroStorage: Disk SQLite clear failed: "
+    ));
+    assert(adapter.sizeDisk() == 201);
+
+    adapter.clearDisk();
+
+    assert(adapter.sizeDisk() == 0);
+    assert([suite objectForKey:nsKey(kSuiteLateKey)] == nil);
+    adapter.setDisk("after", std::string(8192, 'a'));
+    assert(adapter.getDisk("after").value().size() == 8192);
+    NitroStorage::resetSharedSqliteDiskStoreForTesting();
+    assert(fileContents(diskPath).size() < sizeBefore / 4);
+    IOSStorageAdapterCpp nextLaunch;
+    assert(nextLaunch.sizeDisk() == 1);
+}
+
+void testInvalidUtf8KeysAreRejectedBeforeTheDatabaseIsTouched() {
+    cleanupState();
+    IOSStorageAdapterCpp adapter;
+    const std::string invalid("bad-\xff\xfe", 6);
+    const std::string expected = "NitroStorage: String is not valid UTF-8";
+    auto& store = NitroStorage::SqliteDiskStore::shared(NitroStorage::diskStorePathForTesting());
+
+    assert(failureMessage([&] { adapter.setDisk(invalid, "v"); }) == expected);
+    assert(!store.has(invalid));
+    assert(failureMessage([&] { adapter.setDiskBatch({"valid", invalid}, {"1", "2"}); }) == expected);
+    assert(!store.has("valid") && !store.has(invalid));
+
+    store.set(invalid, "stored-directly");
+    adapter.setDisk("valid", "1");
+    assert(failureMessage([&] { adapter.deleteDisk(invalid); }) == expected);
+    assert(store.has(invalid));
+    assert(failureMessage([&] { adapter.deleteDiskBatch({"valid", invalid}); }) == expected);
+    assert(store.has("valid") && store.has(invalid));
+    adapter.setDisk("valid-key", invalid);
+    assert(adapter.getDisk("valid-key").value() == invalid);
+    store.remove(invalid);
+}
+
+std::vector<std::string> sorted(std::vector<std::string> values) {
+    std::sort(values.begin(), values.end());
+    return values;
+}
+
+void assertSizeAndPrefixQueriesMatchFullEnumeration(IOSStorageAdapterCpp& adapter) {
+    const auto all = adapter.getAllKeysDisk();
+    assert(adapter.sizeDisk() == all.size());
+    std::vector<std::string> prefixes = {
+        "", "n", "nitro", "nitro-storage-ut-", "nitro-storage-ut-suite", "sqlite", "sqlite:", "SQLITE", "%", "_",
+        "\\", "missing", "caf\xc3\xa9", "\xf0", "\xff", "\xc3", std::string("nul\0", 4), std::string("\0", 1),
+    };
+    for (const auto& key : all) {
+        prefixes.push_back(key);
+        prefixes.push_back(key.substr(0, key.size() / 2));
+    }
+    for (const auto& prefix : prefixes) {
+        std::vector<std::string> expected;
+        for (const auto& key : all) {
+            if (key.rfind(prefix, 0) == 0) {
+                expected.push_back(key);
+            }
+        }
+        assert(sorted(adapter.getKeysByPrefixDisk(prefix)) == sorted(expected));
+    }
+}
+
+void testSizeAndPrefixQueriesMatchFullEnumerationInEveryLegacyState() {
+    cleanupState();
+    NSUserDefaults* suite = [[NSUserDefaults alloc] initWithSuiteName:@"com.nitrostorage.disk"];
+    NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
+    IOSStorageAdapterCpp adapter;
+    assertSizeAndPrefixQueriesMatchFullEnumeration(adapter);
+
+    const std::string nulKey("nul\0key", 7);
+    adapter.setDiskBatch(
+        {"sqlite:a", "sqlite:b", "SQLITE:a", "sqlite%", "sqlite_", "caf\xc3\xa9:1", nulKey, "", "\xf0\x9f\x98\x80"},
+        {"1", "2", "3", "4", "5", "6", "7", "8", "9"}
+    );
+    assertSizeAndPrefixQueriesMatchFullEnumeration(adapter);
+
+    [suite setObject:@"late" forKey:nsKey(kSuiteLateKey)];
+    [suite setObject:@"duplicate" forKey:@"sqlite:a"];
+    [suite setObject:@123 forKey:@"nitro-storage-ut-suite-number"];
+    assertSizeAndPrefixQueriesMatchFullEnumeration(adapter);
+
+    [standard setObject:@"legacy" forKey:nsKey(kLegacyHasKey)];
+    assert(adapter.hasDisk(kLegacyHasKey));
+    [standard setObject:@"shadowed" forKey:@"sqlite:b"];
+    assert(adapter.hasDisk("sqlite:b"));
+    [standard setObject:@"host" forKey:nsKey(kHostKey)];
+    assertSizeAndPrefixQueriesMatchFullEnumeration(adapter);
+
+    adapter.deleteDisk("sqlite:a");
+    adapter.setDisk(kSuiteLateKey, "now-in-sqlite");
+    assertSizeAndPrefixQueriesMatchFullEnumeration(adapter);
+
+    adapter.clearDisk();
+    assert(adapter.sizeDisk() == 0);
+    assertSizeAndPrefixQueriesMatchFullEnumeration(adapter);
+    [standard removeObjectForKey:@"sqlite:b"];
+}
+
+void testFullDiskErrorsKeepTheirTagAndLegacyReadsStillWork() {
+    cleanupState();
+    NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
+    const std::string tag = "[nitro-error:storage_full] NitroStorage: Disk SQLite ";
+    const std::string oversized(1 << 20, 'x');
+    IOSStorageAdapterCpp adapter;
+    adapter.setDisk("kept", "value");
+    NitroStorage::SqliteDiskStore::shared(NitroStorage::diskStorePathForTesting())
+        .limitPageCountForTesting(1);
+
+    [standard setObject:@"legacy-value" forKey:nsKey(kLegacyKey)];
+    assert(startsWith(failureMessage([&] { adapter.setDisk(kLegacyKey, oversized); }), tag));
+    assert([[standard stringForKey:nsKey(kLegacyKey)] isEqualToString:@"legacy-value"]);
+    assert(startsWith(
+        failureMessage([&] { adapter.setDiskBatch({"batch", kLegacyKey}, {"1", oversized}); }),
+        tag
+    ));
+    assert(!NitroStorage::sqliteDiskStoreHasKeyForTesting("batch"));
+    assert([[standard stringForKey:nsKey(kLegacyKey)] isEqualToString:@"legacy-value"]);
+
+    NSString* legacyLarge = [@"" stringByPaddingToLength:(1 << 20) withString:@"y" startingAtIndex:0];
+    [standard setObject:legacyLarge forKey:nsKey(kLegacyGetKey)];
+    std::optional<std::string> legacyRead;
+    assert(failureMessage([&] { legacyRead = adapter.getDisk(kLegacyGetKey); }).empty());
+    assert(legacyRead.value() == std::string(1 << 20, 'y'));
+    assert(adapter.getDiskBatch({kLegacyGetKey})[0].value() == std::string(1 << 20, 'y'));
+
+    assert(adapter.getDisk("kept").value() == "value");
+    assert(adapter.hasDisk("kept"));
+    assert(containsKey(adapter.getAllKeysDisk(), "kept"));
+    adapter.deleteDisk("kept");
+    assert(!adapter.hasDisk("kept"));
+    adapter.clearDisk();
+    assert(adapter.sizeDisk() == 0);
 }
 
 } // namespace
@@ -266,6 +526,12 @@ int main() {
         assert(nulMigrated.getDisk(nulKey).value() == nulValue);
         nulMigrated.deleteDisk(nulKey);
         assert([[standard stringForKey:nsKey(kHostKey)] isEqualToString:@"host-value"]);
+
+        testCorruptDiskIsReportedOnEveryCallAndRecoveredOnlyByClear();
+        testClearOnAFullDatabaseRecreatesItAndFreesSpace();
+        testInvalidUtf8KeysAreRejectedBeforeTheDatabaseIsTouched();
+        testSizeAndPrefixQueriesMatchFullEnumerationInEveryLegacyState();
+        testFullDiskErrorsKeepTheirTagAndLegacyReadsStillWork();
 
         cleanupState();
         std::cout << "IOSStorageAdapterCpp disk-scoping tests passed." << std::endl;

@@ -147,9 +147,39 @@ const hybridSpecFile = path.join(
   "HybridStorageSpec.cpp",
 );
 const hybridOutputFile = path.join(buildDir, "hybrid_storage_test");
+const hybridFailureTestFile = path.join(
+  cppDir,
+  "bindings",
+  "HybridStorageFailureTest.cpp",
+);
+const hybridFailureOutputFile = path.join(
+  buildDir,
+  "hybrid_storage_failure_test",
+);
 const sqliteStoreSource = path.join(cppDir, "core", "SqliteDiskStore.cpp");
+const iosAdapterSourceFile = path.join(
+  __dirname,
+  "..",
+  "ios",
+  "IOSStorageAdapterCpp.mm",
+);
+const SQLITE_THRESHOLDS = {
+  lines: 90,
+  functions: 90,
+  regions: 85,
+  branches: 80,
+};
 const sqliteStoreTestFile = path.join(cppDir, "core", "SqliteDiskStoreTest.cpp");
 const sqliteOutputFile = path.join(buildDir, "sqlite_disk_store_test");
+const sqliteFailureTestFile = path.join(
+  cppDir,
+  "core",
+  "SqliteDiskStoreFailureTest.cpp",
+);
+const sqliteFailureOutputFile = path.join(
+  buildDir,
+  "sqlite_disk_store_failure_test",
+);
 
 console.log("⚙️  Compiling...");
 
@@ -237,69 +267,40 @@ function runIosAdapterTest(binaryPath, baseEnv) {
   }
 }
 
-function runCoverage(hybridOutputFile) {
-  const hybridProfile = path.join(buildDir, "hybrid.profraw");
-  const mergedProfile = path.join(buildDir, "coverage.profdata");
-  const exportFile = path.join(buildDir, "coverage-summary.json");
-  const profdata = resolveLlvmTool("llvm-profdata");
-  const cov = resolveLlvmTool("llvm-cov");
-  const sourceFiles = [
-    path.join(cppDir, "core", "NativeStorageAdapter.hpp"),
-    path.join(cppDir, "bindings", "HybridStorage.cpp"),
-    path.join(cppDir, "bindings", "HybridStorage.hpp"),
-  ];
-
-    runCommand(hybridOutputFile, [], {
-    env: { ...process.env, LLVM_PROFILE_FILE: hybridProfile },
-  });
-    runCommand(sqliteOutputFile, [], {
-    env: {
-      ...sanitizerRuntimeEnv(),
-      LLVM_PROFILE_FILE: path.join(buildDir, "sqlite.profraw"),
-    },
-  });
-
-  runCommand(profdata, [
-    "merge",
-    "-sparse",
-    hybridProfile,
-    "-o",
-    mergedProfile,
-  ]);
-
+function reportCoverage(cov, objects, profile, sourceFiles) {
+  const objectArgs = objects.flatMap((object, index) =>
+    index === 0 ? [object] : ["-object", object],
+  );
   runCommand(cov, [
     "report",
-    hybridOutputFile,
-    `-instr-profile=${mergedProfile}`,
+    ...objectArgs,
+    `-instr-profile=${profile}`,
     ...sourceFiles,
   ]);
   const exportSummary = execFileSync(
     cov,
     [
       "export",
-      hybridOutputFile,
-      `-instr-profile=${mergedProfile}`,
+      ...objectArgs,
+      `-instr-profile=${profile}`,
       "-summary-only",
       ...sourceFiles,
     ],
     { encoding: "utf8" },
   );
-  fs.writeFileSync(exportFile, exportSummary);
+  const totals = JSON.parse(exportSummary).data[0].totals;
+  return {
+    exportSummary,
+    actual: {
+      lines: totals.lines.percent,
+      functions: totals.functions.percent,
+      regions: totals.regions.percent,
+      branches: totals.branches.percent,
+    },
+  };
+}
 
-  const summary = JSON.parse(fs.readFileSync(exportFile, "utf8"));
-  const totals = summary.data[0].totals;
-  const thresholds = {
-    lines: 90,
-    functions: 90,
-    regions: 85,
-    branches: 85,
-  };
-  const actual = {
-    lines: totals.lines.percent,
-    functions: totals.functions.percent,
-    regions: totals.regions.percent,
-    branches: totals.branches.percent,
-  };
+function assertCoverage(label, actual, thresholds) {
   const failures = Object.entries(thresholds).filter(
     ([metric, threshold]) => actual[metric] < threshold,
   );
@@ -307,19 +308,86 @@ function runCoverage(hybridOutputFile) {
   if (failures.length > 0) {
     failures.forEach(([metric, threshold]) => {
       console.error(
-        `❌ C++ ${metric} coverage ${actual[metric].toFixed(2)}% is below ${threshold}%`,
+        `❌ ${label} ${metric} coverage ${actual[metric].toFixed(2)}% is below ${threshold}%`,
       );
     });
     process.exit(1);
   }
 
   console.log(
-    `✅ C++ coverage passed: lines ${actual.lines.toFixed(2)}%, functions ${actual.functions.toFixed(2)}%, regions ${actual.regions.toFixed(2)}%, branches ${actual.branches.toFixed(2)}%`,
+    `✅ ${label} coverage passed: lines ${actual.lines.toFixed(2)}%, functions ${actual.functions.toFixed(2)}%, regions ${actual.regions.toFixed(2)}%, branches ${actual.branches.toFixed(2)}%`,
   );
 }
 
+function runCoverage(binaries) {
+  const profdata = resolveLlvmTool("llvm-profdata");
+  const cov = resolveLlvmTool("llvm-cov");
+
+  binaries.forEach((binary) => {
+    binary.profile = path.join(buildDir, `${binary.name}.profraw`);
+    const env = { ...process.env, LLVM_PROFILE_FILE: binary.profile };
+    if (binary.isolatedHome) {
+      runIosAdapterTest(binary.output, env);
+    } else {
+      runCommand(binary.output, [], { env });
+    }
+  });
+
+  const merge = (group, output) => {
+    const members = binaries.filter((binary) => binary.groups.includes(group));
+    runCommand(profdata, [
+      "merge",
+      "-sparse",
+      ...members.map((binary) => binary.profile),
+      "-o",
+      output,
+    ]);
+    return members.map((binary) => binary.output);
+  };
+
+  const hybridProfile = path.join(buildDir, "coverage.profdata");
+  const hybridObjects = merge("hybrid", hybridProfile);
+  const hybrid = reportCoverage(cov, hybridObjects, hybridProfile, [
+    path.join(cppDir, "core", "NativeStorageAdapter.hpp"),
+    path.join(cppDir, "bindings", "HybridStorage.cpp"),
+    path.join(cppDir, "bindings", "HybridStorage.hpp"),
+  ]);
+  fs.writeFileSync(
+    path.join(buildDir, "coverage-summary.json"),
+    hybrid.exportSummary,
+  );
+  assertCoverage("C++", hybrid.actual, {
+    lines: 90,
+    functions: 90,
+    regions: 85,
+    branches: 85,
+  });
+
+  const sqliteProfile = path.join(buildDir, "coverage-sqlite.profdata");
+  const sqliteObjects = merge("sqlite", sqliteProfile);
+  const sqlite = reportCoverage(cov, sqliteObjects, sqliteProfile, [
+    sqliteStoreSource,
+  ]);
+  fs.writeFileSync(
+    path.join(buildDir, "coverage-sqlite-summary.json"),
+    sqlite.exportSummary,
+  );
+  assertCoverage("SqliteDiskStore", sqlite.actual, SQLITE_THRESHOLDS);
+
+  const iosObjects = binaries.filter((binary) => binary.groups.includes("ios"));
+  if (iosObjects.length > 0) {
+    const iosProfile = path.join(buildDir, "coverage-ios.profdata");
+    const ios = reportCoverage(cov, merge("ios", iosProfile), iosProfile, [
+      iosAdapterSourceFile,
+    ]);
+    console.log(
+      `ℹ️  IOSStorageAdapterCpp coverage (not gated): lines ${ios.actual.lines.toFixed(2)}%, branches ${ios.actual.branches.toFixed(2)}%`,
+    );
+  }
+}
+
 try {
-  const compileHybridArgs = [
+  const hybridArgs = (testFile, outputFile) => [
     ...commonFlags,
     "-DNITRO_STORAGE_DISABLE_PLATFORM_ADAPTER",
     "-DNITRO_STORAGE_USE_ORDERED_MAP_FOR_TESTS",
@@ -328,89 +396,118 @@ try {
     `-I${includeRoot}`,
     `-I${reactNativeJsiDir}`,
     `-I${path.join(__dirname, "..", "nitrogen", "generated", "shared", "c++")}`,
-    hybridTestFile,
+    testFile,
     hybridSourceFile,
     hybridSpecFile,
     "-o",
-    hybridOutputFile,
+    outputFile,
     ...linkFlags,
   ];
-  runCommand("clang++", compileHybridArgs);
-
-  const compileSqliteArgs = [
+  const sqliteArgs = (testFile, outputFile) => [
     ...commonFlags,
     `-I${path.join(cppDir, "core")}`,
-    sqliteStoreTestFile,
+    testFile,
     sqliteStoreSource,
     "-lsqlite3",
     "-o",
-    sqliteOutputFile,
+    outputFile,
     ...linkFlags,
   ];
-  runCommand("clang++", compileSqliteArgs);
+  const iosAdapterArgs = (testFile, outputFile) => [
+    ...commonFlags,
+    "-fobjc-arc",
+    "-DNITRO_STORAGE_TESTING",
+    `-I${path.join(cppDir, "core")}`,
+    `-I${path.join(__dirname, "..", "ios")}`,
+    testFile,
+    iosAdapterSourceFile,
+    sqliteStoreSource,
+    "-lsqlite3",
+    "-framework",
+    "Foundation",
+    "-framework",
+    "Security",
+    "-framework",
+    "LocalAuthentication",
+    "-o",
+    outputFile,
+    ...linkFlags,
+  ];
 
-  let iosAdapterOutputFile = null;
+  const binaries = [
+    {
+      name: "hybrid",
+      output: hybridOutputFile,
+      args: hybridArgs(hybridTestFile, hybridOutputFile),
+      groups: ["hybrid"],
+    },
+    {
+      name: "hybrid-failure",
+      output: hybridFailureOutputFile,
+      args: hybridArgs(hybridFailureTestFile, hybridFailureOutputFile),
+      groups: ["hybrid"],
+    },
+    {
+      name: "sqlite",
+      output: sqliteOutputFile,
+      args: sqliteArgs(sqliteStoreTestFile, sqliteOutputFile),
+      groups: ["sqlite"],
+    },
+    {
+      name: "sqlite-failure",
+      output: sqliteFailureOutputFile,
+      args: sqliteArgs(sqliteFailureTestFile, sqliteFailureOutputFile),
+      groups: ["sqlite"],
+    },
+  ];
   if (process.platform === "darwin") {
-    const iosAdapterTestFile = path.join(
-      __dirname,
-      "..",
-      "ios",
-      "IOSStorageAdapterTest.mm",
+    const iosDir = path.join(__dirname, "..", "ios");
+    const iosAdapterOutputFile = path.join(buildDir, "ios_adapter_test");
+    const iosKeychainOutputFile = path.join(
+      buildDir,
+      "ios_adapter_keychain_test",
     );
-    const iosAdapterSourceFile = path.join(
-      __dirname,
-      "..",
-      "ios",
-      "IOSStorageAdapterCpp.mm",
+    binaries.push(
+      {
+        name: "ios-adapter",
+        output: iosAdapterOutputFile,
+        args: iosAdapterArgs(
+          path.join(iosDir, "IOSStorageAdapterTest.mm"),
+          iosAdapterOutputFile,
+        ),
+        groups: ["ios"],
+        isolatedHome: true,
+      },
+      {
+        name: "ios-adapter-keychain",
+        output: iosKeychainOutputFile,
+        args: iosAdapterArgs(
+          path.join(iosDir, "IOSStorageAdapterKeychainTest.mm"),
+          iosKeychainOutputFile,
+        ),
+        groups: ["ios"],
+        isolatedHome: true,
+      },
     );
-    iosAdapterOutputFile = path.join(buildDir, "ios_adapter_test");
-    const compileIosAdapterArgs = [
-      ...commonFlags,
-      "-fobjc-arc",
-      "-DNITRO_STORAGE_TESTING",
-      `-I${path.join(cppDir, "core")}`,
-      `-I${path.join(__dirname, "..", "ios")}`,
-      iosAdapterTestFile,
-      iosAdapterSourceFile,
-      sqliteStoreSource,
-      "-lsqlite3",
-      "-framework",
-      "Foundation",
-      "-framework",
-      "Security",
-      "-framework",
-      "LocalAuthentication",
-      "-o",
-      iosAdapterOutputFile,
-      ...linkFlags,
-    ];
-    runCommand("clang++", compileIosAdapterArgs);
   }
 
-  signDarwinBinary(hybridOutputFile);
-  signDarwinBinary(sqliteOutputFile);
-  if (iosAdapterOutputFile) {
-    signDarwinBinary(iosAdapterOutputFile);
-  }
+  binaries.forEach((binary) => runCommand("clang++", binary.args));
+  binaries.forEach((binary) => signDarwinBinary(binary.output));
 
   console.log("✅ Compilation successful.");
   console.log("🚀 Running tests...");
 
   if (coverageEnabled) {
-    runCoverage(hybridOutputFile);
-    if (iosAdapterOutputFile) {
-      runIosAdapterTest(iosAdapterOutputFile, {
-        ...sanitizerRuntimeEnv(),
-        LLVM_PROFILE_FILE: path.join(buildDir, "ios-adapter.profraw"),
-      });
-    }
+    runCoverage(binaries);
   } else {
     const sanitizerEnv = sanitizerRuntimeEnv();
-    runCommand(hybridOutputFile, [], { env: sanitizerEnv });
-    runCommand(sqliteOutputFile, [], { env: sanitizerEnv });
-    if (iosAdapterOutputFile) {
-      runIosAdapterTest(iosAdapterOutputFile, sanitizerEnv);
-    }
+    binaries.forEach((binary) => {
+      if (binary.isolatedHome) {
+        runIosAdapterTest(binary.output, sanitizerEnv);
+      } else {
+        runCommand(binary.output, [], { env: sanitizerEnv });
+      }
+    });
   }
   console.log("✅ C++ tests passed!");
 } catch (error) {
