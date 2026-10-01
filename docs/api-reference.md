@@ -276,17 +276,17 @@ the native or web adapter. `isStorageError(error, code)` matches one exact code
 without parsing platform message text. See [secure-storage.md](secure-storage.md)
 for recovery semantics.
 
-| Code                          | Raised when                                                                                                                                           |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `keychain_locked`             | The protected store is locked.                                                                                                                        |
-| `authentication_required`     | The item needs user authentication, or the user cancelled the prompt.                                                                                 |
-| `key_invalidated`             | The protecting key was invalidated, for example by a biometric enrolment change.                                                                      |
-| `biometric_unavailable`       | The requested biometric level is not available on this device or OS version.                                                                          |
-| `storage_corruption`          | Stored secure data could not be decrypted, the Disk database is corrupt, or (Android) the Secure master key or store cannot be created. Do not retry. |
-| `storage_compensation_failed` | A multi-step write failed and restoring the previous state also failed.                                                                               |
-| `unsupported`                 | The operation is not available on this platform or environment.                                                                                       |
-| `storage_full`                | The device or database is out of space, or the web storage quota is exceeded. Free space before retrying.                                             |
-| `invalid_key`                 | A storage key is empty.                                                                                                                               |
+| Code                          | Raised when                                                                                                                                         |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `keychain_locked`             | The protected store is locked.                                                                                                                      |
+| `authentication_required`     | The item needs user authentication, or the user cancelled the prompt.                                                                               |
+| `key_invalidated`             | The protecting key was invalidated, for example by a biometric enrolment change.                                                                    |
+| `biometric_unavailable`       | The requested biometric level is not available on this device or OS version.                                                                        |
+| `storage_corruption`          | Stored secure data could not be decoded, the Disk database is corrupt, or (Android) the Secure master key or store cannot be created. Do not retry. |
+| `storage_compensation_failed` | A multi-step write failed and restoring the previous state also failed.                                                                             |
+| `unsupported`                 | The operation is not available on this platform or environment.                                                                                     |
+| `storage_full`                | The device or database is out of space, or the web storage quota is exceeded. Free space before retrying.                                           |
+| `invalid_key`                 | A storage key is empty.                                                                                                                             |
 
 `StorageCompositeError` and `StorageCompensationError` describe errors that
 carry a primary failure plus secondary failures from reconciliation or
