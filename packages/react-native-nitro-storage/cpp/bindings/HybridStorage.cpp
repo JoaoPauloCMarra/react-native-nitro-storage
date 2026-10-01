@@ -434,6 +434,7 @@ void HybridStorage::removeBatch(const std::vector<std::string>& keys, double sco
 }
 
 void HybridStorage::removeByPrefix(const std::string& prefix, double scope) {
+    toScope(scope);
     if (prefix.empty()) {
         return;
     }
@@ -462,17 +463,23 @@ void HybridStorage::setSecureAccessControl(double level) {
         throw std::runtime_error("NitroStorage: Invalid access control level");
     }
     ensureAdapter();
-    nativeAdapter_->setSecureAccessControl(intLevel);
+    runAdapterOperation(
+        [&] { nativeAdapter_->setSecureAccessControl(intLevel); },
+        "Secure access control");
 }
 
 void HybridStorage::setSecureWritesAsync(bool enabled) {
     ensureAdapter();
-    nativeAdapter_->setSecureWritesAsync(enabled);
+    runAdapterOperation(
+        [&] { nativeAdapter_->setSecureWritesAsync(enabled); },
+        "Secure write mode");
 }
 
 void HybridStorage::setKeychainAccessGroup(const std::string& group) {
     ensureAdapter();
-    nativeAdapter_->setKeychainAccessGroup(group);
+    runAdapterOperation(
+        [&] { nativeAdapter_->setKeychainAccessGroup(group); },
+        "Keychain access group");
 }
 
 // --- Biometric ---
@@ -517,7 +524,8 @@ void HybridStorage::deleteSecureBiometric(const std::string& key) {
 
 bool HybridStorage::hasSecureBiometric(const std::string& key) {
     ensureAdapter();
-    return nativeAdapter_->hasSecureBiometric(key);
+    return runAdapterOperation(
+        [&] { return nativeAdapter_->hasSecureBiometric(key); }, "Biometric has");
 }
 
 void HybridStorage::clearSecureBiometric() {

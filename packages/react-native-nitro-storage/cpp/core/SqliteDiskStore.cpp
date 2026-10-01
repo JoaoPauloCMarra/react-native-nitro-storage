@@ -3,10 +3,12 @@
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <stdexcept>
+#include <system_error>
 
 namespace NitroStorage {
 namespace {
@@ -21,13 +23,19 @@ std::mutex& sharedMutex() {
     return mutex;
 }
 
-const char* storageErrorTag(int code) {
+const char* storageErrorTag(sqlite3* db, int code) {
     switch (code & 0xff) {
         case SQLITE_FULL:
             return "[nitro-error:storage_full] ";
         case SQLITE_CORRUPT:
         case SQLITE_NOTADB:
             return "[nitro-error:storage_corruption] ";
+        case SQLITE_IOERR: {
+            const int systemError = db != nullptr ? sqlite3_system_errno(db) : 0;
+            return systemError == ENOSPC || systemError == EDQUOT
+                ? "[nitro-error:storage_full] "
+                : "";
+        }
         default:
             return "";
     }
@@ -36,21 +44,22 @@ const char* storageErrorTag(int code) {
 [[noreturn]] void throwSqlite(sqlite3* db, const char* operation, int code) {
     const char* message = db != nullptr ? sqlite3_errmsg(db) : sqlite3_errstr(code);
     throw std::runtime_error(
-        std::string(storageErrorTag(code)) + "NitroStorage: Disk SQLite " + operation +
+        std::string(storageErrorTag(db, code)) + "NitroStorage: Disk SQLite " + operation +
         " failed: " + (message != nullptr ? message : "unknown error")
     );
 }
 
 void bindText(sqlite3_stmt* stmt, int index, const std::string& value) {
-    const int rc = sqlite3_bind_text(
+    const int rc = sqlite3_bind_text64(
         stmt,
         index,
         value.data(),
-        static_cast<int>(value.size()),
-        SQLITE_TRANSIENT
+        static_cast<sqlite3_uint64>(value.size()),
+        SQLITE_TRANSIENT,
+        SQLITE_UTF8
     );
     if (rc != SQLITE_OK) {
-        throw std::runtime_error("NitroStorage: Disk SQLite bind failed");
+        throwSqlite(sqlite3_db_handle(stmt), "bind", rc);
     }
 }
 
@@ -69,16 +78,23 @@ std::string escapeLikePrefix(const std::string& prefix) {
     return escaped;
 }
 
+std::optional<std::string> prefixUpperBound(const std::string& prefix) {
+    std::string upper = prefix;
+    while (!upper.empty() && static_cast<unsigned char>(upper.back()) == 0xFF) {
+        upper.pop_back();
+    }
+    if (upper.empty()) {
+        return std::nullopt;
+    }
+    upper.back() = static_cast<char>(static_cast<unsigned char>(upper.back()) + 1);
+    return upper;
+}
+
 } // namespace
 
 SqliteDiskStore::SqliteDiskStore(std::string path) : path_(std::move(path)) {
     std::lock_guard<std::mutex> lock(mutex_);
-    try {
-        openLocked();
-    } catch (...) {
-        closeLocked();
-        throw;
-    }
+    reopenLocked();
 }
 
 SqliteDiskStore::~SqliteDiskStore() {
@@ -93,6 +109,98 @@ SqliteDiskStore& SqliteDiskStore::shared(const std::string& path) {
         store = std::make_unique<SqliteDiskStore>(path);
     }
     return *store;
+}
+
+bool SqliteDiskStore::isValidUtf8(const std::string& value) {
+    const auto* bytes = reinterpret_cast<const unsigned char*>(value.data());
+    const size_t size = value.size();
+    size_t index = 0;
+    while (index < size) {
+        const unsigned char lead = bytes[index];
+        size_t length = 0;
+        unsigned int minimum = 0;
+        unsigned int codePoint = 0;
+        if (lead < 0x80) {
+            index += 1;
+            continue;
+        } else if ((lead & 0xE0) == 0xC0) {
+            length = 2;
+            minimum = 0x80;
+            codePoint = lead & 0x1Fu;
+        } else if ((lead & 0xF0) == 0xE0) {
+            length = 3;
+            minimum = 0x800;
+            codePoint = lead & 0x0Fu;
+        } else if ((lead & 0xF8) == 0xF0) {
+            length = 4;
+            minimum = 0x10000;
+            codePoint = lead & 0x07u;
+        } else {
+            return false;
+        }
+        if (size - index < length) {
+            return false;
+        }
+        for (size_t offset = 1; offset < length; ++offset) {
+            const unsigned char continuation = bytes[index + offset];
+            if ((continuation & 0xC0) != 0x80) {
+                return false;
+            }
+            codePoint = (codePoint << 6) | (continuation & 0x3Fu);
+        }
+        if (codePoint < minimum || codePoint > 0x10FFFF || (codePoint >= 0xD800 && codePoint <= 0xDFFF)) {
+            return false;
+        }
+        index += length;
+    }
+    return true;
+}
+
+void SqliteDiskStore::recreateShared(const std::string& path) {
+    std::lock_guard<std::mutex> lock(sharedMutex());
+    auto& store = sharedStore();
+    if (store && store->path() == path) {
+        store->recreate();
+        return;
+    }
+    store.reset();
+    removeDatabaseFiles(path);
+    store = std::make_unique<SqliteDiskStore>(path);
+}
+
+void SqliteDiskStore::removeDatabaseFiles(const std::string& path) {
+    for (const char* suffix : {"", "-wal", "-shm", "-journal"}) {
+        std::error_code error;
+        std::filesystem::remove(path + suffix, error);
+        if (error) {
+            throw std::runtime_error(
+                "NitroStorage: Disk SQLite clear failed: cannot delete the database file: " +
+                error.message()
+            );
+        }
+    }
+}
+
+void SqliteDiskStore::recreate() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    closeLocked();
+    removeDatabaseFiles(path_);
+    reopenLocked();
+}
+
+void SqliteDiskStore::reopenLocked() {
+    try {
+        openLocked();
+    } catch (...) {
+        closeLocked();
+        throw;
+    }
+}
+
+void SqliteDiskStore::ensureOpenLocked() {
+    if (db_ == nullptr) {
+        reopenLocked();
+    }
 }
 
 void SqliteDiskStore::resetShared() {
@@ -121,17 +229,22 @@ void SqliteDiskStore::openLocked() {
     const int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;
     const int openRc = sqlite3_open_v2(path_.c_str(), &db, flags, nullptr);
     if (openRc != SQLITE_OK) {
-        const int code = openRc;
-        if (db != nullptr) {
-            sqlite3_close(db);
+        try {
+            throwSqlite(db, "open", openRc);
+        } catch (...) {
+            if (db != nullptr) {
+                sqlite3_close(db);
+            }
+            throw;
         }
-        throwSqlite(nullptr, "open", code);
     }
     db_ = db;
     sqlite3_busy_timeout(db_, 5000);
     execLocked("PRAGMA journal_mode=WAL;");
     execLocked("PRAGMA synchronous=NORMAL;");
     execLocked("PRAGMA temp_store=MEMORY;");
+    execLocked("PRAGMA wal_autocheckpoint=1000;");
+    execLocked("PRAGMA journal_size_limit=32768;");
     execLocked(
         "CREATE TABLE IF NOT EXISTS kv ("
         "key TEXT PRIMARY KEY NOT NULL,"
@@ -149,7 +262,9 @@ void SqliteDiskStore::openLocked() {
     removeStmt_ = prepareLocked("DELETE FROM kv WHERE key = ?1;");
     hasStmt_ = prepareLocked("SELECT 1 FROM kv WHERE key = ?1 LIMIT 1;");
     keysStmt_ = prepareLocked("SELECT key FROM kv;");
-    prefixStmt_ = prepareLocked("SELECT key FROM kv WHERE key LIKE ?1 ESCAPE '\\';");
+    prefixRangeStmt_ = prepareLocked("SELECT key FROM kv WHERE key >= ?1 AND key < ?2;");
+    prefixFromStmt_ = prepareLocked("SELECT key FROM kv WHERE key >= ?1;");
+    prefixLikeStmt_ = prepareLocked("SELECT key FROM kv WHERE key LIKE ?1 ESCAPE '\\';");
     sizeStmt_ = prepareLocked("SELECT COUNT(*) FROM kv;");
     clearStmt_ = prepareLocked("DELETE FROM kv;");
     insertAbsentStmt_ = prepareLocked(
@@ -171,7 +286,9 @@ void SqliteDiskStore::closeLocked() {
     finalize(removeStmt_);
     finalize(hasStmt_);
     finalize(keysStmt_);
-    finalize(prefixStmt_);
+    finalize(prefixRangeStmt_);
+    finalize(prefixFromStmt_);
+    finalize(prefixLikeStmt_);
     finalize(sizeStmt_);
     finalize(clearStmt_);
     finalize(insertAbsentStmt_);
@@ -192,7 +309,14 @@ void SqliteDiskStore::execLocked(const char* sql) {
 
 void SqliteDiskStore::limitPageCountForTesting(int pages) {
     std::lock_guard<std::mutex> lock(mutex_);
+    ensureOpenLocked();
     execLocked(("PRAGMA max_page_count=" + std::to_string(pages) + ";").c_str());
+}
+
+void SqliteDiskStore::limitValueLengthForTesting(int bytes) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ensureOpenLocked();
+    sqlite3_limit(db_, SQLITE_LIMIT_LENGTH, bytes);
 }
 
 void SqliteDiskStore::beginLocked() {
@@ -264,21 +388,25 @@ void SqliteDiskStore::removeLocked(const std::string& key) {
 
 void SqliteDiskStore::set(const std::string& key, const std::string& value) {
     std::lock_guard<std::mutex> lock(mutex_);
+    ensureOpenLocked();
     setLocked(key, value);
 }
 
 std::optional<std::string> SqliteDiskStore::get(const std::string& key) {
     std::lock_guard<std::mutex> lock(mutex_);
+    ensureOpenLocked();
     return getLocked(key);
 }
 
 void SqliteDiskStore::remove(const std::string& key) {
     std::lock_guard<std::mutex> lock(mutex_);
+    ensureOpenLocked();
     removeLocked(key);
 }
 
 bool SqliteDiskStore::has(const std::string& key) {
     std::lock_guard<std::mutex> lock(mutex_);
+    ensureOpenLocked();
     sqlite3_reset(hasStmt_);
     sqlite3_clear_bindings(hasStmt_);
     bindText(hasStmt_, 1, key);
@@ -298,6 +426,7 @@ void SqliteDiskStore::setBatch(
     const std::vector<std::string>& values
 ) {
     std::lock_guard<std::mutex> lock(mutex_);
+    ensureOpenLocked();
     beginLocked();
     try {
         const size_t count = std::min(keys.size(), values.size());
@@ -315,6 +444,7 @@ std::vector<std::optional<std::string>> SqliteDiskStore::getBatch(
     const std::vector<std::string>& keys
 ) {
     std::lock_guard<std::mutex> lock(mutex_);
+    ensureOpenLocked();
     std::vector<std::optional<std::string>> results;
     results.reserve(keys.size());
     for (const auto& key : keys) {
@@ -325,6 +455,7 @@ std::vector<std::optional<std::string>> SqliteDiskStore::getBatch(
 
 void SqliteDiskStore::removeBatch(const std::vector<std::string>& keys) {
     std::lock_guard<std::mutex> lock(mutex_);
+    ensureOpenLocked();
     beginLocked();
     try {
         for (const auto& key : keys) {
@@ -339,6 +470,7 @@ void SqliteDiskStore::removeBatch(const std::vector<std::string>& keys) {
 
 std::vector<std::string> SqliteDiskStore::getAllKeys() {
     std::lock_guard<std::mutex> lock(mutex_);
+    ensureOpenLocked();
     sqlite3_reset(keysStmt_);
     std::vector<std::string> keys;
     while (true) {
@@ -363,21 +495,30 @@ std::vector<std::string> SqliteDiskStore::getAllKeys() {
 
 std::vector<std::string> SqliteDiskStore::getKeysByPrefix(const std::string& prefix) {
     std::lock_guard<std::mutex> lock(mutex_);
-    sqlite3_reset(prefixStmt_);
-    sqlite3_clear_bindings(prefixStmt_);
-    bindText(prefixStmt_, 1, escapeLikePrefix(prefix));
+    ensureOpenLocked();
+    const bool useRange = isValidUtf8(prefix);
+    const auto upperBound = useRange ? prefixUpperBound(prefix) : std::nullopt;
+    sqlite3_stmt* stmt = !useRange
+        ? prefixLikeStmt_
+        : upperBound.has_value() ? prefixRangeStmt_ : prefixFromStmt_;
+    sqlite3_reset(stmt);
+    sqlite3_clear_bindings(stmt);
+    bindText(stmt, 1, useRange ? prefix : escapeLikePrefix(prefix));
+    if (upperBound.has_value()) {
+        bindText(stmt, 2, *upperBound);
+    }
     std::vector<std::string> keys;
     while (true) {
-        const int rc = sqlite3_step(prefixStmt_);
+        const int rc = sqlite3_step(stmt);
         if (rc == SQLITE_DONE) {
             break;
         }
         if (rc != SQLITE_ROW) {
-            sqlite3_reset(prefixStmt_);
+            sqlite3_reset(stmt);
             throwSqlite(db_, "getKeysByPrefix", rc);
         }
-        const unsigned char* text = sqlite3_column_text(prefixStmt_, 0);
-        const int bytes = sqlite3_column_bytes(prefixStmt_, 0);
+        const unsigned char* text = sqlite3_column_text(stmt, 0);
+        const int bytes = sqlite3_column_bytes(stmt, 0);
         std::string key(
             text != nullptr ? reinterpret_cast<const char*>(text) : "",
             static_cast<size_t>(bytes)
@@ -386,12 +527,13 @@ std::vector<std::string> SqliteDiskStore::getKeysByPrefix(const std::string& pre
             keys.push_back(std::move(key));
         }
     }
-    sqlite3_reset(prefixStmt_);
+    sqlite3_reset(stmt);
     return keys;
 }
 
 size_t SqliteDiskStore::size() {
     std::lock_guard<std::mutex> lock(mutex_);
+    ensureOpenLocked();
     sqlite3_reset(sizeStmt_);
     const int rc = sqlite3_step(sizeStmt_);
     if (rc != SQLITE_ROW) {
@@ -405,6 +547,7 @@ size_t SqliteDiskStore::size() {
 
 void SqliteDiskStore::clear() {
     std::lock_guard<std::mutex> lock(mutex_);
+    ensureOpenLocked();
     sqlite3_reset(clearStmt_);
     const int rc = sqlite3_step(clearStmt_);
     sqlite3_reset(clearStmt_);
@@ -463,6 +606,7 @@ void SqliteDiskStore::migrateIfAbsent(
         return;
     }
     std::lock_guard<std::mutex> lock(mutex_);
+    ensureOpenLocked();
     beginLocked();
     try {
         insertAbsentLocked(entries);
@@ -475,6 +619,7 @@ void SqliteDiskStore::migrateIfAbsent(
 
 bool SqliteDiskStore::hasMigrationMarker(const std::string& name) {
     std::lock_guard<std::mutex> lock(mutex_);
+    ensureOpenLocked();
     return hasMigrationMarkerLocked(name);
 }
 
@@ -483,6 +628,7 @@ void SqliteDiskStore::migrateOnce(
     const std::vector<std::pair<std::string, std::string>>& entries
 ) {
     std::lock_guard<std::mutex> lock(mutex_);
+    ensureOpenLocked();
     beginLocked();
     try {
         if (hasMigrationMarkerLocked(name)) {

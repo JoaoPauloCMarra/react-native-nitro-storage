@@ -574,8 +574,9 @@ export function createStorageCore(
     operation: StorageChangeOperation,
     source: StorageChangeSource,
     changes: StorageKeyChangeEvent[],
+    emitWhenEmpty = false,
   ): void {
-    if (changes.length === 0) {
+    if (changes.length === 0 && !emitWhenEmpty) {
       return;
     }
 
@@ -1024,9 +1025,18 @@ export function createStorageCore(
         return;
       }
       measureOperation("storage:clear", scope, () => {
-        const previousValues = shouldReadPreviousEventValues(scope)
-          ? storage.getAll(scope)
-          : {};
+        let previousValues: Record<string, string> = {};
+        let previousValuesUnreadable = false;
+        if (shouldReadPreviousEventValues(scope)) {
+          try {
+            previousValues = storage.getAll(scope);
+          } catch (error) {
+            if (scope !== StorageScope.Disk) {
+              throw error;
+            }
+            previousValuesUnreadable = true;
+          }
+        }
         if (scope === StorageScope.Memory) {
           memoryStore.clear();
           memoryExpirationDeadlines.clear();
@@ -1049,9 +1059,15 @@ export function createStorageCore(
           return;
         }
 
+        let diskFlushFailed = false;
         if (scope === StorageScope.Disk) {
-          flushDiskWrites();
-          durability.clearAllPendingDiskWrites();
+          try {
+            flushDiskWrites();
+            durability.clearAllPendingDiskWrites();
+          } catch {
+            diskFlushFailed = true;
+            previousValuesUnreadable = shouldReadPreviousEventValues(scope);
+          }
         }
 
         if (scope === StorageScope.Secure) {
@@ -1061,6 +1077,9 @@ export function createStorageCore(
 
         clearScopeRawCache(scope);
         adapter.backend.clear(scope);
+        if (diskFlushFailed) {
+          durability.clearAllPendingDiskWrites();
+        }
         emitBatchChange(
           scope,
           "clear",
@@ -1075,6 +1094,7 @@ export function createStorageCore(
               adapter.changeSource,
             ),
           ),
+          previousValuesUnreadable,
         );
       });
     },
