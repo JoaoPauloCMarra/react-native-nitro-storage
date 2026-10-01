@@ -20,7 +20,10 @@ public:
 
     static SqliteDiskStore& shared(const std::string& path);
     static void resetShared();
+    static void recreateShared(const std::string& path);
+    static void removeDatabaseFiles(const std::string& path);
     static std::string defaultPath();
+    static bool isValidUtf8(const std::string& value);
 
     const std::string& path() const { return path_; }
 
@@ -44,10 +47,14 @@ public:
         const std::string& name,
         const std::vector<std::pair<std::string, std::string>>& entries
     );
+    void recreate();
     void limitPageCountForTesting(int pages);
+    void limitValueLengthForTesting(int bytes);
 
 private:
     void openLocked();
+    void reopenLocked();
+    void ensureOpenLocked();
     void closeLocked();
     void execLocked(const char* sql);
     void beginLocked();
@@ -68,7 +75,9 @@ private:
     sqlite3_stmt* removeStmt_ = nullptr;
     sqlite3_stmt* hasStmt_ = nullptr;
     sqlite3_stmt* keysStmt_ = nullptr;
-    sqlite3_stmt* prefixStmt_ = nullptr;
+    sqlite3_stmt* prefixRangeStmt_ = nullptr;
+    sqlite3_stmt* prefixFromStmt_ = nullptr;
+    sqlite3_stmt* prefixLikeStmt_ = nullptr;
     sqlite3_stmt* sizeStmt_ = nullptr;
     sqlite3_stmt* clearStmt_ = nullptr;
     sqlite3_stmt* insertAbsentStmt_ = nullptr;

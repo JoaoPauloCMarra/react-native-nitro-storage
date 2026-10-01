@@ -62,6 +62,7 @@ const forbiddenPatterns = [
   /^cpp\/build\//,
   /^android\/build\//,
   /^android\/\.cxx\//,
+  /^android\/src\/test\//,
   /^apps\/example\/(?:android|ios)\//,
   /(?:^|\/)\.env(?:\.|$)/,
   /(?:^|\/)npm-debug\.log$/,

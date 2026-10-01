@@ -1,4 +1,5 @@
 #include "AndroidStorageAdapterCpp.hpp"
+#include "JniSize.hpp"
 
 #include <limits>
 #include <stdexcept>
@@ -13,11 +14,8 @@ namespace {
 local_ref<JString> toJavaString(const std::string& value) {
     // fbjni's std::string overload uses c_str(), which truncates embedded NUL.
     if (value.find('\0') == std::string::npos) return make_jstring(value);
-    if (value.size() > static_cast<size_t>(std::numeric_limits<jsize>::max())) {
-        throw std::length_error("Storage string exceeds the Java array limit");
-    }
-    const auto size = static_cast<jsize>(value.size());
-    auto bytes = JArrayByte::newArray(size);
+    const jsize size = toJniSize(value.size(), "Storage string exceeds the Java array limit");
+    auto bytes = JArrayByte::newArray(value.size());
     bytes->setRegion(0, size, reinterpret_cast<const jbyte*>(value.data()));
     static auto constructor = JString::javaClassStatic()->getConstructor<
         jstring(jbyteArray, jstring)>();
@@ -26,10 +24,11 @@ local_ref<JString> toJavaString(const std::string& value) {
 }
 
 local_ref<JavaStringArray> toJavaStringArray(const std::vector<std::string>& values) {
-    auto javaArray = JavaStringArray::newArray(static_cast<jsize>(values.size()));
+    toJniSize(values.size(), "Storage batch exceeds the Java array limit");
+    auto javaArray = JavaStringArray::newArray(values.size());
     for (size_t i = 0; i < values.size(); ++i) {
         auto javaValue = toJavaString(values[i]);
-        javaArray->setElement(static_cast<jsize>(i), javaValue.get());
+        javaArray->setElement(i, javaValue.get());
     }
     return javaArray;
 }
@@ -38,9 +37,9 @@ std::vector<std::optional<std::string>> fromNullableJavaStringArray(alias_ref<Ja
     std::vector<std::optional<std::string>> parsedValues;
     if (!values) return parsedValues;
 
-    const jsize size = static_cast<jsize>(values->size());
+    const size_t size = values->size();
     parsedValues.reserve(size);
-    for (jsize i = 0; i < size; ++i) {
+    for (size_t i = 0; i < size; ++i) {
         auto currentValue = values->getElement(i);
         if (!currentValue) {
             parsedValues.push_back(std::nullopt);
@@ -53,10 +52,10 @@ std::vector<std::optional<std::string>> fromNullableJavaStringArray(alias_ref<Ja
 
 std::vector<std::string> fromJavaStringArray(alias_ref<JavaStringArray> values) {
     if (!values) return {};
-    const jsize size = values->size();
+    const size_t size = values->size();
     std::vector<std::string> result;
     result.reserve(size);
-    for (jsize i = 0; i < size; ++i) {
+    for (size_t i = 0; i < size; ++i) {
         auto currentValue = values->getElement(i);
         // Null entries are dropped so a missing key can never surface as the
         // empty-string clear sentinel used by change listeners.
@@ -115,7 +114,7 @@ std::vector<std::string> AndroidStorageAdapterCpp::getKeysByPrefixDisk(const std
 
 size_t AndroidStorageAdapterCpp::sizeDisk() {
     static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<jint()>("sizeDisk");
-    return static_cast<size_t>(method(AndroidStorageAdapterJava::javaClassStatic()));
+    return fromJniSize(method(AndroidStorageAdapterJava::javaClassStatic()));
 }
 
 void AndroidStorageAdapterCpp::setDiskBatch(
@@ -199,7 +198,7 @@ std::vector<std::string> AndroidStorageAdapterCpp::getKeysByPrefixSecure(const s
 
 size_t AndroidStorageAdapterCpp::sizeSecure() {
     static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<jint()>("sizeSecure");
-    return static_cast<size_t>(method(AndroidStorageAdapterJava::javaClassStatic()));
+    return fromJniSize(method(AndroidStorageAdapterJava::javaClassStatic()));
 }
 
 void AndroidStorageAdapterCpp::setSecureBatch(

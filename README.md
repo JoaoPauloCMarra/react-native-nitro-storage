@@ -91,7 +91,7 @@ before installing this package, then rebuild the native app so the generated
 Nitro bindings and native runtime use the same major-minor version:
 
 ```sh
-bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.12.0
+bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.13.0
 bunx expo prebuild
 ```
 
@@ -752,17 +752,17 @@ Native and web adapters tag classified failures with stable error codes. Use
 Errors never swallow the underlying cause silently: the original platform
 message is preserved on the error for diagnostics.
 
-| Code                          | Meaning                                                                                                                                               |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `keychain_locked`             | The protected store is locked. Retry after the device unlocks.                                                                                        |
-| `authentication_required`     | The item needs user authentication, or the user cancelled the prompt.                                                                                 |
-| `key_invalidated`             | The protecting key was invalidated, for example by a biometric enrolment change.                                                                      |
-| `biometric_unavailable`       | The requested biometric level is not available on this device or OS version.                                                                          |
-| `storage_corruption`          | Stored secure data could not be decrypted, the Disk database is corrupt, or (Android) the Secure master key or store cannot be created. Do not retry. |
-| `storage_compensation_failed` | A multi-step write failed and restoring the previous state also failed.                                                                               |
-| `unsupported`                 | The operation is not available on this platform or environment.                                                                                       |
-| `storage_full`                | The device or database is out of space, or the web storage quota is exceeded. Free space before retrying.                                             |
-| `invalid_key`                 | The storage key is empty. Keys must be non-empty strings.                                                                                             |
+| Code                          | Meaning                                                                                                                                             |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `keychain_locked`             | The protected store is locked. Retry after the device unlocks.                                                                                      |
+| `authentication_required`     | The item needs user authentication, or the user cancelled the prompt.                                                                               |
+| `key_invalidated`             | The protecting key was invalidated, for example by a biometric enrolment change.                                                                    |
+| `biometric_unavailable`       | The requested biometric level is not available on this device or OS version.                                                                        |
+| `storage_corruption`          | Stored secure data could not be decoded, the Disk database is corrupt, or (Android) the Secure master key or store cannot be created. Do not retry. |
+| `storage_compensation_failed` | A multi-step write failed and restoring the previous state also failed.                                                                             |
+| `unsupported`                 | The operation is not available on this platform or environment.                                                                                     |
+| `storage_full`                | The device or database is out of space, or the web storage quota is exceeded. Free space before retrying.                                           |
+| `invalid_key`                 | The storage key is empty. Keys must be non-empty strings.                                                                                           |
 
 Invalid scopes and non-finite numeric levels are rejected with untagged errors
 before they reach native storage.
@@ -787,6 +787,44 @@ function saveDraft(draft: string): "saved" | "storage_full" {
   }
 }
 ```
+
+A full device does not block cleanup. `storage.clear(StorageScope.Disk)`
+deletes and recreates the Disk database when a normal delete fails with
+`storage_full`, which frees the space the database used. `remove` and
+`removeBatch` can still fail with `storage_full`, because a delete also writes
+to the database log.
+
+A corrupt Disk database is never deleted automatically. Every Disk call fails
+with `storage_corruption` until the app clears Disk storage:
+
+```ts
+import {
+  isStorageError,
+  storage,
+  StorageScope,
+} from "react-native-nitro-storage";
+
+function readDraft(): string | undefined {
+  try {
+    return storage.getString("draft", StorageScope.Disk);
+  } catch (error) {
+    if (!isStorageError(error, "storage_corruption")) throw error;
+    storage.clear(StorageScope.Disk);
+    return undefined;
+  }
+}
+```
+
+`storage.clear(StorageScope.Disk)` and `storage.clearAll()` are the recovery
+calls. `clear` with `except`, namespace clears, and `removeByPrefix` read keys
+first and fail on a corrupt database. A `clear` batch event with an empty
+`changes` array means every key in that scope was removed and the previous
+values could not be read; treat all keys in the scope as deleted.
+
+On Android, Disk values above 512 KiB are read in 512 KiB chunks, and read
+time grows faster than value size (about 30 ms for 5 MiB and 265 ms for 20 MiB
+in a host measurement; devices are slower). Keep single Disk values below about
+5 MiB.
 
 ## Platform Support
 

@@ -83,4 +83,9 @@ dependencies {
   implementation "com.facebook.react:react-native:+"
   implementation "androidx.security:security-crypto:1.1.0"
   implementation project(":react-native-nitro-modules")
+
+  if (file("src/test").exists()) {
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.robolectric:robolectric:4.13"
+  }
 }

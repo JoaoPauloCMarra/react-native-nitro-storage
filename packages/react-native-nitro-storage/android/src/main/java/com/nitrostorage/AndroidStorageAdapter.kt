@@ -4,9 +4,11 @@ package com.nitrostorage
 
 import android.content.Context
 import android.database.sqlite.SQLiteDatabaseCorruptException
+import android.database.sqlite.SQLiteDiskIOException
 import android.database.sqlite.SQLiteException
 import android.database.sqlite.SQLiteFullException
 import android.os.Build
+import android.os.StatFs
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
@@ -20,7 +22,7 @@ import java.security.KeyStore
 import java.security.KeyStoreException
 import javax.crypto.AEADBadTagException
 
-private fun Throwable.hasCause(type: Class<*>): Boolean {
+internal fun Throwable.hasCause(type: Class<*>): Boolean {
     var current: Throwable? = this
     while (current != null) {
         if (type.isInstance(current)) return true
@@ -29,7 +31,7 @@ private fun Throwable.hasCause(type: Class<*>): Boolean {
     return false
 }
 
-private fun Throwable.storageErrorCode(): String? {
+internal fun Throwable.storageErrorCode(): String? {
     val taggedCode = message
         ?.let { Regex("\\[nitro-error:([a-z_]+)]").find(it)?.groupValues?.get(1) }
     if (taggedCode == "storage_compensation_failed") {
@@ -47,7 +49,34 @@ private fun Throwable.storageErrorCode(): String? {
     }
 }
 
-private fun Throwable.wrapStorageException(
+internal const val OUT_OF_SPACE_USABLE_BYTES = 1L shl 20
+
+private val sqliteExtendedCodePattern = Regex("\\(code (\\d+)")
+private const val SQLITE_IOERR_READ = 266
+private const val SQLITE_IOERR_SHORT_READ = 522
+
+internal fun isOutOfSpaceFailure(error: Throwable, usableBytes: Long): Boolean {
+    var current: Throwable? = error
+    while (current != null && current !is SQLiteDiskIOException) {
+        current = current.cause
+    }
+    val ioError = current ?: return false
+    val extendedCode = ioError.message
+        ?.let { sqliteExtendedCodePattern.find(it)?.groupValues?.get(1)?.toIntOrNull() }
+        ?: return false
+    if (extendedCode == SQLITE_IOERR_READ || extendedCode == SQLITE_IOERR_SHORT_READ) {
+        return false
+    }
+    return usableBytes in 0 until OUT_OF_SPACE_USABLE_BYTES
+}
+
+internal fun isRecoverableByRecreate(error: Throwable): Boolean {
+    val message = error.message ?: return false
+    return message.startsWith("[nitro-error:storage_corruption] NitroStorage: Disk SQLite ") ||
+        message.startsWith("[nitro-error:storage_full] NitroStorage: Disk SQLite ")
+}
+
+internal fun Throwable.wrapStorageException(
     defaultMessage: String,
     defaultCode: String? = null,
 ): RuntimeException {
@@ -66,8 +95,34 @@ private fun Throwable.wrapStorageException(
 class AndroidStorageAdapter private constructor(private val context: Context) {
     private val sharedPreferences: SharedPreferences =
         context.getSharedPreferences("NitroStorage", Context.MODE_PRIVATE)
-    private val diskStore: DiskSqliteStore by lazy {
-        DiskSqliteStore(context, sharedPreferences)
+    private val diskStoreLock = Any()
+    private var openDiskStore: DiskSqliteStore? = null
+    private val diskStore: DiskSqliteStore
+        get() = synchronized(diskStoreLock) {
+            openDiskStore ?: DiskSqliteStore(context, sharedPreferences, diskDatabaseOpener)
+                .also { openDiskStore = it }
+        }
+
+    private fun recreateDiskStore() {
+        synchronized(diskStoreLock) {
+            openDiskStore?.let { store -> runCatching { store.close() } }
+            openDiskStore = null
+            DiskSqliteStore.deleteDatabaseFiles(context)
+            sharedPreferences.edit().clear().commit()
+            openDiskStore = DiskSqliteStore(context, sharedPreferences, diskDatabaseOpener)
+        }
+    }
+
+    private fun diskFullCodeFor(error: Throwable): String? {
+        if (!error.hasCause(SQLiteDiskIOException::class.java)) {
+            return null
+        }
+        val usableBytes = try {
+            StatFs(context.filesDir.path).availableBytes
+        } catch (statError: IllegalArgumentException) {
+            return null
+        }
+        return if (isOutOfSpaceFailure(error, usableBytes)) "storage_full" else null
     }
 
     private val masterKeyAlias = "${context.packageName}.nitro_storage.master_key"
@@ -549,6 +604,9 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         @Volatile
         private var instance: AndroidStorageAdapter? = null
 
+        @Volatile
+        internal var diskDatabaseOpener: DiskDatabaseOpener = ::openDiskDatabase
+
         private fun getInstanceOrThrow(): AndroidStorageAdapter {
             return instance ?: throw IllegalStateException(
                 "NitroStorage not initialized. Call AndroidStorageAdapter.init(this) in your MainApplication.onCreate(), " +
@@ -585,8 +643,22 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         ): T {
             val instance = getInstanceOrThrow()
             try {
-                return instance.diskStore.block()
+                val store = instance.diskStore
+                return try {
+                    store.block()
+                } catch (closed: IllegalStateException) {
+                    val current = instance.diskStore
+                    if (current === store) {
+                        throw closed
+                    }
+                    current.block()
+                }
             } catch (e: SQLiteException) {
+                throw e.wrapStorageException(
+                    "NitroStorage: Disk SQLite $operation failed: ${e.message}",
+                    instance.diskFullCodeFor(e),
+                )
+            } catch (e: IllegalStateException) {
                 throw e.wrapStorageException(
                     "NitroStorage: Disk SQLite $operation failed: ${e.message}",
                 )
@@ -645,7 +717,22 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
 
         @JvmStatic
         fun clearDisk() {
-            diskOperation("clear") { clear() }
+            try {
+                diskOperation("clear") { clear() }
+            } catch (e: RuntimeException) {
+                if (!isRecoverableByRecreate(e)) {
+                    throw e
+                }
+                val instance = getInstanceOrThrow()
+                try {
+                    instance.recreateDiskStore()
+                } catch (recreateError: SQLiteException) {
+                    throw recreateError.wrapStorageException(
+                        "NitroStorage: Disk SQLite clear failed: ${recreateError.message}",
+                        instance.diskFullCodeFor(recreateError),
+                    )
+                }
+            }
         }
 
         // --- Secure (async apply by default, sync commit when requested) ---

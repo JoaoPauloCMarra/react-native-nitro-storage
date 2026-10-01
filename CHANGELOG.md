@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes are always listed first in each release section.
 
+## [0.13.0] - 2026-10-01
+
+### Breaking changes
+
+- **Android no longer deletes a corrupt Disk database.** In 0.12.0, Android replaced a corrupt Disk database with an empty one when it opened. Now the file is kept and every Disk call fails with `storage_corruption`, as on iOS, until the app calls `storage.clear(StorageScope.Disk)` or `storage.clearAll()`. Migration: catch `storage_corruption` on Disk calls and call `storage.clear(StorageScope.Disk)` when the app can continue without the stored data.
+- **iOS reports undecodable Secure data as `storage_corruption`.** Reading a Secure or biometric item whose Keychain data is empty or is not UTF-8 text failed with an untagged `failed with status 0` error. It now fails with the `storage_corruption` code. The item can still be deleted or replaced. Migration: handle `storage_corruption` on Secure reads if you matched the old message.
+
+### Added
+
+- `storage.clear(StorageScope.Disk)` and `storage.clearAll()` recover a corrupt Disk database on iOS and Android: they delete the database and its journal files and create an empty store. `clear` with `except`, namespace clears, and `removeByPrefix` need to read keys and still fail on a corrupt database.
+- `storage.clear(StorageScope.Disk)` works on a full device. When the delete fails with `storage_full`, the database is deleted and created again, which frees its space.
+
+### Changed
+
+- Android Disk uses SQLite WAL. 0.12.0 documented WAL but did not enable it. An existing database converts on first open and keeps its rows. If the conversion cannot run, for example on a full device, the database opens without WAL so reads keep working, and the next launch tries again. With WAL and `synchronous=NORMAL`, a power loss can drop the most recent commits; an app kill cannot. This matches iOS.
+- `getKeysByPrefix` on Disk uses the key index instead of reading every key, on iOS and Android. On iOS, `size(StorageScope.Disk)` no longer builds the full key list. Results are unchanged.
+
+### Fixed
+
+- `storage.clear(StorageScope.Disk)` no longer fails before it reaches native storage when a Disk listener or event observer is registered and the stored values cannot be read, or when pending async Disk writes cannot be flushed. The pending writes are dropped and listeners receive a `clear` batch with no key changes.
+- Android: `setBatch`, `removeBatch`, and the first-launch import report a full Disk database with the `storage_full` code. They used to fail with an untagged `cannot rollback` error.
+- Android: Disk values larger than 2 MiB can be read. They could be written but not read.
+- Android: a Disk I/O error that occurs with less than 1 MiB of free space carries the `storage_full` code. Read errors do not.
+- iOS: Disk I/O errors caused by a full device or an exceeded quota carry the `storage_full` code, including while the database opens.
+- iOS: a Disk read of a legacy value that is not yet migrated no longer fails when the Disk database is full.
+- iOS: `clearSecureBiometric` reports an unavailable Keychain with the `keychain_locked` code.
+- iOS: the Disk WAL file is truncated after checkpoints on every SQLite build.
+- iOS: a Disk key that is not valid UTF-8 is rejected before anything is written or removed.
+- `removeByPrefix("", scope)` rejects an invalid scope.
+- Unknown native failures in `hasSecureBiometric`, `setSecureAccessControl`, `setSecureWritesAsync`, and `setKeychainAccessGroup` surface as a `NitroStorage: … failed (unknown error)` error.
+- The Android library declares its unit-test dependencies only inside the repository, so consumer builds do not resolve them.
+
 ## [0.12.0] - 2026-10-01
 
 ### Breaking changes
