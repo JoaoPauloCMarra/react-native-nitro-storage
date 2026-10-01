@@ -3,6 +3,7 @@ import {
   diskItem,
   flushWebStorageBackends,
   getStorageErrorCode,
+  isStorageError,
   removeBatch,
   runTransaction,
   secureItem,
@@ -568,6 +569,7 @@ describe("item 10: tagged error classification", () => {
       "authentication_required",
       "key_invalidated",
       "storage_corruption",
+      "storage_full",
       "biometric_unavailable",
       "unsupported",
     ]) {
@@ -575,6 +577,15 @@ describe("item 10: tagged error classification", () => {
         getStorageErrorCode(new Error(`[nitro-error:${code}] detail`)),
       ).toBe(code);
     }
+  });
+
+  it("classifies a full Disk database behind the native method prefix", () => {
+    const error = new Error(
+      "Storage.set(...): [nitro-error:storage_full] NitroStorage: Disk SQLite set failed: database or disk is full",
+    );
+
+    expect(getStorageErrorCode(error)).toBe("storage_full");
+    expect(isStorageError(error, "storage_full")).toBe(true);
   });
 
   it("does not classify errors from message text alone", () => {

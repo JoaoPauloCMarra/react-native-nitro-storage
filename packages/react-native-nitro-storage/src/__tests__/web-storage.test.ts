@@ -3304,6 +3304,29 @@ describe("web backend switching", () => {
     ).toThrow(/NitroStorage\(web\): set failed for throwing-backend/);
   });
 
+  it("tags an exceeded web storage quota as storage_full", () => {
+    const backend = createWebBackendMock("quota-backend");
+    backend.setItem.mockImplementation(() => {
+      const quotaError = new Error("The quota has been exceeded.");
+      quotaError.name = "QuotaExceededError";
+      throw quotaError;
+    });
+    setWebDiskStorageBackend(backend);
+
+    let thrown: unknown;
+    try {
+      storage.setString("disk-quota", "value", StorageScope.Disk);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(getStorageErrorCode(thrown)).toBe("storage_full");
+    expect(thrown).toMatchObject({
+      message:
+        "[nitro-error:storage_full] NitroStorage(web): set failed for quota-backend: The quota has been exceeded.",
+    });
+  });
+
   it("applies backend subscribe events to disk item caches", () => {
     const backend = createWebBackendMock("disk-subscribe");
     setWebDiskStorageBackend(backend);

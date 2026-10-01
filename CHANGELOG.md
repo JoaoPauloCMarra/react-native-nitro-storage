@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes are always listed first in each release section.
 
+## [0.12.0] - 2026-10-01
+
+### Breaking changes
+
+- **Disk failures carry error codes.** A full device or database reports the new `storage_full` code, and a corrupt or unreadable Disk database reports `storage_corruption`, which until now came only from Secure storage. Android still deletes and recreates a database that is already corrupt when it opens; only corruption found after that reports the code. The message starts with the `[nitro-error:<code>]` tag. Migration: add `storage_full` if your `StorageErrorCode` switch is exhaustive, and check the storage scope before you treat `storage_corruption` as a Secure failure.
+- **Android Disk errors use the iOS message format.** SQLite failures read `NitroStorage: Disk SQLite <operation> failed: <platform message>` instead of the raw Android exception text; the original exception is kept as the cause. Migration: match on the error code instead of the message text.
+
+### Added
+
+- `storage_full` error code. iOS and Android report it when SQLite returns `SQLITE_FULL`, for writes and for deletes. Web reports it when the Disk or Secure backend throws `QuotaExceededError`. Use `isStorageError(error, "storage_full")` to treat a full device as an expected condition.
+
+### Fixed
+
+- Android opens the Disk database on first Disk use instead of at app start, so a full or corrupt database surfaces as a Disk error instead of crashing the app at launch. A failed open closes the database handle and the next Disk call retries.
+
 ## [0.11.0] - 2026-09-30
 
 ### Breaking changes

@@ -91,7 +91,7 @@ before installing this package, then rebuild the native app so the generated
 Nitro bindings and native runtime use the same major-minor version:
 
 ```sh
-bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.11.0
+bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.12.0
 bunx expo prebuild
 ```
 
@@ -752,19 +752,41 @@ Native and web adapters tag classified failures with stable error codes. Use
 Errors never swallow the underlying cause silently: the original platform
 message is preserved on the error for diagnostics.
 
-| Code                          | Meaning                                                                                                                 |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `keychain_locked`             | The protected store is locked. Retry after the device unlocks.                                                          |
-| `authentication_required`     | The item needs user authentication, or the user cancelled the prompt.                                                   |
-| `key_invalidated`             | The protecting key was invalidated, for example by a biometric enrolment change.                                        |
-| `biometric_unavailable`       | The requested biometric level is not available on this device or OS version.                                            |
-| `storage_corruption`          | Stored secure data could not be decrypted, or (Android) the Secure master key or store cannot be created. Do not retry. |
-| `storage_compensation_failed` | A multi-step write failed and restoring the previous state also failed.                                                 |
-| `unsupported`                 | The operation is not available on this platform or environment.                                                         |
-| `invalid_key`                 | The storage key is empty. Keys must be non-empty strings.                                                               |
+| Code                          | Meaning                                                                                                                                               |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `keychain_locked`             | The protected store is locked. Retry after the device unlocks.                                                                                        |
+| `authentication_required`     | The item needs user authentication, or the user cancelled the prompt.                                                                                 |
+| `key_invalidated`             | The protecting key was invalidated, for example by a biometric enrolment change.                                                                      |
+| `biometric_unavailable`       | The requested biometric level is not available on this device or OS version.                                                                          |
+| `storage_corruption`          | Stored secure data could not be decrypted, the Disk database is corrupt, or (Android) the Secure master key or store cannot be created. Do not retry. |
+| `storage_compensation_failed` | A multi-step write failed and restoring the previous state also failed.                                                                               |
+| `unsupported`                 | The operation is not available on this platform or environment.                                                                                       |
+| `storage_full`                | The device or database is out of space, or the web storage quota is exceeded. Free space before retrying.                                             |
+| `invalid_key`                 | The storage key is empty. Keys must be non-empty strings.                                                                                             |
 
 Invalid scopes and non-finite numeric levels are rejected with untagged errors
 before they reach native storage.
+
+A full device is an expected condition, not a bug. Disk writes and deletes both
+fail with `storage_full` until the user frees space:
+
+```ts
+import {
+  isStorageError,
+  storage,
+  StorageScope,
+} from "react-native-nitro-storage";
+
+function saveDraft(draft: string): "saved" | "storage_full" {
+  try {
+    storage.setString("draft", draft, StorageScope.Disk);
+    return "saved";
+  } catch (error) {
+    if (!isStorageError(error, "storage_full")) throw error;
+    return "storage_full";
+  }
+}
+```
 
 ## Platform Support
 

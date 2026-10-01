@@ -3,6 +3,9 @@
 package com.nitrostorage
 
 import android.content.Context
+import android.database.sqlite.SQLiteDatabaseCorruptException
+import android.database.sqlite.SQLiteException
+import android.database.sqlite.SQLiteFullException
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyPermanentlyInvalidatedException
@@ -33,7 +36,9 @@ private fun Throwable.storageErrorCode(): String? {
         return taggedCode
     }
     return when {
-        hasCause(AEADBadTagException::class.java) -> "storage_corruption"
+        hasCause(SQLiteFullException::class.java) -> "storage_full"
+        hasCause(SQLiteDatabaseCorruptException::class.java) ||
+            hasCause(AEADBadTagException::class.java) -> "storage_corruption"
         hasCause(UserNotAuthenticatedException::class.java) ||
             hasCause(KeyStoreException::class.java) -> "authentication_required"
         hasCause(KeyPermanentlyInvalidatedException::class.java) ||
@@ -61,7 +66,9 @@ private fun Throwable.wrapStorageException(
 class AndroidStorageAdapter private constructor(private val context: Context) {
     private val sharedPreferences: SharedPreferences =
         context.getSharedPreferences("NitroStorage", Context.MODE_PRIVATE)
-    private val diskStore: DiskSqliteStore = DiskSqliteStore(context, sharedPreferences)
+    private val diskStore: DiskSqliteStore by lazy {
+        DiskSqliteStore(context, sharedPreferences)
+    }
 
     private val masterKeyAlias = "${context.packageName}.nitro_storage.master_key"
 
@@ -572,59 +579,73 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
 
         // --- Disk ---
 
+        private inline fun <T> diskOperation(
+            operation: String,
+            block: DiskSqliteStore.() -> T,
+        ): T {
+            val instance = getInstanceOrThrow()
+            try {
+                return instance.diskStore.block()
+            } catch (e: SQLiteException) {
+                throw e.wrapStorageException(
+                    "NitroStorage: Disk SQLite $operation failed: ${e.message}",
+                )
+            }
+        }
+
         @JvmStatic
         fun setDisk(key: String, value: String) {
-            getInstanceOrThrow().diskStore.set(key, value)
+            diskOperation("set") { set(key, value) }
         }
 
         @JvmStatic
         fun setDiskBatch(keys: Array<String>, values: Array<String>) {
-            getInstanceOrThrow().diskStore.setBatch(keys, values)
+            diskOperation("set") { setBatch(keys, values) }
         }
 
         @JvmStatic
         fun getDisk(key: String): String? {
-            return getInstanceOrThrow().diskStore.get(key)
+            return diskOperation("get") { get(key) }
         }
 
         @JvmStatic
         fun getDiskBatch(keys: Array<String>): Array<String?> {
-            return getInstanceOrThrow().diskStore.getBatch(keys)
+            return diskOperation("get") { getBatch(keys) }
         }
 
         @JvmStatic
         fun deleteDisk(key: String) {
-            getInstanceOrThrow().diskStore.remove(key)
+            diskOperation("remove") { remove(key) }
         }
 
         @JvmStatic
         fun deleteDiskBatch(keys: Array<String>) {
-            getInstanceOrThrow().diskStore.removeBatch(keys)
+            diskOperation("remove") { removeBatch(keys) }
         }
 
         @JvmStatic
         fun hasDisk(key: String): Boolean {
-            return getInstanceOrThrow().diskStore.has(key)
+            return diskOperation("has") { has(key) }
         }
 
         @JvmStatic
         fun getAllKeysDisk(): Array<String> {
-            return getInstanceOrThrow().diskStore.getAllKeys()
+            return diskOperation("getAllKeys") { getAllKeys() }
         }
 
         @JvmStatic
         fun getKeysByPrefixDisk(prefix: String): Array<String> {
-            return getInstanceOrThrow().diskStore.getKeysByPrefix(prefix)
+            return diskOperation("getKeysByPrefix") { getKeysByPrefix(prefix) }
         }
 
         @JvmStatic
         fun sizeDisk(): Int {
-            return getInstanceOrThrow().diskStore.size()
+            return diskOperation("size") { size() }
         }
 
         @JvmStatic
         fun clearDisk() {
-            getInstanceOrThrow().diskStore.clear()
+            diskOperation("clear") { clear() }
         }
 
         // --- Secure (async apply by default, sync commit when requested) ---

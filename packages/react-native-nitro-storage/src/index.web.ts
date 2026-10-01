@@ -165,8 +165,12 @@ function createWebStorageError(
   const backendName = getBackendName(scope, backend);
   const message =
     error instanceof Error ? error.message : String(error ?? "Unknown error");
+  const tag =
+    error instanceof Error && error.name === "QuotaExceededError"
+      ? "[nitro-error:storage_full] "
+      : "";
   const wrapped = new Error(
-    `NitroStorage(web): ${operation} failed for ${backendName}: ${message}`,
+    `${tag}NitroStorage(web): ${operation} failed for ${backendName}: ${message}`,
   );
   Object.defineProperty(wrapped, "cause", {
     configurable: true,
