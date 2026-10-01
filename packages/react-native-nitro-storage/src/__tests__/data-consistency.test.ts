@@ -493,6 +493,16 @@ describe("item 12: metrics split by scope", () => {
 });
 
 describe("item 2: biometric promotion parity (web)", () => {
+  let warnSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   it("removes the plain secure copy when a value is promoted to biometric", () => {
     const plain = secureItem<string>({ key: "promote", defaultValue: "" });
     const biometric = secureItem<string>({
@@ -505,6 +515,10 @@ describe("item 2: biometric promotion parity (web)", () => {
     biometric.set("bio-value");
     expect(biometric.get()).toBe("bio-value");
     expect(plain.get()).toBe("");
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("Biometric storage is not supported on web"),
+    );
   });
 
   it("keeps the biometric copy intact when a plain value is written (platform parity)", () => {
