@@ -112,49 +112,50 @@ See [react-hooks.md](react-hooks.md).
 
 `storage` exposes raw and cross-item utilities:
 
-| Method                                           | Purpose                                                                                   |
-| ------------------------------------------------ | ----------------------------------------------------------------------------------------- |
-| `clear(scope, options?)`                         | Clear one scope, optionally preserving selected keys.                                     |
-| `clearAll()`                                     | Clear Memory, Disk, and Secure scopes.                                                    |
-| `clearNamespace(namespace, scope)`               | Remove keys under `namespace:`.                                                           |
-| `clearGroup(group)`                              | Remove registered items in a group across their scopes.                                   |
-| `getGroupItems(group)`                           | List registered items in a group.                                                         |
-| `subscribeExpired(scope, listener)`              | Receive item events caused by TTL expiry.                                                 |
-| `findDuplicateKeys()`                            | Find duplicate registered `(scope, key)` definitions.                                     |
-| `getRegisteredKeys()`                            | List registered `(scope, key)` definitions.                                               |
-| `subscribe(scope, listener)`                     | Subscribe to raw scope-level change events.                                               |
-| `subscribeKey(scope, key, listener)`             | Subscribe to raw events for one key.                                                      |
-| `subscribePrefix(scope, prefix, listener)`       | Subscribe to raw events for matching key prefixes.                                        |
-| `subscribeNamespace(namespace, scope, listener)` | Subscribe to raw events for `namespace:` keys.                                            |
-| `setEventObserver(observer, options?)`           | Receive all change events for devtools or logging. Secure values are redacted by default. |
-| `clearBiometric()`                               | Clear biometric Secure entries.                                                           |
-| `has(key, scope)`                                | Check for a raw key.                                                                      |
-| `getAllKeys(scope)`                              | List raw keys.                                                                            |
-| `getKeysByPrefix(prefix, scope)`                 | List raw keys with a prefix.                                                              |
-| `getByPrefix(prefix, scope)`                     | Read raw string values by prefix.                                                         |
-| `getAll(scope)`                                  | Read all raw string values in a scope.                                                    |
-| `size(scope)`                                    | Return approximate scope entry count.                                                     |
-| `setAccessControl(accessControl)`                | Set the default Secure access control level.                                              |
-| `setSecureWritesAsync(enabled)`                  | Toggle Android secure writes between sync and async modes.                                |
-| `setDiskWritesAsync(enabled)`                    | Toggle coalesced Disk write behavior.                                                     |
-| `flushDiskWrites()`                              | Flush pending Disk writes.                                                                |
-| `flushSecureWrites()`                            | Flush pending Secure writes.                                                              |
-| `setKeychainAccessGroup(group)`                  | Configure iOS Keychain access group.                                                      |
-| `setMetricsObserver(observer)`                   | Receive operation timing events.                                                          |
-| `getMetricsSnapshot()`                           | Read aggregated metrics.                                                                  |
-| `getScopedMetricsSnapshot()`                     | Read metrics grouped by storage scope.                                                    |
-| `resetMetrics()`                                 | Clear metrics counters.                                                                   |
-| `getCacheMetrics()`                              | Read raw-cache hits, misses, live entries, and estimated bytes.                           |
-| `getCapabilities()`                              | Read runtime storage capabilities. Native `backend.disk` is `"sqlite"`.                   |
-| `getSecurityCapabilities()`                      | Read secure backend capability metadata.                                                  |
-| `getSecureMetadata(key)`                         | Read secure metadata for one key without returning its value.                             |
-| `getAllSecureMetadata()`                         | Read secure metadata for all secure keys without values.                                  |
-| `getString(key, scope)`                          | Read a raw string.                                                                        |
-| `setString(key, value, scope)`                   | Write a raw string.                                                                       |
-| `deleteString(key, scope)`                       | Remove a raw key.                                                                         |
-| `export(scope, options?)`                        | Snapshot raw strings from one scope. Secure scope requires explicit unsafe opt-in.        |
-| `exportSecureUnsafe()`                           | Snapshot raw Secure strings for short-lived migration workflows.                          |
-| `import(data, scope)`                            | Bulk import raw strings.                                                                  |
+| Method                                           | Purpose                                                                                                                        |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `clear(scope, options?)`                         | Clear one scope, optionally preserving selected keys.                                                                          |
+| `clearAll()`                                     | Clear Memory, Disk, and Secure scopes.                                                                                         |
+| `clearNamespace(namespace, scope)`               | Remove keys under `namespace:`.                                                                                                |
+| `clearGroup(group)`                              | Remove registered items in a group across their scopes.                                                                        |
+| `getGroupItems(group)`                           | List registered items in a group.                                                                                              |
+| `subscribeExpired(scope, listener)`              | Receive item events caused by TTL expiry.                                                                                      |
+| `findDuplicateKeys()`                            | Find duplicate registered `(scope, key)` definitions.                                                                          |
+| `getRegisteredKeys()`                            | List registered `(scope, key)` definitions.                                                                                    |
+| `subscribe(scope, listener)`                     | Subscribe to raw scope-level change events.                                                                                    |
+| `subscribeKey(scope, key, listener)`             | Subscribe to raw events for one key.                                                                                           |
+| `subscribePrefix(scope, prefix, listener)`       | Subscribe to raw events for matching key prefixes.                                                                             |
+| `subscribeNamespace(namespace, scope, listener)` | Subscribe to raw events for `namespace:` keys.                                                                                 |
+| `setEventObserver(observer, options?)`           | Receive all change events for devtools or logging. Secure values are redacted by default.                                      |
+| `clearBiometric()`                               | Clear biometric Secure entries.                                                                                                |
+| `has(key, scope)`                                | Check for a raw key.                                                                                                           |
+| `getAllKeys(scope)`                              | List raw keys.                                                                                                                 |
+| `getKeysByPrefix(prefix, scope)`                 | List raw keys with a prefix.                                                                                                   |
+| `getByPrefix(prefix, scope)`                     | Read raw string values by prefix.                                                                                              |
+| `getAll(scope)`                                  | Read all raw string values in a scope.                                                                                         |
+| `size(scope)`                                    | Return approximate scope entry count.                                                                                          |
+| `setAccessControl(accessControl)`                | Set the default Secure access control level.                                                                                   |
+| `setSecureWritesAsync(enabled)`                  | Toggle Android secure writes between sync and async modes.                                                                     |
+| `setDiskWritesAsync(enabled)`                    | Toggle coalesced Disk write behavior.                                                                                          |
+| `flushDiskWrites()`                              | Flush pending Disk writes.                                                                                                     |
+| `flushSecureWrites()`                            | Drain queued Secure writes into the backend; not an Android `apply()` persistence barrier.                                     |
+| `setScheduledFlushErrorObserver(observer)`       | Observe scheduled Disk/Secure flush failures; pass `undefined` to restore uncaught failures. Explicit flush calls still throw. |
+| `setKeychainAccessGroup(group)`                  | Configure iOS Keychain access group.                                                                                           |
+| `setMetricsObserver(observer)`                   | Receive operation timing events.                                                                                               |
+| `getMetricsSnapshot()`                           | Read aggregated metrics.                                                                                                       |
+| `getScopedMetricsSnapshot()`                     | Read metrics grouped by storage scope.                                                                                         |
+| `resetMetrics()`                                 | Clear metrics counters.                                                                                                        |
+| `getCacheMetrics()`                              | Read raw-cache hits, misses, live entries, and estimated bytes.                                                                |
+| `getCapabilities()`                              | Read runtime storage capabilities. Native `backend.disk` is `"sqlite"`.                                                        |
+| `getSecurityCapabilities()`                      | Read secure backend capability metadata.                                                                                       |
+| `getSecureMetadata(key)`                         | Read secure metadata for one key without returning its value.                                                                  |
+| `getAllSecureMetadata()`                         | Read secure metadata for all secure keys without values.                                                                       |
+| `getString(key, scope)`                          | Read a raw string.                                                                                                             |
+| `setString(key, value, scope)`                   | Write a raw string.                                                                                                            |
+| `deleteString(key, scope)`                       | Remove a raw key.                                                                                                              |
+| `export(scope, options?)`                        | Snapshot raw strings from one scope. Secure scope requires explicit unsafe opt-in.                                             |
+| `exportSecureUnsafe()`                           | Snapshot raw Secure strings for short-lived migration workflows.                                                               |
+| `import(data, scope)`                            | Bulk import raw strings.                                                                                                       |
 
 Raw string APIs bypass item serialization and validation. Prefer `StorageItem<T>` unless you are migrating, exporting/importing, or writing a custom integration.
 
@@ -234,6 +235,9 @@ runTransaction(StorageScope.Disk, (tx) => {
 ```
 
 If the callback throws, previously changed keys in that transaction are rolled back synchronously.
+Promise or thenable results are rejected with `TypeError` and rollback. Context
+methods are valid only during the synchronous callback. Finish awaited work
+before entering the transaction.
 
 ## Migrations
 
@@ -249,6 +253,8 @@ migrateToLatest(StorageScope.Disk);
 ```
 
 Migration versions are tracked per scope.
+Migration callbacks must be synchronous. An async callback is rejected without
+advancing its version, and the next migration run retries that step.
 
 ## Secure Auth Storage
 

@@ -91,7 +91,7 @@ before installing this package, then rebuild the native app so the generated
 Nitro bindings and native runtime use the same major-minor version:
 
 ```sh
-bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.13.0
+bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.14.0
 bunx expo prebuild
 ```
 
@@ -491,9 +491,12 @@ explicitly opt into `{ includeSecureValues: true }`.
 
 Android secure writes default to synchronous `commit()` durability. Call
 `storage.setSecureWritesAsync(true)` only when asynchronous `apply()` writes are
-acceptable. After opting into async writes, call `storage.flushSecureWrites()`
-before a deterministic persistence boundary. A failed secure flush throws and
-keeps failed or unattempted queued writes available for retry.
+acceptable. `storage.flushSecureWrites()` drains the JavaScript write queue into
+the native backend; it does not wait for Android `apply()` to reach disk. Keep
+the default synchronous mode, or call `storage.setSecureWritesAsync(false)`
+before the writes that need synchronous native persistence. Changing the mode
+does not make earlier `apply()` calls durable retroactively. A failed explicit
+flush throws and keeps failed or unattempted queued writes available for retry.
 `storage.clearBiometric()`
 flushes pending Secure writes before clearing biometric entries and surfaces
 native clear failures.
@@ -537,6 +540,43 @@ Biometric behaviour differs by platform:
   keyset and do not check authentication again. Run your own `BiometricPrompt`
   before every read that must be gated. Reading a `BiometryOrPasscode` item
   opens only that store, so a device-credential authentication is enough.
+
+Scheduled Disk and Secure flush failures can be handled without losing the
+pending writes:
+
+```ts
+import {
+  storage,
+  type StorageScheduledFlushError,
+} from "react-native-nitro-storage";
+
+let lastFlushFailure: StorageScheduledFlushError | undefined;
+storage.setScheduledFlushErrorObserver((failure) => {
+  lastFlushFailure = failure;
+});
+
+// Call after resolving the failure, such as freeing space or unlocking storage.
+function retryPendingWrites() {
+  storage.flushDiskWrites();
+  storage.flushSecureWrites();
+  lastFlushFailure = undefined;
+}
+
+// Remove the observer when its owner is disposed.
+function stopObservingFlushErrors() {
+  storage.setScheduledFlushErrorObserver(undefined);
+}
+```
+
+The observer receives the failed scope and the error thrown by the backend
+adapter. Web adapters may wrap the underlying failure in an error with `cause`.
+It replaces
+the uncaught scheduled-flush error only while installed; without an observer,
+the error still propagates. Explicit flush calls always throw to their caller,
+and an observer that throws also propagates its error. Register one observer per
+storage instance and handle retry failures at the calling boundary. The observer
+reports the synchronous backend handoff; it cannot report a later Android
+`apply()` or IndexedDB persistence failure that the backend does not expose.
 
 ## Batch Operations
 
@@ -666,10 +706,16 @@ migrateFromMMKV(mmkvInstance, themeItem);
 
 `runTransaction(scope, callback)` rolls back every write made through the `tx`
 context if the callback throws, then emits one typed `rollback` batch event.
+Callbacks must be synchronous. A Promise or thenable return throws a `TypeError`
+and rolls back changes made through the context. Every context method becomes
+unavailable when the callback ends, including for a continuation after `await`.
+Complete asynchronous work before calling `runTransaction()` or registering a
+migration; do not retain the context outside its callback.
 
 Each migration step runs in its own transaction with its version marker, so a
 failed step leaves the scope on the last completed version and rerunning
 `migrateToLatest()` retries deterministically.
+An asynchronous migration is rejected without advancing its version marker.
 
 ## Web Backends
 
@@ -850,6 +896,7 @@ in a host measurement; devices are slower). Keep single Disk values below about
 | Native libraries                    | [docs/native-libraries.md](docs/native-libraries.md)                           |
 | Recipes                             | [docs/recipes.md](docs/recipes.md)                                             |
 | Benchmarks                          | [docs/benchmarks.md](docs/benchmarks.md)                                       |
+| Example replay coverage             | [docs/qa/agent-device-replay.md](docs/qa/agent-device-replay.md)               |
 | Security policy                     | [SECURITY.md](SECURITY.md)                                                     |
 
 ## Troubleshooting
@@ -886,6 +933,13 @@ Run native example builds locally before release when changing plugin, native,
 Nitro, secure storage, or packaging files. GitHub CI does not build the Android
 or iOS example. The package release path also validates package contents and
 dry-run publish behavior.
+
+Run `bun run example:replay:check` to check that replay coverage matches package
+and example sources. After reviewing affected assertions, use
+`bun run example:replay:refresh` to update the source lock. Device execution uses
+`bun run example:replay --platform ios --udid <exact-target>` or
+`--platform android --serial <exact-target>`; see the
+[replay guide](docs/qa/agent-device-replay.md) for prerequisites and coverage limits.
 
 `bun run benchmark` measures only the built web entry with an isolated private
 localStorage implementation; it is not a native Disk or Secure benchmark. See

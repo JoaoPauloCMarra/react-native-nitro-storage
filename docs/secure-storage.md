@@ -206,12 +206,18 @@ refreshTokenItem.set("opaque-refresh-token");
 ```
 
 Coalesced secure item writes remain in a last-write-wins queue until the next
-microtask or an explicit `flushSecureWrites()`. A failed flush throws and keeps
-failed and unattempted writes queued for a later retry. Call
-`flushSecureWrites()` before assertions, namespace clears, or any boundary that
-requires deterministic persistence. `storage.clearBiometric()` is also a
-durability barrier: it flushes pending Secure writes before clearing biometric
-entries, and surfaces native clear failures.
+microtask or an explicit `flushSecureWrites()`. An explicit flush failure throws
+and keeps failed and unattempted writes queued for retry. Scheduled failures
+propagate unless `storage.setScheduledFlushErrorObserver()` is installed; it
+receives `{ scope, error }` while the failed writes remain queued.
+
+`flushSecureWrites()` drains the JavaScript queue into the backend. It does not
+wait for Android `apply()` persistence. Use the default synchronous mode or
+select `storage.setSecureWritesAsync(false)` before writes that need synchronous
+native persistence. Changing the mode is not a barrier for earlier `apply()`
+calls. `storage.clearBiometric()` drains pending Secure writes before clearing
+biometric entries and surfaces native clear failures; it also cannot wait for
+earlier Android `apply()` calls.
 
 ## iOS Legacy Disk Migration
 
