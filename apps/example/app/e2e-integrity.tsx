@@ -9,6 +9,7 @@ import {
   setBatch,
   storage,
   StorageScope,
+  type TransactionContext,
 } from "react-native-nitro-storage";
 import { Card, Page, StatusRow } from "../components/shared";
 
@@ -49,24 +50,21 @@ function assert(condition: unknown, message: string): void {
   }
 }
 
-function seedPersistCase(persistKey: string): LabCase {
-  const seeded = runCase("disk-persist-seed", () => {
-    storage.setString(persistKey, "persist-v1", StorageScope.Disk);
-    storage.flushDiskWrites();
-    assert(
-      storage.getString(persistKey, StorageScope.Disk) === "persist-v1",
-      "persist seed failed",
-    );
-  });
-  return seeded.status === "pass"
-    ? { ...seeded, status: "skip", detail: "seeded; relaunch to verify" }
-    : seeded;
-}
-
 function runIntegritySweep(): IntegrityReport {
-  const persistKey = "__integrity_disk_persist__";
-  const previousPersist = storage.getString(persistKey, StorageScope.Disk);
   const cases: LabCase[] = [
+    runCase("native-backend-capabilities", () => {
+      const capabilities = storage.getCapabilities();
+      assert(capabilities.platform === "native", "platform is not native");
+      assert(
+        capabilities.backend.disk === "sqlite",
+        `Disk backend is ${capabilities.backend.disk}`,
+      );
+      assert(
+        capabilities.backend.secure === "platform-secure-storage",
+        `Secure backend is ${capabilities.backend.secure}`,
+      );
+      return "native:disk=sqlite:secure=platform-secure-storage";
+    }),
     runCase("audit-prefix-case", () => {
       const upper = "__audit_User";
       const lower = "__audit_user";
@@ -89,6 +87,7 @@ function runIntegritySweep(): IntegrityReport {
           storage.getString(`${lower}::token`, StorageScope.Disk) === "lower",
           "lower namespace removed",
         );
+        return "exact-case=upper-only:lower=preserved";
       } finally {
         storage.deleteString(`${upper}::token`, StorageScope.Disk);
         storage.deleteString(`${lower}::token`, StorageScope.Disk);
@@ -117,6 +116,7 @@ function runIntegritySweep(): IntegrityReport {
             "set member missing",
           );
         }
+        return "raw-literal=preserved:set=3";
       } finally {
         storage.deleteString(key, StorageScope.Memory);
         item.item.delete();
@@ -148,6 +148,7 @@ function runIntegritySweep(): IntegrityReport {
           storage.flushDiskWrites();
         }
       }
+      return `literal-prefixes=${prefixes.length}`;
     }),
     runCase("audit-nul-roundtrip", () => {
       for (const scope of [StorageScope.Disk, StorageScope.Secure]) {
@@ -195,23 +196,29 @@ function runIntegritySweep(): IntegrityReport {
           storage.flushSecureWrites();
         }
       }
+      return "disk+secure:nul+unicode+batch";
     }),
     runCase("disk-write-read", () => {
-      storage.setString("__integrity_disk__", "disk-ok", StorageScope.Disk);
+      const rawKey = "__integrity_disk__";
       const item = createStorageItem({
         key: "__integrity_disk_item__",
         scope: StorageScope.Disk,
         defaultValue: "",
       });
-      item.set("disk-item-ok");
-      assert(item.get() === "disk-item-ok", `got ${item.get()}`);
-      assert(
-        storage.getString("__integrity_disk__", StorageScope.Disk) ===
-          "disk-ok",
-        "raw disk mismatch",
-      );
-      item.delete();
-      storage.deleteString("__integrity_disk__", StorageScope.Disk);
+      try {
+        storage.setString(rawKey, "disk-ok", StorageScope.Disk);
+        item.set("disk-item-ok");
+        assert(item.get() === "disk-item-ok", `got ${item.get()}`);
+        assert(
+          storage.getString(rawKey, StorageScope.Disk) === "disk-ok",
+          "raw disk mismatch",
+        );
+        return "raw=disk-ok:item=disk-item-ok";
+      } finally {
+        item.delete();
+        storage.deleteString(rawKey, StorageScope.Disk);
+        storage.flushDiskWrites();
+      }
     }),
     runCase("secure-write-read", () => {
       const item = createStorageItem({
@@ -219,20 +226,29 @@ function runIntegritySweep(): IntegrityReport {
         scope: StorageScope.Secure,
         defaultValue: "",
       });
-      item.set("secure-ok");
-      assert(item.get() === "secure-ok", `got ${item.get()}`);
-      item.delete();
+      try {
+        item.set("secure-ok");
+        assert(item.get() === "secure-ok", `got ${item.get()}`);
+        return "secure-ok";
+      } finally {
+        item.delete();
+        storage.flushSecureWrites();
+      }
     }),
     runCase("import-then-flush", () => {
-      storage.import({ __integrity_import__: "imported" }, StorageScope.Disk);
-      storage.flushDiskWrites();
-      assert(
-        storage.getString("__integrity_import__", StorageScope.Disk) ===
-          "imported",
-        "import missing after flush",
-      );
-      storage.deleteString("__integrity_import__", StorageScope.Disk);
-      storage.flushDiskWrites();
+      const key = "__integrity_import__";
+      try {
+        storage.import({ [key]: "imported" }, StorageScope.Disk);
+        storage.flushDiskWrites();
+        assert(
+          storage.getString(key, StorageScope.Disk) === "imported",
+          "import missing after flush",
+        );
+        return "imported-after-flush";
+      } finally {
+        storage.deleteString(key, StorageScope.Disk);
+        storage.flushDiskWrites();
+      }
     }),
     runCase("tx-rollback", () => {
       const item = createStorageItem({
@@ -240,56 +256,91 @@ function runIntegritySweep(): IntegrityReport {
         scope: StorageScope.Disk,
         defaultValue: "",
       });
-      item.set("committed");
-      let rolledBack = false;
       try {
-        runTransaction(StorageScope.Disk, (tx) => {
-          tx.setItem(item, "should-rollback");
-          throw new Error("rollback");
-        });
-      } catch {
-        rolledBack = true;
+        item.set("committed");
+        let rolledBack = false;
+        try {
+          runTransaction(StorageScope.Disk, (tx) => {
+            tx.setItem(item, "should-rollback");
+            throw new Error("rollback");
+          });
+        } catch {
+          rolledBack = true;
+        }
+        assert(rolledBack, "expected throw");
+        assert(item.get() === "committed", `got ${item.get()}`);
+        return "committed:rollback=true";
+      } finally {
+        item.delete();
+        storage.flushDiskWrites();
       }
-      assert(rolledBack, "expected throw");
-      assert(item.get() === "committed", `got ${item.get()}`);
-      item.delete();
     }),
     runCase("renameFrom", () => {
-      storage.setString(
-        "e2e-integrity-legacy",
-        "migrated-value",
-        StorageScope.Disk,
-      );
       const renamed = createStorageItem({
-        key: "e2e-integrity-renamed",
+        key: "__nitro_qa_integrity_renamed__",
         scope: StorageScope.Disk,
         defaultValue: "",
-        renameFrom: "e2e-integrity-legacy",
+        renameFrom: "__nitro_qa_integrity_legacy__",
       });
-      assert(renamed.get() === "migrated-value", `got ${renamed.get()}`);
-      renamed.delete();
-      storage.deleteString("e2e-integrity-legacy", StorageScope.Disk);
+      try {
+        storage.setString(
+          "__nitro_qa_integrity_legacy__",
+          "migrated-value",
+          StorageScope.Disk,
+        );
+        assert(renamed.get() === "migrated-value", `got ${renamed.get()}`);
+        assert(
+          storage.getString(
+            "__nitro_qa_integrity_legacy__",
+            StorageScope.Disk,
+          ) === undefined,
+          "legacy key survived rename",
+        );
+        return "migrated-value:legacy=missing";
+      } finally {
+        renamed.delete();
+        storage.deleteString(
+          "__nitro_qa_integrity_legacy__",
+          StorageScope.Disk,
+        );
+        storage.flushDiskWrites();
+      }
     }),
     runCase("namespace-isolation", () => {
       const namespaced = createStorageItem({
         key: "pref",
-        namespace: "integrity",
+        namespace: "__nitro_qa_integrity__",
         scope: StorageScope.Disk,
         defaultValue: "",
       });
-      namespaced.set("ns-ok");
-      assert(namespaced.get() === "ns-ok", `got ${namespaced.get()}`);
-      storage.setString("integrity:pref-raw", "ns-raw", StorageScope.Disk);
-      assert(
-        storage.getString("integrity:pref-raw", StorageScope.Disk) === "ns-raw",
-        "namespaced raw key missing",
-      );
-      assert(
-        storage.getString("pref", StorageScope.Disk) !== "ns-raw",
-        "plain key leaked into namespace",
-      );
-      namespaced.delete();
-      storage.deleteString("integrity:pref-raw", StorageScope.Disk);
+      try {
+        namespaced.set("ns-ok");
+        assert(namespaced.get() === "ns-ok", `got ${namespaced.get()}`);
+        storage.setString(
+          "__nitro_qa_integrity__:pref-raw",
+          "ns-raw",
+          StorageScope.Disk,
+        );
+        assert(
+          storage.getString(
+            "__nitro_qa_integrity__:pref-raw",
+            StorageScope.Disk,
+          ) === "ns-raw",
+          "namespaced raw key missing",
+        );
+        assert(
+          storage.getString("pref", StorageScope.Disk) !== "ns-raw",
+          "plain key leaked into namespace",
+        );
+        return "item=ns-ok:raw=ns-raw:plain-key=isolated";
+      } finally {
+        namespaced.delete();
+        storage.deleteString(
+          "__nitro_qa_integrity__:pref-raw",
+          StorageScope.Disk,
+        );
+        storage.flushDiskWrites();
+      }
     }),
     runCase("cache-metrics", () => {
       storage.resetMetrics();
@@ -300,15 +351,19 @@ function runIntegritySweep(): IntegrityReport {
         defaultValue: "",
         readCache: true,
       });
-      item.get();
-      item.set("cached");
-      item.get();
-      const metrics = storage.getCacheMetrics();
-      assert(metrics.cacheMisses > 0, "expected a miss");
-      assert(metrics.cacheHits > 0, "expected a hit");
-      assert(metrics.cacheEntries > 0, "expected cache entries");
-      item.delete();
-      storage.flushDiskWrites();
+      try {
+        item.get();
+        item.set("cached");
+        item.get();
+        const metrics = storage.getCacheMetrics();
+        assert(metrics.cacheMisses > 0, "expected a miss");
+        assert(metrics.cacheHits > 0, "expected a hit");
+        assert(metrics.cacheEntries > 0, "expected cache entries");
+        return "cache=miss-hit-entry";
+      } finally {
+        item.delete();
+        storage.flushDiskWrites();
+      }
     }),
     runCase("disk-ttl", () => {
       const item = createStorageItem({
@@ -317,13 +372,17 @@ function runIntegritySweep(): IntegrityReport {
         defaultValue: "expired-default",
         expiration: { ttlMs: 1 },
       });
-      item.set("fresh");
-      storage.flushDiskWrites();
-      const started = Date.now();
-      while (Date.now() - started < 5) {}
-      assert(item.get() === "expired-default", `got ${item.get()}`);
-      item.delete();
-      storage.flushDiskWrites();
+      try {
+        item.set("fresh");
+        storage.flushDiskWrites();
+        const started = Date.now();
+        while (Date.now() - started < 5) {}
+        assert(item.get() === "expired-default", `got ${item.get()}`);
+        return "expired-default";
+      } finally {
+        item.delete();
+        storage.flushDiskWrites();
+      }
     }),
     runCase("secure-batch", () => {
       const a = createStorageItem({
@@ -336,18 +395,22 @@ function runIntegritySweep(): IntegrityReport {
         scope: StorageScope.Secure,
         defaultValue: "",
       });
-      setBatch(
-        [
-          { item: a, value: "a" },
-          { item: b, value: "b" },
-        ],
-        StorageScope.Secure,
-      );
-      storage.flushSecureWrites();
-      const [va, vb] = getBatch([a, b], StorageScope.Secure);
-      assert(va === "a" && vb === "b", `got ${String(va)},${String(vb)}`);
-      removeBatch([a, b], StorageScope.Secure);
-      storage.flushSecureWrites();
+      try {
+        setBatch(
+          [
+            { item: a, value: "a" },
+            { item: b, value: "b" },
+          ],
+          StorageScope.Secure,
+        );
+        storage.flushSecureWrites();
+        const [va, vb] = getBatch([a, b], StorageScope.Secure);
+        assert(va === "a" && vb === "b", `got ${String(va)},${String(vb)}`);
+        return "a,b";
+      } finally {
+        removeBatch([a, b], StorageScope.Secure);
+        storage.flushSecureWrites();
+      }
     }),
     runCase("secure-tx-rollback", () => {
       const item = createStorageItem({
@@ -355,21 +418,25 @@ function runIntegritySweep(): IntegrityReport {
         scope: StorageScope.Secure,
         defaultValue: "",
       });
-      item.set("committed");
-      storage.flushSecureWrites();
-      let rolledBack = false;
       try {
-        runTransaction(StorageScope.Secure, (tx) => {
-          tx.setItem(item, "should-rollback");
-          throw new Error("rollback");
-        });
-      } catch {
-        rolledBack = true;
+        item.set("committed");
+        storage.flushSecureWrites();
+        let rolledBack = false;
+        try {
+          runTransaction(StorageScope.Secure, (tx) => {
+            tx.setItem(item, "should-rollback");
+            throw new Error("rollback");
+          });
+        } catch {
+          rolledBack = true;
+        }
+        assert(rolledBack, "expected throw");
+        assert(item.get() === "committed", `got ${item.get()}`);
+        return "committed:rollback=true";
+      } finally {
+        item.delete();
+        storage.flushSecureWrites();
       }
-      assert(rolledBack, "expected throw");
-      assert(item.get() === "committed", `got ${item.get()}`);
-      item.delete();
-      storage.flushSecureWrites();
     }),
     runCase("disk-prefix", () => {
       storage.setString("__pfx_keep__", "1", StorageScope.Disk);
@@ -393,16 +460,92 @@ function runIntegritySweep(): IntegrityReport {
         storage.getString("__pfx_drop_a__", StorageScope.Disk) == null,
         "drop still present",
       );
-      storage.deleteString("__pfx_keep__", StorageScope.Disk);
-      storage.flushDiskWrites();
+      return "keep=1:drop=missing";
     }),
-    previousPersist === "persist-v1"
-      ? {
-          name: "disk-persist-reload",
-          status: "pass",
-          detail: "found persist-v1",
+    runCase("async-transaction-guard", () => {
+      const key = "__integrity_async_guard__";
+      for (const scope of [
+        StorageScope.Memory,
+        StorageScope.Disk,
+        StorageScope.Secure,
+      ]) {
+        storage.setString(key, "original", scope);
+        const captured: { context?: TransactionContext } = {};
+        try {
+          let rejected = false;
+          try {
+            // Exercise the JavaScript boundary that TypeScript rejects for callers.
+            Reflect.apply(runTransaction, undefined, [
+              scope,
+              (context: TransactionContext) => {
+                captured.context = context;
+                context.setRaw(key, "must-rollback");
+                return Promise.resolve();
+              },
+            ]);
+          } catch (error) {
+            rejected =
+              error instanceof TypeError &&
+              error.message.includes("callbacks must be synchronous");
+          }
+          assert(rejected, "Promise callback was not rejected synchronously");
+          assert(
+            storage.getString(key, scope) === "original",
+            "Promise callback write was not rolled back",
+          );
+          const context = captured.context;
+          if (!context) throw new Error("Transaction context missing");
+          let closed = false;
+          try {
+            context.setRaw(key, "late-write");
+          } catch (error) {
+            closed =
+              error instanceof TypeError &&
+              error.message.includes("context is closed");
+          }
+          assert(closed, "Retained context accepted a write after rejection");
+          assert(
+            storage.getString(key, scope) === "original",
+            "Retained context changed storage",
+          );
+        } finally {
+          storage.deleteString(key, scope);
         }
-      : seedPersistCase(persistKey),
+      }
+      return "memory+disk+secure:promise-rejected:rollback=original:context=closed";
+    }),
+    runCase("qa-key-cleanup", () => {
+      const prefixes = [
+        "__audit_",
+        "__integrity_",
+        "__pfx_",
+        "__nitro_qa_integrity__:",
+      ];
+      for (const scope of [
+        StorageScope.Memory,
+        StorageScope.Disk,
+        StorageScope.Secure,
+      ]) {
+        for (const prefix of prefixes) {
+          for (const key of storage.getKeysByPrefix(prefix, scope)) {
+            storage.deleteString(key, scope);
+          }
+        }
+      }
+      storage.deleteString("__nitro_qa_integrity_legacy__", StorageScope.Disk);
+      storage.deleteString("__nitro_qa_integrity_renamed__", StorageScope.Disk);
+      storage.flushDiskWrites();
+      storage.flushSecureWrites();
+      const remaining = [
+        StorageScope.Memory,
+        StorageScope.Disk,
+        StorageScope.Secure,
+      ].flatMap((scope) =>
+        prefixes.flatMap((prefix) => storage.getKeysByPrefix(prefix, scope)),
+      );
+      assert(remaining.length === 0, "QA keys remain after cleanup");
+      return "qa-keys=cleared";
+    }),
   ];
 
   const report: IntegrityReport = {
@@ -423,7 +566,7 @@ export default function IntegrityLabScreen() {
   }, []);
 
   const summary = report
-    ? `fail=${report.fail} pass=${report.pass} skip=${report.skip}`
+    ? `finished:fail=${report.fail}:skip=${report.skip}`
     : "running";
 
   return (
@@ -437,6 +580,11 @@ export default function IntegrityLabScreen() {
         subtitle="Deep link nitrostorage://e2e-integrity"
       >
         <StatusRow testID="e2e-integrity-ready" label="state" value="ready" />
+        <StatusRow
+          testID="e2e-integrity-finished"
+          label="run"
+          value={report ? "finished" : "running"}
+        />
         <StatusRow
           testID="e2e-integrity-summary"
           label="summary"

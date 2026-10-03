@@ -1,9 +1,6 @@
 import { useEffect, useState } from "react";
-import { Platform, View } from "react-native";
+import { View } from "react-native";
 import {
-  AccessControl,
-  BiometricLevel,
-  createStorageItem,
   getStorageErrorCode,
   storage,
   StorageScope,
@@ -11,7 +8,7 @@ import {
 import { KeychainLifecycleProbe } from "../components/keychain-lifecycle-probe";
 import { Card, Page, StatusRow } from "../components/shared";
 
-type CaseStatus = "pass" | "fail" | "skip";
+type CaseStatus = "pass" | "fail";
 type LabCase = {
   name: string;
   status: CaseStatus;
@@ -21,7 +18,6 @@ type LabCase = {
 type KeychainReport = {
   fail: number;
   pass: number;
-  skip: number;
   cases: LabCase[];
 };
 
@@ -39,6 +35,13 @@ function errorDetail(error: unknown): string {
 function runSecureRoundTrip(): LabCase {
   const key = "__e2e_secure_roundtrip__";
   try {
+    const capabilities = storage.getCapabilities();
+    if (
+      capabilities.platform !== "native" ||
+      capabilities.backend.secure !== "platform-secure-storage"
+    ) {
+      throw new Error("expected native secure backend capability");
+    }
     storage.setString(key, "secure-sentinel", StorageScope.Secure);
     storage.flushSecureWrites();
     const value = storage.getString(key, StorageScope.Secure);
@@ -63,7 +66,8 @@ function runSecureRoundTrip(): LabCase {
       ? {
           name: "secure-roundtrip",
           status: "pass",
-          detail: `${Platform.OS}:${metadata.backend}`,
+          detail:
+            "native=platform-secure-storage:value=secure-sentinel:metadata-hidden:deleted=true",
         }
       : {
           name: "secure-roundtrip",
@@ -74,6 +78,7 @@ function runSecureRoundTrip(): LabCase {
     let detail = errorDetail(error);
     try {
       storage.deleteString(key, StorageScope.Secure);
+      storage.flushSecureWrites();
     } catch (cleanupError) {
       detail = `${detail}; cleanup=${errorDetail(cleanupError)}`;
     }
@@ -82,46 +87,10 @@ function runSecureRoundTrip(): LabCase {
 }
 
 function runKeychainSweep(): KeychainReport {
-  const cases: LabCase[] = [runSecureRoundTrip()];
-
-  if (Platform.OS !== "ios") {
-    cases.push({
-      name: "biometric-write",
-      status: "skip",
-      detail: `not ios (${Platform.OS})`,
-    });
-  } else {
-    try {
-      const item = createStorageItem({
-        key: "__e2e_biometric_sentinel__",
-        scope: StorageScope.Secure,
-        defaultValue: "",
-        biometric: true,
-        biometricLevel: BiometricLevel.BiometryOrPasscode,
-        accessControl: AccessControl.WhenUnlocked,
-      });
-      item.set("bio-sentinel");
-      const value = item.get();
-      item.delete();
-      cases.push({
-        name: "biometric-write",
-        status: value === "bio-sentinel" ? "pass" : "fail",
-        detail: value === "bio-sentinel" ? "roundtrip" : `got ${value}`,
-      });
-    } catch (error) {
-      const code = getStorageErrorCode(error);
-      cases.push({
-        name: "biometric-write",
-        status: code === "authentication_required" ? "skip" : "fail",
-        detail: errorDetail(error),
-      });
-    }
-  }
-
+  const cases = [runSecureRoundTrip()];
   const report: KeychainReport = {
     fail: cases.filter((item) => item.status === "fail").length,
     pass: cases.filter((item) => item.status === "pass").length,
-    skip: cases.filter((item) => item.status === "skip").length,
     cases,
   };
   globalThis.__keychainReport = report;
@@ -136,7 +105,7 @@ export default function KeychainLabScreen() {
   }, []);
 
   const summary = report
-    ? `fail=${report.fail} pass=${report.pass} skip=${report.skip}`
+    ? `finished:required-pass=${report.pass}:fail=${report.fail}:hardware-pending`
     : "running";
 
   return (
@@ -151,9 +120,19 @@ export default function KeychainLabScreen() {
       >
         <StatusRow testID="e2e-keychain-ready" label="state" value="ready" />
         <StatusRow
+          testID="e2e-keychain-finished"
+          label="run"
+          value={report ? "finished" : "running"}
+        />
+        <StatusRow
           testID="e2e-keychain-summary"
           label="summary"
           value={summary}
+        />
+        <StatusRow
+          testID="e2e-keychain-hardware-pending"
+          label="hardware cases"
+          value="pending:biometric,lock,corruption,hardware-backed-keychain"
         />
         <Card title="Secure checks" subtitle="No real tokens">
           {(report?.cases ?? []).map((item) => (
