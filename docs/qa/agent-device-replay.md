@@ -37,8 +37,28 @@ The runner supplies a fresh UUID as `RUN_ID` to each replay. The persistence
 flow writes one `RUN_ID`-scoped Disk key, closes and relaunches the installed
 app with the same ID, compares the stored value with the expected value, and
 deletes that key. Other smoke and lab cases use reserved QA keys and clean only
-those keys. The default replay never clears a whole storage scope or the app's
-data.
+those keys. Only the final `clear-all` suite clears whole scopes.
+
+The `clear-all` suite (`e2e/qa-clear-all.ad`) seeds one reserved key in Memory,
+Disk, and Secure, then calls `storage.clearAll()`. This wipes all example
+storage in every scope on the target install, not only QA keys. It is the last
+suite in the manifest, and the runner passes suites to `agent-device test` in
+manifest order, so it runs after every other suite. Run it only on a disposable
+example install. Use `--flow` to skip it when the install holds data you need.
+
+The `api-extended` suite (`e2e/qa-api-extended.ad`) opens a run-on-load screen
+and asserts its results through the on-screen `e2e-ext-results` label, which
+joins one `;`-terminated token per check. It covers item `merge` and
+`setOrDelete`, Set `toggle` and `values`, `clearGroup`, TTL `onExpired` and
+`subscribeExpired`, Secure metadata and export inventory, default access
+control, coalesced Secure writes, the `invalid_key` error, scoped metrics,
+native Disk key events, the React hooks, and `createSecureAuthStorage` TTL. It
+uses reserved `__e2e_ext_`, `__e2e_inv_`, and `__e2e_auth` keys and restores the
+default access control to `WhenUnlocked` after each access-control check. Its
+passcode access-control row is a gating probe for later iOS biometric work: the
+flow asserts only that a `passcode-acl=` result rendered. A device without a
+passcode can reject that write, and the row is not a pass for passcode-protected
+storage.
 
 Each run uses a unique session and an artifact directory under the OS temporary
 directory. `agent-device test` closes each attempt session itself, including

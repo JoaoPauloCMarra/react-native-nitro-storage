@@ -1,0 +1,8 @@
+open "com.nitrostorage.example" "nitrostorage://e2e-clear-all" --relaunch
+wait "stable"
+wait id="e2e-clear-all-screen"
+wait id="e2e-clear-all-finished"
+wait text "finished"
+wait id="e2e-clear-all-results"
+wait text "clearall:memory=missing:disk=missing:secure=missing;"
+close

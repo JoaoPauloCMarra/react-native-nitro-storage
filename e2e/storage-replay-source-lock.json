@@ -1,9 +1,11 @@
 {
   "version": 1,
-  "runtimeSourceSha256": "0d06fbe11eaa309209e9fcaf1a1f8929f151bce5221286db515274ca3cecbc37",
+  "runtimeSourceSha256": "93a20d2dbafef8ce8b4a3591cfa4d58d01504ae13118e1493bab5388ad339ca1",
   "runtimeSourceFiles": [
     "apps/example/app.config.js",
     "apps/example/app/_layout.tsx",
+    "apps/example/app/e2e-api-extended.tsx",
+    "apps/example/app/e2e-clear-all.tsx",
     "apps/example/app/e2e-integrity.tsx",
     "apps/example/app/e2e-keychain.tsx",
     "apps/example/app/e2e-persistence.tsx",
@@ -79,8 +81,10 @@
     "packages/react-native-nitro-storage/src/web-backend-contract.ts",
     "packages/react-native-nitro-storage/src/web-storage-backend.ts"
   ],
-  "replayInputsSha256": "4228087519192df055c4ef27c0dd3bae85f79beb17b1140c842b099bc5f044e6",
+  "replayInputsSha256": "ac25089fda9899885d970d52b8bb04ee220b5d6ac15a190ddae85ec52ba617a3",
   "replayInputs": [
+    "e2e/qa-api-extended.ad",
+    "e2e/qa-clear-all.ad",
     "e2e/qa-deeplink.ad",
     "e2e/qa-full-features.ad",
     "e2e/qa-integrity.ad",
@@ -95,6 +99,8 @@
     "keychain",
     "stress",
     "deeplink",
-    "persistence-relaunch"
+    "persistence-relaunch",
+    "api-extended",
+    "clear-all"
   ]
 }
