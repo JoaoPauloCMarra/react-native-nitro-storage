@@ -1189,12 +1189,22 @@ export function SmokeTestRunner() {
         <View style={s.headerLeft}>
           <Text style={s.title}>Smoke Test</Text>
           {total > 0 ? (
-            <Text testID="smoke-summary" style={s.summary}>
-              {running ? "Running: " : `${completionLabel}: `}
-              {passCount}/{total} passed
-              {` · ${failCount} failed`}
-              {skippedCount > 0 ? ` · ${skippedCount} skipped` : ""}
-            </Text>
+            <>
+              <Text testID="smoke-summary" style={s.summary}>
+                {running ? "Running: " : `${completionLabel}: `}
+                {passCount}/{total} passed
+                {` · ${failCount} failed`}
+                {skippedCount > 0 ? ` · ${skippedCount} skipped` : ""}
+              </Text>
+              <View
+                testID="smoke-results"
+                accessible
+                accessibilityLabel={logs
+                  .map((entry) => `${entry.status}:${entry.detail ?? ""}`)
+                  .join(" ")}
+                style={s.resultsProbe}
+              />
+            </>
           ) : (
             <Text style={s.summary}>Run all features sequentially</Text>
           )}
@@ -1293,6 +1303,9 @@ const s = StyleSheet.create({
     fontWeight: "800",
     color: Colors.text,
     letterSpacing: 0,
+  },
+  resultsProbe: {
+    height: 1,
   },
   summary: {
     fontSize: 12,

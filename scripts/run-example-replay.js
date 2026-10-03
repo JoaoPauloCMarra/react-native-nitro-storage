@@ -174,8 +174,6 @@ function runExampleReplay({
   }
   const session = `nitro-storage-replay-${runId}`;
   const targetArgs = [
-    "--platform",
-    options.platform,
     options.targetFlag,
     options.target,
   ];

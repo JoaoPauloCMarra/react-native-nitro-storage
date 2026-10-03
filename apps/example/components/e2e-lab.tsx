@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Platform, View } from "react-native";
+import { Platform, StyleSheet, View } from "react-native";
 import {
   createSetItem,
   createStorageItem,
@@ -300,7 +300,28 @@ export function StorageE2eLab() {
           }}
         />
         <StatusRow testID="e2e-platform" label="platform" value={Platform.OS} />
+        <View
+          testID="e2e-results"
+          accessible
+          accessibilityLabel={[
+            renameStatus,
+            memoryStatus,
+            secureAsyncStatus,
+            auditStatus,
+            setStatus,
+            secureCapabilityStatus,
+            flushObserverStatus,
+            stressStatus,
+          ].join(" ")}
+          style={localStyles.resultsProbe}
+        />
       </View>
     </Card>
   );
 }
+
+const localStyles = StyleSheet.create({
+  resultsProbe: {
+    height: 1,
+  },
+});

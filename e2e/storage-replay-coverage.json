@@ -48,7 +48,7 @@
       "source": "apps/example/components/e2e-lab.tsx",
       "statusSource": "apps/example/components/e2e-lab.tsx",
       "controlId": "e2e-rename-run",
-      "statusId": "e2e-rename-status",
+      "statusId": "e2e-results",
       "expectedText": "ok:migrated-value",
       "assertion": "renamedItem.get() === \"migrated-value\""
     },
@@ -61,7 +61,7 @@
       "source": "apps/example/components/e2e-lab.tsx",
       "statusSource": "apps/example/components/e2e-lab.tsx",
       "controlId": "e2e-memory-run",
-      "statusId": "e2e-memory-status",
+      "statusId": "e2e-results",
       "expectedText": "ok:cached",
       "assertion": "memoryItem.get() === \"cached\""
     },
@@ -74,7 +74,7 @@
       "source": "apps/example/components/e2e-lab.tsx",
       "statusSource": "apps/example/components/e2e-lab.tsx",
       "controlId": "e2e-secure-async-run",
-      "statusId": "e2e-secure-async-status",
+      "statusId": "e2e-results",
       "expectedText": "ok:queued",
       "assertion": "storage.getString(\"e2e-secure-async\", StorageScope.Secure) ==="
     },
@@ -87,7 +87,7 @@
       "source": "apps/example/components/e2e-lab.tsx",
       "statusSource": "apps/example/components/e2e-lab.tsx",
       "controlId": "e2e-audit-run",
-      "statusId": "e2e-audit-status",
+      "statusId": "e2e-results",
       "expectedText": "ok:audit=registered-unique-grouped",
       "assertion": "group.length === 1 &&"
     },
@@ -100,7 +100,7 @@
       "source": "apps/example/components/e2e-lab.tsx",
       "statusSource": "apps/example/components/e2e-lab.tsx",
       "controlId": "e2e-set-run",
-      "statusId": "e2e-set-status",
+      "statusId": "e2e-results",
       "expectedText": "ok:red=true:size=1",
       "assertion": "typed.red === true && tagSet.size() === 1;"
     },
@@ -113,7 +113,7 @@
       "source": "apps/example/components/e2e-lab.tsx",
       "statusSource": "apps/example/components/e2e-lab.tsx",
       "controlId": "e2e-secure-capability-run",
-      "statusId": "e2e-secure-capability-status",
+      "statusId": "e2e-results",
       "expectedText": "ok:secure-backend=platform-secure-storage:value=lab-secure:deleted=true",
       "assertion": "value === \"lab-secure\" && exists && removed"
     },
@@ -127,7 +127,7 @@
       "source": "apps/example/components/e2e-lab.tsx",
       "statusSource": "apps/example/components/e2e-lab.tsx",
       "controlId": "e2e-flush-observer-run",
-      "statusId": "e2e-flush-observer-status",
+      "statusId": "e2e-results",
       "expectedText": "ok:registered-cleared:deliveries=0",
       "assertion": "storage.setScheduledFlushErrorObserver(observer);"
     },
@@ -140,7 +140,7 @@
       "source": "apps/example/components/e2e-lab.tsx",
       "statusSource": "apps/example/components/e2e-lab.tsx",
       "controlId": "e2e-run-stress",
-      "statusId": "e2e-stress-result",
+      "statusId": "e2e-results",
       "expectedText": "ok:writes=200:reads=200:ms=",
       "assertion": "reads === 200 ? \"ok\" : \"fail\""
     },
@@ -155,7 +155,7 @@
       "statusSource": "apps/example/components/smoke-test.tsx",
       "controlId": "smoke-run-all",
       "statusId": "smoke-summary",
-      "expectedText": "Complete: PASS: 39/41 passed · 0 failed · 2 skipped",
+      "expectedText": "Complete: PASS: 39/41 passed \u00b7 0 failed \u00b7 2 skipped",
       "assertion": "const completionLabel = failCount === 0 ? \"Complete: PASS\" : \"Complete: FAIL\";"
     },
     {
@@ -168,7 +168,7 @@
       "source": "apps/example/components/smoke-test.tsx",
       "statusSource": "apps/example/components/smoke-test.tsx",
       "controlId": "smoke-run-all",
-      "statusId": "smoke-case-test-adapter-migration",
+      "statusId": "smoke-results",
       "expectedText": "pass:migration=registered:latest=migrated",
       "assertion": "assert(val === \"migrated\", `expected migrated, got ${val}`);"
     },
@@ -182,7 +182,7 @@
       "source": "apps/example/components/smoke-test.tsx",
       "statusSource": "apps/example/components/smoke-test.tsx",
       "controlId": "smoke-run-all",
-      "statusId": "smoke-case-test-adapter-error-classification",
+      "statusId": "smoke-results",
       "expectedText": "pass:storage_full:tagged-error-classification",
       "assertion": "getTestingStorageErrorCode(fixture) === \"storage_full\""
     },
@@ -195,7 +195,7 @@
       "source": "apps/example/components/smoke-test.tsx",
       "statusSource": "apps/example/components/smoke-test.tsx",
       "controlId": "smoke-run-all",
-      "statusId": "smoke-case-qa-key-cleanup",
+      "statusId": "smoke-results",
       "expectedText": "pass:qa-prefix-only",
       "assertion": "storage.getKeysByPrefix(prefix, scope).length > 0"
     },
@@ -250,7 +250,7 @@
       "source": "apps/example/app/e2e-integrity.tsx",
       "statusSource": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
-      "statusId": "e2e-integrity-native-backend-capabilities",
+      "statusId": "e2e-integrity-results",
       "expectedText": "pass:native:disk=sqlite:secure=platform-secure-storage",
       "assertion": "capabilities.platform === \"native\""
     },
@@ -263,7 +263,7 @@
       "source": "apps/example/app/e2e-integrity.tsx",
       "statusSource": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
-      "statusId": "e2e-integrity-audit-prefix-case",
+      "statusId": "e2e-integrity-results",
       "expectedText": "pass:exact-case=upper-only:lower=preserved",
       "assertion": "keys.length === 1 && keys[0] ==="
     },
@@ -276,7 +276,7 @@
       "source": "apps/example/app/e2e-integrity.tsx",
       "statusSource": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
-      "statusId": "e2e-integrity-audit-memory-raw-and-set",
+      "statusId": "e2e-integrity-results",
       "expectedText": "pass:raw-literal=preserved:set=3",
       "assertion": "item.has(member) && Object.hasOwn(item.get(), member)"
     },
@@ -289,7 +289,7 @@
       "source": "apps/example/app/e2e-integrity.tsx",
       "statusSource": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
-      "statusId": "e2e-integrity-audit-prefix-literals",
+      "statusId": "e2e-integrity-results",
       "expectedText": "pass:literal-prefixes=5",
       "assertion": "matches.length === 1 && matches[0] === key"
     },
@@ -302,7 +302,7 @@
       "source": "apps/example/app/e2e-integrity.tsx",
       "statusSource": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
-      "statusId": "e2e-integrity-audit-nul-roundtrip",
+      "statusId": "e2e-integrity-results",
       "expectedText": "pass:disk+secure:nul+unicode+batch",
       "assertion": "storage.getString(key, scope) === value"
     },
@@ -315,7 +315,7 @@
       "source": "apps/example/app/e2e-integrity.tsx",
       "statusSource": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
-      "statusId": "e2e-integrity-disk-write-read",
+      "statusId": "e2e-integrity-results",
       "expectedText": "pass:raw=disk-ok:item=disk-item-ok",
       "assertion": "storage.getString(rawKey, StorageScope.Disk) === \"disk-ok\""
     },
@@ -328,7 +328,7 @@
       "source": "apps/example/app/e2e-integrity.tsx",
       "statusSource": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
-      "statusId": "e2e-integrity-secure-write-read",
+      "statusId": "e2e-integrity-results",
       "expectedText": "pass:secure-ok",
       "assertion": "item.get() === \"secure-ok\""
     },
@@ -341,7 +341,7 @@
       "source": "apps/example/app/e2e-integrity.tsx",
       "statusSource": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
-      "statusId": "e2e-integrity-import-then-flush",
+      "statusId": "e2e-integrity-results",
       "expectedText": "pass:imported-after-flush",
       "assertion": "storage.getString(key, StorageScope.Disk) === \"imported\""
     },
@@ -354,7 +354,7 @@
       "source": "apps/example/app/e2e-integrity.tsx",
       "statusSource": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
-      "statusId": "e2e-integrity-tx-rollback",
+      "statusId": "e2e-integrity-results",
       "expectedText": "pass:committed:rollback=true",
       "assertion": "item.get() === \"committed\""
     },
@@ -367,7 +367,7 @@
       "source": "apps/example/app/e2e-integrity.tsx",
       "statusSource": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
-      "statusId": "e2e-integrity-renameFrom",
+      "statusId": "e2e-integrity-results",
       "expectedText": "pass:migrated-value:legacy=missing",
       "assertion": "renamed.get() === \"migrated-value\""
     },
@@ -380,7 +380,7 @@
       "source": "apps/example/app/e2e-integrity.tsx",
       "statusSource": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
-      "statusId": "e2e-integrity-namespace-isolation",
+      "statusId": "e2e-integrity-results",
       "expectedText": "pass:item=ns-ok:raw=ns-raw:plain-key=isolated",
       "assertion": "namespaced.get() === \"ns-ok\""
     },
@@ -393,7 +393,7 @@
       "source": "apps/example/app/e2e-integrity.tsx",
       "statusSource": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
-      "statusId": "e2e-integrity-cache-metrics",
+      "statusId": "e2e-integrity-results",
       "expectedText": "pass:cache=miss-hit-entry",
       "assertion": "metrics.cacheMisses > 0"
     },
@@ -406,7 +406,7 @@
       "source": "apps/example/app/e2e-integrity.tsx",
       "statusSource": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
-      "statusId": "e2e-integrity-disk-ttl",
+      "statusId": "e2e-integrity-results",
       "expectedText": "pass:expired-default",
       "assertion": "item.get() === \"expired-default\""
     },
@@ -419,7 +419,7 @@
       "source": "apps/example/app/e2e-integrity.tsx",
       "statusSource": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
-      "statusId": "e2e-integrity-secure-batch",
+      "statusId": "e2e-integrity-results",
       "expectedText": "pass:a,b",
       "assertion": "va === \"a\" && vb === \"b\""
     },
@@ -432,7 +432,7 @@
       "source": "apps/example/app/e2e-integrity.tsx",
       "statusSource": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
-      "statusId": "e2e-integrity-secure-tx-rollback",
+      "statusId": "e2e-integrity-results",
       "expectedText": "pass:committed:rollback=true",
       "assertion": "item.get() === \"committed\""
     },
@@ -445,7 +445,7 @@
       "source": "apps/example/app/e2e-integrity.tsx",
       "statusSource": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
-      "statusId": "e2e-integrity-disk-prefix",
+      "statusId": "e2e-integrity-results",
       "expectedText": "pass:keep=1:drop=missing",
       "assertion": "storage.getString(\"__pfx_keep__\", StorageScope.Disk) === \"1\""
     },
@@ -458,7 +458,7 @@
       "source": "apps/example/app/e2e-integrity.tsx",
       "statusSource": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
-      "statusId": "e2e-integrity-qa-key-cleanup",
+      "statusId": "e2e-integrity-results",
       "expectedText": "pass:qa-keys=cleared",
       "assertion": "assert(remaining.length === 0, \"QA keys remain after cleanup\");"
     },
@@ -674,7 +674,7 @@
       "suite": "e2e/qa-integrity.ad",
       "source": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
-      "statusId": "e2e-integrity-async-transaction-guard",
+      "statusId": "e2e-integrity-results",
       "expectedText": "pass:memory+disk+secure:promise-rejected:rollback=original:context=closed",
       "assertion": "context.setRaw(key, \"late-write\");"
     }

@@ -46,7 +46,9 @@ on failure.
 
 A replay passes only when each suite reaches its finished status and every
 required status ID contains its expected public API value. A `fail=0` summary by
-itself is not sufficient. The keychain suite runs one no-prompt Secure
+itself is not sufficient. Smoke and integrity rows are asserted through the
+on-screen `smoke-results` and `e2e-integrity-results` labels because
+agent-device `.ad` waits only see on-screen elements. The keychain suite runs one no-prompt Secure
 roundtrip and keeps biometric, lock, corruption, and hardware-backed checks
 explicitly pending. The smoke test's constructed `storage_full` error is read
 through the public `/testing` entrypoint; it proves error-code classification
