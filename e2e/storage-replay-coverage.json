@@ -36,6 +36,16 @@
       "id": "persistence-relaunch",
       "path": "e2e/qa-persistence-relaunch.ad",
       "purpose": "Seed one RUN_ID-scoped native Disk key, relaunch the app, verify its exact value, and delete that key"
+    },
+    {
+      "id": "api-extended",
+      "path": "e2e/qa-api-extended.ad",
+      "purpose": "Assert item merge and setOrDelete, Set toggle, clearGroup, TTL expiry events, Secure inventory, access control, coalesced Secure writes, invalid keys, scoped metrics, native Disk events, hooks, auth-storage TTL, and a passcode access-control probe on reserved QA keys"
+    },
+    {
+      "id": "clear-all",
+      "path": "e2e/qa-clear-all.ad",
+      "purpose": "Seed one reserved key per scope, call clearAll, and verify each is absent; this wipes all example storage and must run last"
     }
   ],
   "features": [
@@ -155,7 +165,7 @@
       "statusSource": "apps/example/components/smoke-test.tsx",
       "controlId": "smoke-run-all",
       "statusId": "smoke-summary",
-      "expectedText": "Complete: PASS: 39/41 passed \u00b7 0 failed \u00b7 2 skipped",
+      "expectedText": "Complete: PASS: 39/41 passed \u00b7 0 failed · 2 skipped",
       "assertion": "const completionLabel = failCount === 0 ? \"Complete: PASS\" : \"Complete: FAIL\";"
     },
     {
@@ -677,13 +687,196 @@
       "statusId": "e2e-integrity-results",
       "expectedText": "pass:memory+disk+secure:promise-rejected:rollback=original:context=closed",
       "assertion": "context.setRaw(key, \"late-write\");"
+    },
+    {
+      "id": "e2e.item-merge-setordelete",
+      "coverage": "replay-asserted",
+      "kind": "public-api",
+      "transport": "A Disk object item merges a partial value over its default, then setOrDelete(null) removes the stored value.",
+      "suite": "e2e/qa-api-extended.ad",
+      "source": "apps/example/app/e2e-api-extended.tsx",
+      "statusSource": "apps/example/app/e2e-api-extended.tsx",
+      "trigger": "screen-load",
+      "statusId": "e2e-ext-results",
+      "expectedText": "ok:merge=clicks-1:setOrDelete=missing;",
+      "assertion": "merged.clicks === 1 && merged.label === \"start\" && missing"
+    },
+    {
+      "id": "e2e.set-toggle-values",
+      "coverage": "replay-asserted",
+      "kind": "public-api",
+      "transport": "A typed Memory Set item toggles an existing member off and a new member on, and values() returns the remaining member.",
+      "suite": "e2e/qa-api-extended.ad",
+      "source": "apps/example/app/e2e-api-extended.tsx",
+      "statusSource": "apps/example/app/e2e-api-extended.tsx",
+      "trigger": "screen-load",
+      "statusId": "e2e-ext-results",
+      "expectedText": "ok:toggle=false,true:values=blue;",
+      "assertion": "!removedRed && addedBlue && values === \"blue\""
+    },
+    {
+      "id": "e2e.clear-group",
+      "coverage": "replay-asserted",
+      "kind": "public-api",
+      "transport": "clearGroup removes the two Disk items registered in the e2e-g group and keeps a Disk item outside the group.",
+      "suite": "e2e/qa-api-extended.ad",
+      "source": "apps/example/app/e2e-api-extended.tsx",
+      "statusSource": "apps/example/app/e2e-api-extended.tsx",
+      "trigger": "screen-load",
+      "statusId": "e2e-ext-results",
+      "expectedText": "ok:clearGroup=2:outside=kept;",
+      "assertion": "storage.clearGroup(\"e2e-g\");"
+    },
+    {
+      "id": "e2e.expired-events",
+      "coverage": "replay-asserted",
+      "kind": "public-api",
+      "transport": "A Memory item with a 1 ms TTL is read after a resolved timeout; the read returns the default and fires onExpired and subscribeExpired once each.",
+      "suite": "e2e/qa-api-extended.ad",
+      "source": "apps/example/app/e2e-api-extended.tsx",
+      "statusSource": "apps/example/app/e2e-api-extended.tsx",
+      "trigger": "screen-load",
+      "statusId": "e2e-ext-results",
+      "expectedText": "ok:onExpired=1:subscribeExpired=1;",
+      "assertion": "expiredCounts.onExpired === 1 &&"
+    },
+    {
+      "id": "e2e.secure-inventory",
+      "coverage": "replay-asserted",
+      "kind": "public-api",
+      "transport": "Two reserved native Secure keys appear in getAllSecureMetadata and exportSecureUnsafe when filtered by their QA prefix, then are deleted.",
+      "suite": "e2e/qa-api-extended.ad",
+      "source": "apps/example/app/e2e-api-extended.tsx",
+      "statusSource": "apps/example/app/e2e-api-extended.tsx",
+      "trigger": "screen-load",
+      "statusId": "e2e-ext-results",
+      "expectedText": "ok:metadata=2:export=2;",
+      "assertion": "metadata === 2 && exported === 2"
+    },
+    {
+      "id": "e2e.access-control-default",
+      "coverage": "replay-asserted",
+      "kind": "public-api",
+      "transport": "The default Secure access control is set to AfterFirstUnlock for a native Secure roundtrip and restored to WhenUnlocked.",
+      "suite": "e2e/qa-api-extended.ad",
+      "source": "apps/example/app/e2e-api-extended.tsx",
+      "statusSource": "apps/example/app/e2e-api-extended.tsx",
+      "trigger": "screen-load",
+      "statusId": "e2e-ext-results",
+      "expectedText": "ok:access=after-first-unlock:value=ac-ok;",
+      "assertion": "storage.setAccessControl(AccessControl.AfterFirstUnlock);"
+    },
+    {
+      "id": "e2e.coalesce-secure",
+      "coverage": "replay-asserted",
+      "kind": "public-api",
+      "transport": "A coalesced Secure item returns its queued value before the flush, and the native Secure value exists after flushSecureWrites.",
+      "suite": "e2e/qa-api-extended.ad",
+      "source": "apps/example/app/e2e-api-extended.tsx",
+      "statusSource": "apps/example/app/e2e-api-extended.tsx",
+      "trigger": "screen-load",
+      "statusId": "e2e-ext-results",
+      "expectedText": "ok:coalesced=read-before-flush:flushed;",
+      "assertion": "beforeFlush === \"coalesced\" && flushed !== undefined"
+    },
+    {
+      "id": "e2e.invalid-key",
+      "coverage": "replay-asserted",
+      "kind": "public-api",
+      "transport": "createStorageItem rejects an empty key with the public invalid_key error code.",
+      "suite": "e2e/qa-api-extended.ad",
+      "source": "apps/example/app/e2e-api-extended.tsx",
+      "statusSource": "apps/example/app/e2e-api-extended.tsx",
+      "trigger": "screen-load",
+      "statusId": "e2e-ext-results",
+      "expectedText": "ok:invalid_key;",
+      "assertion": "code === \"invalid_key\""
+    },
+    {
+      "id": "e2e.scoped-metrics",
+      "coverage": "replay-asserted",
+      "kind": "public-api",
+      "transport": "With a metrics observer installed, getScopedMetricsSnapshot reports setString counters for both the Disk and Secure scopes; the observer and metrics are reset afterwards.",
+      "suite": "e2e/qa-api-extended.ad",
+      "source": "apps/example/app/e2e-api-extended.tsx",
+      "statusSource": "apps/example/app/e2e-api-extended.tsx",
+      "trigger": "screen-load",
+      "statusId": "e2e-ext-results",
+      "expectedText": "ok:scoped=disk+secure;",
+      "assertion": "snapshot[`storage:setString:${StorageScope.Secure}`]"
+    },
+    {
+      "id": "e2e.native-disk-events",
+      "coverage": "replay-asserted",
+      "kind": "public-api",
+      "transport": "A subscribeKey listener on a reserved Disk key receives the set event for a native Disk write and renders its real change source; the adapter suppresses the native echo of its own write, so the JavaScript emission is the observable event.",
+      "suite": "e2e/qa-api-extended.ad",
+      "source": "apps/example/app/e2e-api-extended.tsx",
+      "statusSource": "apps/example/app/e2e-api-extended.tsx",
+      "trigger": "screen-load",
+      "statusId": "e2e-ext-results",
+      "expectedText": "ok:op=set:source=native;",
+      "assertion": "`ok:op=set:source=${setEvent.source}`"
+    },
+    {
+      "id": "e2e.hooks",
+      "coverage": "replay-asserted",
+      "kind": "public-api",
+      "transport": "A mounted component drives useStorage, useStorageValue, useStorageSelector, useSetStorage, and useStorageActions through set, updater, merge, and remove on a Memory item.",
+      "suite": "e2e/qa-api-extended.ad",
+      "source": "apps/example/app/e2e-api-extended.tsx",
+      "statusSource": "apps/example/app/e2e-api-extended.tsx",
+      "trigger": "screen-load",
+      "statusId": "e2e-ext-results",
+      "expectedText": "ok:hooks=value,selector,setter,actions;",
+      "assertion": "\"ok:hooks=value,selector,setter,actions\""
+    },
+    {
+      "id": "e2e.auth-storage-ttl",
+      "coverage": "replay-asserted",
+      "kind": "public-api",
+      "transport": "createSecureAuthStorage with a 50 ms TTL in a reserved namespace returns the stored token, then the empty default after the TTL elapses.",
+      "suite": "e2e/qa-api-extended.ad",
+      "source": "apps/example/app/e2e-api-extended.tsx",
+      "statusSource": "apps/example/app/e2e-api-extended.tsx",
+      "trigger": "screen-load",
+      "statusId": "e2e-ext-results",
+      "expectedText": "ok:auth-ttl=expired-default;",
+      "assertion": "before === \"token\" && after === \"\""
+    },
+    {
+      "id": "e2e.passcode-acl-probe",
+      "coverage": "replay-asserted",
+      "kind": "coverage-state",
+      "transport": "The default Secure access control is set to WhenPasscodeSetThisDeviceOnly for one Secure roundtrip and restored to WhenUnlocked; the screen renders the stored result or the public error code.",
+      "suite": "e2e/qa-api-extended.ad",
+      "source": "apps/example/app/e2e-api-extended.tsx",
+      "statusSource": "apps/example/app/e2e-api-extended.tsx",
+      "trigger": "screen-load",
+      "statusId": "e2e-ext-results",
+      "expectedText": "passcode-acl=",
+      "assertion": "storage.setAccessControl(AccessControl.WhenPasscodeSetThisDeviceOnly);",
+      "claimLimit": "The row proves only that the probe ran and rendered a passcode-acl= result. It does not prove that the item stored (a device without a passcode rejects it) and is a gating probe for Tier 2 iOS biometric work, not a pass."
+    },
+    {
+      "id": "storage.clear-all",
+      "coverage": "replay-asserted",
+      "kind": "public-api",
+      "transport": "The final suite seeds one reserved key in Memory, Disk, and Secure, calls clearAll, and verifies that each key is absent. It wipes all example storage on the target install.",
+      "suite": "e2e/qa-clear-all.ad",
+      "source": "apps/example/app/e2e-clear-all.tsx",
+      "statusSource": "apps/example/app/e2e-clear-all.tsx",
+      "trigger": "screen-load",
+      "statusId": "e2e-clear-all-results",
+      "expectedText": "clearall:memory=missing:disk=missing:secure=missing;",
+      "assertion": "storage.clearAll();"
     }
   ],
   "pending": [
     {
       "id": "durability.scheduled-flush-error-delivery",
       "state": "pending-prerequisites",
-      "reason": "The deterministic replay installs and clears the observer but does not force a Disk or Secure backend failure. Controlled unit coverage does not prove native runtime failure delivery.",
+      "reason": "The deterministic replay installs and clears the observer but does not force a backend failure. A Secure scheduled-flush failure cannot be forced without a locked or invalidated Keychain/Keystore, so it is infeasible in the default replay. A Disk failure needs a corruption or storage-full fixture and a runner stage that installs it. Controlled unit coverage does not prove native runtime failure delivery.",
       "prerequisites": [
         "A controlled native Disk and Secure backend failure that does not exhaust or corrupt device-wide storage",
         "A disposable installed release app with only the replay QA namespace in use"
@@ -739,15 +932,6 @@
         "Platform evidence that identifies the actual key protection level"
       ],
       "acceptance": "Capture platform-level evidence for the QA key and match it with the public capability and Secure roundtrip result."
-    },
-    {
-      "id": "storage.clear-all",
-      "state": "pending-prerequisites",
-      "reason": "The default replay does not call clearAll because that public API removes data across Memory, Disk, and Secure scopes.",
-      "prerequisites": [
-        "A disposable example install with no unrelated keys or credentials in any scope"
-      ],
-      "acceptance": "In the disposable install, seed named values in each scope, call clearAll, verify those values are absent, and discard only that install's data."
     }
   ]
 }
