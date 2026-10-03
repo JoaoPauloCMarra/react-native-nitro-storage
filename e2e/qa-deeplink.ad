@@ -1,5 +1,8 @@
 open "com.nitrostorage.example" "nitrostorage://e2e" --relaunch
 wait "stable"
 wait id="e2e-screen"
+wait id="e2e-ready"
 wait text "e2e-ready"
+wait id="e2e-deeplink"
+wait text "nitrostorage://e2e"
 close
