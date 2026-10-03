@@ -48,6 +48,10 @@ export type {
   VersionedValue,
 } from "./shared";
 export { isKeychainLockedError } from "./shared";
+export type {
+  StorageScheduledFlushError,
+  StorageScheduledFlushErrorObserver,
+} from "./core/durability";
 
 export { StorageScope, AccessControl, BiometricLevel } from "./Storage.types";
 export type { Storage } from "./Storage.nitro";

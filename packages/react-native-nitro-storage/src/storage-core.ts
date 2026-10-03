@@ -1,4 +1,7 @@
-import { createDurabilityCoordinator } from "./core/durability";
+import {
+  createDurabilityCoordinator,
+  type StorageScheduledFlushErrorObserver,
+} from "./core/durability";
 import { createMetricsRegistry } from "./core/metrics";
 import {
   MIGRATION_VERSION_KEY,
@@ -44,6 +47,7 @@ import {
   type StorageMetricsObserver,
   type StorageSelectorListener,
   type StorageSelectorSubscribeOptions,
+  type SynchronousCallbackResult,
   type StorageVersion,
   type Validator,
   type VersionedValue,
@@ -75,6 +79,28 @@ export type TransactionContext = {
     item: Pick<StorageItem<unknown>, "scope" | "key" | "delete">,
   ) => void;
 };
+
+function assertSynchronousCallbackResult(
+  value: unknown,
+  callbackKind: "Transaction" | "Migration",
+): void {
+  if (
+    value === null ||
+    (typeof value !== "object" && typeof value !== "function")
+  ) {
+    return;
+  }
+
+  const then = (value as { then?: unknown }).then;
+  if (typeof then !== "function") {
+    return;
+  }
+
+  void Promise.resolve(value).catch(() => undefined);
+  throw new TypeError(
+    `${callbackKind} callbacks must be synchronous and cannot return a Promise or thenable.`,
+  );
+}
 
 export type StorageItemConfig<T> = {
   key: string;
@@ -318,7 +344,7 @@ function asInternal<T>(item: StorageItem<T>): StorageItemInternal<T> {
 export function createStorageCore(
   buildAdapter: (internals: StorageCoreInternals) => StorageCoreAdapter,
 ) {
-  const registeredMigrations = new Map<number, Migration>();
+  const registeredMigrations = new Map<number, Migration<unknown>>();
   const itemGroups = new Map<string, Set<StorageItemInternal<unknown>>>();
   const registeredKeyCounts = new Map<string, number>();
   const memoryStore = new Map<string, unknown>();
@@ -1484,6 +1510,12 @@ export function createStorageCore(
       measureOperation("storage:flushSecureWrites", StorageScope.Secure, () => {
         flushSecureWrites();
       });
+    },
+    /** Observes scheduled flush failures; explicit flush calls still throw. */
+    setScheduledFlushErrorObserver: (
+      observer?: StorageScheduledFlushErrorObserver,
+    ): void => {
+      durability.setScheduledFlushErrorObserver(observer);
     },
     setMetricsObserver: (observer?: StorageMetricsObserver) => {
       metrics.setObserver(observer);
@@ -3320,7 +3352,10 @@ export function createStorageCore(
     );
   }
 
-  function registerMigration(version: number, migration: Migration): void {
+  function registerMigration<TResult>(
+    version: number,
+    migration: Migration<TResult>,
+  ): void {
     if (!Number.isInteger(version) || version <= 0) {
       throw new Error("Migration version must be a positive integer.");
     }
@@ -3348,7 +3383,8 @@ export function createStorageCore(
           return;
         }
         runTransaction(scope, (tx) => {
-          migration(tx);
+          const migrationResult: unknown = migration(tx);
+          assertSynchronousCallbackResult(migrationResult, "Migration");
           tx.setRaw(MIGRATION_VERSION_KEY, String(version));
         });
         appliedVersion = version;
@@ -3360,7 +3396,7 @@ export function createStorageCore(
 
   function runTransaction<T>(
     scope: StorageScope,
-    transaction: (context: TransactionContext) => T,
+    transaction: (context: TransactionContext) => SynchronousCallbackResult<T>,
   ): T {
     return measureOperation("transaction:run", scope, () => {
       assertValidScope(scope);
@@ -3379,6 +3415,12 @@ export function createStorageCore(
       };
       const rollback = new Map<string, TransactionRollbackEntry>();
       const itemRenameStates = new Map<StorageItemInternal<unknown>, boolean>();
+      let transactionOpen = true;
+      const assertTransactionOpen = (): void => {
+        if (!transactionOpen) {
+          throw new TypeError("Transaction context is closed.");
+        }
+      };
 
       const rememberRollback = (
         key: string,
@@ -3486,26 +3528,34 @@ export function createStorageCore(
 
       const tx: TransactionContext = {
         scope,
-        getRaw: (key) => getRawValue(key, scope),
+        getRaw: (key) => {
+          assertTransactionOpen();
+          return getRawValue(key, scope);
+        },
         setRaw: (key, value) => {
+          assertTransactionOpen();
           rememberRollback(key);
           setRawValue(key, value, scope);
         },
         removeRaw: (key) => {
+          assertTransactionOpen();
           rememberRollback(key, undefined, scope === StorageScope.Secure);
           removeRawValue(key, scope);
         },
         getItem: (item) => {
+          assertTransactionOpen();
           assertBatchScope([item], scope);
           rememberItemRollback(item);
           return item.get();
         },
         setItem: (item, value) => {
+          assertTransactionOpen();
           assertBatchScope([item], scope);
           rememberItemRollback(item);
           item.set(value);
         },
         removeItem: (item) => {
+          assertTransactionOpen();
           assertBatchScope([item], scope);
           rememberItemRollback(item);
           item.delete();
@@ -3513,8 +3563,12 @@ export function createStorageCore(
       };
 
       try {
-        return transaction(tx);
+        const result = transaction(tx);
+        assertSynchronousCallbackResult(result, "Transaction");
+        transactionOpen = false;
+        return result;
       } catch (error) {
+        transactionOpen = false;
         itemRenameStates.forEach((migrated, item) => {
           item._setRenameMigrationState(migrated);
         });

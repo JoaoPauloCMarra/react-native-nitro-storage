@@ -14,6 +14,8 @@ import {
   secureItem,
   setBatch,
   storage,
+  type MigrationContext,
+  type TransactionContext,
 } from "../testing";
 import { StorageScope } from "../Storage.types";
 
@@ -158,5 +160,153 @@ describe("testing module default singleton surface", () => {
     storage.setString("other", "c", StorageScope.Disk);
     storage.clearNamespace("ns", StorageScope.Disk);
     expect(storage.getAllKeys(StorageScope.Disk)).toEqual(["other"]);
+  });
+});
+
+describe("synchronous transaction callbacks", () => {
+  it.each([StorageScope.Memory, StorageScope.Disk, StorageScope.Secure])(
+    "rejects async callbacks and rolls back synchronous writes in scope %s",
+    async (scope) => {
+      const existingKey = `async-transaction-existing-${scope}`;
+      const createdKey = `async-transaction-created-${scope}`;
+      storage.setString(existingKey, "before", scope);
+      let retainedContext: TransactionContext | undefined;
+      const asyncCallback: (context: TransactionContext) => unknown = async (
+        context,
+      ) => {
+        retainedContext = context;
+        context.setRaw(existingKey, "during");
+        context.setRaw(createdKey, "created");
+        await Promise.resolve();
+        context.setRaw(existingKey, "after");
+      };
+
+      expect(() => runTransaction(scope, asyncCallback)).toThrow(TypeError);
+      expect(storage.getString(existingKey, scope)).toBe("before");
+      expect(storage.getString(createdKey, scope)).toBeUndefined();
+
+      await Promise.resolve();
+
+      expect(storage.getString(existingKey, scope)).toBe("before");
+      expect(storage.getString(createdKey, scope)).toBeUndefined();
+      expect(retainedContext).toBeDefined();
+      expect(() => retainedContext!.setRaw(existingKey, "late")).toThrow(
+        TypeError,
+      );
+    },
+  );
+
+  it("rejects Promise and thenable results and consumes their rejections", async () => {
+    const promiseKey = "rejected-transaction-promise";
+    const rejectedPromiseCallback: (context: TransactionContext) => unknown = (
+      context,
+    ) => {
+      context.setRaw(promiseKey, "temporary");
+      return Promise.reject(new Error("rejected transaction"));
+    };
+
+    expect(() =>
+      runTransaction(StorageScope.Memory, rejectedPromiseCallback),
+    ).toThrow(TypeError);
+
+    const thenableKey = "rejected-transaction-thenable";
+    const rejectedThenable = {
+      then: (
+        _resolve: (value: unknown) => void,
+        reject: (reason: unknown) => void,
+      ) => {
+        reject(new Error("rejected thenable"));
+      },
+    };
+    const thenableCallback: (context: TransactionContext) => unknown = (
+      context,
+    ) => {
+      context.setRaw(thenableKey, "temporary");
+      return rejectedThenable;
+    };
+
+    expect(() => runTransaction(StorageScope.Memory, thenableCallback)).toThrow(
+      TypeError,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(storage.getString(promiseKey, StorageScope.Memory)).toBeUndefined();
+    expect(storage.getString(thenableKey, StorageScope.Memory)).toBeUndefined();
+  });
+
+  it("closes every context method after callback success and failure", () => {
+    const item = memoryItem({ key: "closed-context-item", defaultValue: "" });
+    const operations = (context: TransactionContext) => [
+      () => context.getRaw("closed-context-raw"),
+      () => context.setRaw("closed-context-raw", "value"),
+      () => context.removeRaw("closed-context-raw"),
+      () => context.getItem(item),
+      () => context.setItem(item, "value"),
+      () => context.removeItem(item),
+    ];
+    let successfulContext: TransactionContext | undefined;
+
+    const result = runTransaction(StorageScope.Memory, (context) => {
+      successfulContext = context;
+      return "completed";
+    });
+
+    expect(result).toBe("completed");
+    expect(successfulContext).toBeDefined();
+    operations(successfulContext!).forEach((operation) => {
+      expect(operation).toThrow(TypeError);
+    });
+
+    let failedContext: TransactionContext | undefined;
+    expect(() =>
+      runTransaction(StorageScope.Memory, (context) => {
+        failedContext = context;
+        context.setRaw("closed-context-rollback", "temporary");
+        throw new Error("transaction failed");
+      }),
+    ).toThrow("transaction failed");
+
+    expect(failedContext).toBeDefined();
+    operations(failedContext!).forEach((operation) => {
+      expect(operation).toThrow(TypeError);
+    });
+    expect(
+      storage.getString("closed-context-rollback", StorageScope.Memory),
+    ).toBeUndefined();
+  });
+
+  it("rejects an async migration without applying writes or its version", async () => {
+    const migrationVersion = 2_000_000;
+    const migrationVersionKey = "__nitro_storage_migration_version__";
+    storage.setString(
+      migrationVersionKey,
+      String(migrationVersion - 1),
+      StorageScope.Memory,
+    );
+    const asyncMigration: (context: MigrationContext) => unknown = async ({
+      setRaw,
+    }) => {
+      setRaw("async-migration-value", "during");
+      await Promise.resolve();
+      setRaw("async-migration-value", "after");
+    };
+    registerMigration(migrationVersion, asyncMigration);
+
+    expect(() => migrateToLatest(StorageScope.Memory)).toThrow(TypeError);
+    expect(
+      storage.getString("async-migration-value", StorageScope.Memory),
+    ).toBeUndefined();
+    expect(storage.getString(migrationVersionKey, StorageScope.Memory)).toBe(
+      String(migrationVersion - 1),
+    );
+
+    await Promise.resolve();
+
+    expect(
+      storage.getString("async-migration-value", StorageScope.Memory),
+    ).toBeUndefined();
+    expect(storage.getString(migrationVersionKey, StorageScope.Memory)).toBe(
+      String(migrationVersion - 1),
+    );
   });
 });

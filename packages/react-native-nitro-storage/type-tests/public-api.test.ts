@@ -19,11 +19,13 @@ import {
   getWebSecureStorageBackend,
   getBatch,
   memoryItem,
+  registerMigration,
   removeBatch,
   secureItem,
   setWebSecureStorageBackend,
   setBatch,
   storage,
+  runTransaction,
   useSetStorage,
   useStorage,
   useStorageActions,
@@ -38,6 +40,74 @@ type Equals<A, B> =
     ? true
     : false;
 type Assert<T extends true> = T;
+
+const transactionResult = runTransaction(StorageScope.Memory, () => "complete");
+type TransactionResultAssert = Assert<Equals<typeof transactionResult, string>>;
+void transactionResult;
+
+runTransaction(StorageScope.Memory, (context) => {
+  context.setRaw("sync-transaction", "complete");
+});
+
+// @ts-expect-error transaction callbacks must not return promises
+runTransaction(StorageScope.Memory, async () => "later");
+
+const customThenable = {
+  then: (resolve: (value: string) => void) => {
+    resolve("later");
+  },
+};
+
+// @ts-expect-error transaction callbacks must not return custom thenables
+runTransaction(StorageScope.Memory, () => customThenable);
+
+// @ts-expect-error migration callbacks must not return custom thenables
+registerMigration(20_029, () => customThenable);
+
+const mixedThenableResult = Math.random() > 0.5 ? "complete" : customThenable;
+// @ts-expect-error every callback result branch must be synchronous
+runTransaction(StorageScope.Memory, () => mixedThenableResult);
+
+const maybeThenable = {
+  then:
+    Math.random() > 0.5
+      ? (resolve: (value: string) => void) => resolve("later")
+      : "metadata",
+};
+// @ts-expect-error a callable branch of then makes the result asynchronous
+runTransaction(StorageScope.Memory, () => maybeThenable);
+
+const normalObjectResult = runTransaction(StorageScope.Memory, () => ({
+  then: "metadata",
+  value: 1,
+}));
+type NormalObjectResultAssert = Assert<
+  Equals<typeof normalObjectResult, { then: string; value: number }>
+>;
+registerMigration(20_030, () => ({ then: "metadata" }));
+
+const widenedAsyncTransaction: (context: {
+  setRaw: (key: string, value: string) => void;
+}) => unknown = async (context) => {
+  context.setRaw("widened-async-transaction", "later");
+};
+runTransaction(StorageScope.Memory, widenedAsyncTransaction);
+
+registerMigration(20_026, ({ setRaw }) => {
+  setRaw("sync-migration", "complete");
+});
+
+// @ts-expect-error migration callbacks must not return promises
+registerMigration(20_027, async ({ setRaw }) => {
+  setRaw("async-migration", "later");
+});
+
+const widenedAsyncMigration: (context: {
+  setRaw: (key: string, value: string) => void;
+}) => unknown = async (context) => {
+  context.setRaw("widened-async-migration", "later");
+};
+registerMigration(20_028, widenedAsyncMigration);
 
 const countItem = createStorageItem({
   key: "count",

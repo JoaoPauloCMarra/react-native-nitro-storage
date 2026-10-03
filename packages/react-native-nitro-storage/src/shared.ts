@@ -75,7 +75,23 @@ export type MigrationContext = {
   removeRaw: (key: string) => void;
 };
 
-export type Migration = (context: MigrationContext) => void;
+type CallableThenableResult<TResult> = TResult extends {
+  then?: infer Then;
+}
+  ? Extract<Then, (...args: never[]) => unknown> extends never
+    ? never
+    : TResult
+  : never;
+
+export type SynchronousCallbackResult<TResult> = [
+  CallableThenableResult<TResult>,
+] extends [never]
+  ? TResult
+  : never;
+
+export type Migration<TResult = unknown> = (
+  context: MigrationContext,
+) => SynchronousCallbackResult<TResult>;
 
 export type KeyListenerRegistry = Map<string, Set<() => void>>;
 
