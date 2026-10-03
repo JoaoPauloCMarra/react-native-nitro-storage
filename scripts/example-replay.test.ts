@@ -20,30 +20,43 @@ import {
 const projectRoot = path.resolve(__dirname, "..");
 
 test("dynamic status selectors require both their renderer and declared case", () => {
-  for (const [statusId, declaration, renderer] of [
-    [
-      "e2e-integrity-roundtrip",
-      'runCase(\n  "roundtrip", () => true)',
-      "testID={`e2e-integrity-${item.name}`}",
-    ],
-    [
-      "e2e-keychain-secure-roundtrip",
-      'name: "secure-roundtrip"',
-      "testID={`e2e-keychain-${item.name}`}",
-    ],
-    [
+  const statusId = "e2e-keychain-secure-roundtrip";
+  const declaration = 'name: "secure-roundtrip"';
+  const renderer = "testID={`e2e-keychain-${item.name}`}";
+  assert.equal(
+    hasStatusSelector(`${declaration}\n${renderer}`, statusId),
+    true,
+  );
+  assert.equal(hasStatusSelector(renderer, statusId), false);
+  assert.equal(hasStatusSelector(declaration, statusId), false);
+});
+
+test("smoke and integrity rows resolve only through their results probes", () => {
+  assert.equal(
+    hasStatusSelector(
+      'id: "migration"\ntestID={entry.id ? `smoke-case-${entry.id}` : undefined}',
       "smoke-case-migration",
-      'id: "migration"',
-      "testID={entry.id ? `smoke-case-${entry.id}` : undefined}",
-    ],
-  ]) {
-    assert.equal(
-      hasStatusSelector(`${declaration}\n${renderer}`, statusId),
-      true,
-    );
-    assert.equal(hasStatusSelector(renderer, statusId), false);
-    assert.equal(hasStatusSelector(declaration, statusId), false);
-  }
+    ),
+    false,
+  );
+  assert.equal(
+    hasStatusSelector(
+      'runCase("roundtrip"\ntestID={`e2e-integrity-${item.name}`}',
+      "e2e-integrity-roundtrip",
+    ),
+    false,
+  );
+  assert.equal(
+    hasStatusSelector('testID="smoke-results"', "smoke-results"),
+    true,
+  );
+  assert.equal(
+    hasStatusSelector(
+      'testID="e2e-integrity-results"',
+      "e2e-integrity-results",
+    ),
+    true,
+  );
 });
 
 function writeFile(root: string, relativePath: string, contents: string): void {
@@ -460,8 +473,6 @@ test("runner sends the selected manifest flow to official agent-device test", ()
     assert.deepEqual(calls[0]?.args, [
       "test",
       "e2e/qa-integrity.ad",
-      "--platform",
-      "ios",
       "--udid",
       "sim-123",
       "--session",

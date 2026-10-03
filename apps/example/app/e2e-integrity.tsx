@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import {
   createStorageItem,
   createSetItem,
@@ -590,6 +590,16 @@ export default function IntegrityLabScreen() {
           label="summary"
           value={summary}
         />
+        {report ? (
+          <View
+            testID="e2e-integrity-results"
+            accessible
+            accessibilityLabel={report.cases
+              .map((item) => `${item.status}:${item.detail ?? ""}`)
+              .join(" ")}
+            style={styles.resultsProbe}
+          />
+        ) : null}
         <Card title="Cases" subtitle="Disk, Secure, import, tx, rename, cache">
           {(report?.cases ?? []).map((item) => (
             <StatusRow
@@ -604,3 +614,9 @@ export default function IntegrityLabScreen() {
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  resultsProbe: {
+    height: 1,
+  },
+});

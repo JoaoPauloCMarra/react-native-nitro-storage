@@ -217,29 +217,18 @@ function hasStatusSelector(source, statusId) {
   if (source.includes(`testID="${statusId}"`)) return true;
   const cases = [
     {
-      prefix: "e2e-integrity-",
-      template: "testID={`e2e-integrity-${item.name}`}",
-      declaration: (key) => `runCase("${key}"`,
-    },
-    {
       prefix: "e2e-keychain-",
       template: "testID={`e2e-keychain-${item.name}`}",
       declaration: (key) => `name: "${key}"`,
     },
-    {
-      prefix: "smoke-case-",
-      template: "testID={entry.id ? `smoke-case-${entry.id}` : undefined}",
-      declaration: (key) => `id: "${key}"`,
-    },
   ];
-  const normalized = source.replace(/\brunCase\(\s+/g, "runCase(");
   return cases.some(({ prefix, template, declaration }) => {
     const key = statusId.slice(prefix.length);
     return (
       statusId.startsWith(prefix) &&
       /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(key) &&
       source.includes(template) &&
-      normalized.includes(declaration(key))
+      source.includes(declaration(key))
     );
   });
 }

@@ -4,41 +4,40 @@ wait id="open-e2e-lab"
 press id="open-e2e-lab"
 wait id="e2e-screen"
 wait text "e2e-ready"
+scroll bottom
 wait id="e2e-lab"
+wait id="e2e-results"
+scroll bottom
 press id="e2e-rename-run"
-wait id="e2e-rename-status"
 wait text "ok:migrated-value"
+scroll bottom
 press id="e2e-memory-run"
-wait id="e2e-memory-status"
 wait text "ok:cached"
+scroll bottom
 press id="e2e-secure-async-run"
-wait id="e2e-secure-async-status"
 wait text "ok:queued"
+scroll bottom
 press id="e2e-audit-run"
-wait id="e2e-audit-status"
 wait text "ok:audit=registered-unique-grouped"
+scroll bottom
 press id="e2e-set-run"
-wait id="e2e-set-status"
 wait text "ok:red=true:size=1"
+scroll bottom
 press id="e2e-secure-capability-run"
-wait id="e2e-secure-capability-status"
 wait text "ok:secure-backend=platform-secure-storage:value=lab-secure:deleted=true"
+scroll bottom
 press id="e2e-flush-observer-run"
-wait id="e2e-flush-observer-status"
 wait text "ok:registered-cleared:deliveries=0"
 scroll bottom
 press id="e2e-run-stress"
-wait id="e2e-stress-result"
 wait text "ok:writes=200:reads=200:ms="
-scroll down
+scroll top
 wait id="smoke-run-all"
 press id="smoke-run-all"
 wait id="smoke-summary"
 wait text "Complete: PASS: 39/41 passed · 0 failed · 2 skipped"
-wait id="smoke-case-test-adapter-migration"
+wait id="smoke-results"
 wait text "pass:migration=registered:latest=migrated"
-wait id="smoke-case-test-adapter-error-classification"
 wait text "pass:storage_full:tagged-error-classification"
-wait id="smoke-case-qa-key-cleanup"
 wait text "pass:qa-prefix-only"
 close

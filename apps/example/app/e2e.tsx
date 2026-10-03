@@ -54,8 +54,8 @@ export default function StorageE2eScreen() {
           testID="open-e2e-stress"
           label="Stress lab"
         />
-        <StorageE2eLab />
         <SmokeTestRunner />
+        <StorageE2eLab />
       </Page>
     </View>
   );
