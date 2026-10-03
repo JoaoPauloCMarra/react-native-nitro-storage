@@ -63,5 +63,12 @@ React Native Nitro Storage — synchronous storage for React Native via JSI.
 - `StorageItem#set(value)` must not read current storage value; only updater functions (`set(prev => next)`) should read.
 - `storage.clear(StorageScope.Secure)` already clears biometric entries through native/web secure clear paths; do not call biometric clear again.
 - Android secure writes default to synchronous `commit()` mode; `storage.setSecureWritesAsync(true)` opts into asynchronous `apply()` mode.
-- Use `storage.flushSecureWrites()` after opting into async writes when deterministic secure persistence is required before assertions, namespace clears, or transactions.
+- `storage.flushSecureWrites()` drains the JavaScript queue, not Android's asynchronous `apply()` persistence. Select synchronous secure writes before writes that need synchronous persistence; changing the mode is not a barrier for earlier `apply()` calls.
 - `getBatch(...)` raw-path misses return each item's internal default value instead of calling `item.get()` fallback reads.
+
+## Replay Maintenance
+
+- Keep `e2e/storage-replay-coverage.json` aligned with concrete assertions in the example and its `.ad` flows. Distinguish native storage, testing adapters, and pending hardware prerequisites.
+- After package runtime or example changes, review affected coverage before running `bun run example:replay:refresh`. `check` validates the source lock and replay helper tests without using a device.
+- Run `bun run example:replay --platform ios --udid <exact-target>` or `--platform android --serial <exact-target>` only when device testing is authorized. The runner uses official `agent-device test`, and unique OS-temp artifacts; `agent-device test` closes each attempt session itself.
+- A static source lock is not runtime proof. Do not report skipped biometric, keychain-lock, corruption, or power-loss acceptance rows as passing.

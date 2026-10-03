@@ -126,6 +126,11 @@ Transaction context methods:
 
 If the callback throws, Nitro Storage restores the keys it changed during that transaction and emits exactly one typed `rollback` batch event so observers and the global event observer can react to the rollback.
 
+Callbacks must return synchronously. A Promise or thenable result throws a
+`TypeError` and triggers the same rollback. Context methods reject access after
+the callback finishes, including from an async continuation. Complete awaited
+work before the transaction and never retain its context for later use.
+
 Memory-scope batch removes are atomic: all keys are deleted before listeners fire, and scope, key, and prefix subscribers receive a single `removeBatch` event.
 
 ## Migrations
@@ -160,6 +165,8 @@ migrateToLatest(StorageScope.Disk);
 Migration context methods work with raw strings. Use item serializers manually when migrating structured data.
 
 Each migration step runs inside its own transaction together with the version marker write. A step that throws rolls back both its data changes and the version marker, so the scope stays on the last completed version and rerunning `migrateToLatest()` retries deterministically.
+Migration callbacks follow the same synchronous contract as transactions. An
+async migration does not advance its version marker.
 
 ```ts
 registerMigration(3, (ctx) => {

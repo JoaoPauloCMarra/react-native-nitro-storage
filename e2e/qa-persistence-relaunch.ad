@@ -1,0 +1,18 @@
+open "com.nitrostorage.example" "nitrostorage://e2e-persistence?runId=${RUN_ID}&stage=seed" --relaunch
+wait "stable"
+wait id="e2e-persistence-screen"
+wait id="e2e-persistence-ready"
+wait text "ready"
+wait id="e2e-persistence-result"
+wait text "pass:disk-write-readback"
+wait id="e2e-persistence-finished"
+wait text "pending-relaunch"
+close
+open "com.nitrostorage.example" "nitrostorage://e2e-persistence?runId=${RUN_ID}&stage=verify" --relaunch
+wait "stable"
+wait id="e2e-persistence-screen"
+wait id="e2e-persistence-finished"
+wait text "finished"
+wait id="e2e-persistence-result"
+wait text "pass:disk-relaunch:value-matched:cleanup=missing"
+close

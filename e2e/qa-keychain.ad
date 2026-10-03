@@ -1,7 +1,14 @@
 open "com.nitrostorage.example" "nitrostorage://e2e-keychain" --relaunch
 wait "stable"
 wait id="e2e-keychain-screen"
+wait id="e2e-keychain-ready"
 wait text "ready"
+wait id="e2e-keychain-finished"
+wait text "finished"
 wait id="e2e-keychain-summary"
-wait text "fail=0"
+wait text "finished:required-pass=1:fail=0:hardware-pending"
+wait id="e2e-keychain-secure-roundtrip"
+wait text "pass:native=platform-secure-storage:value=secure-sentinel:metadata-hidden:deleted=true"
+wait id="e2e-keychain-hardware-pending"
+wait text "pending:biometric,lock,corruption,hardware-backed-keychain"
 close

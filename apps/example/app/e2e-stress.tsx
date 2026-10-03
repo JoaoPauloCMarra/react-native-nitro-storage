@@ -40,24 +40,27 @@ function runScope(
   prefix: string,
 ): number[] {
   const durations: number[] = [];
-  for (let index = 0; index < count; index += 1) {
-    const key = `${prefix}${index}`;
-    const started = nowMs();
-    storage.setString(key, `v${index}`, scope);
-    const value = storage.getString(key, scope);
-    if (value !== `v${index}`) {
-      throw new Error(`${StorageScope[scope]} mismatch at ${key}`);
+  try {
+    for (let index = 0; index < count; index += 1) {
+      const key = `${prefix}${index}`;
+      const started = nowMs();
+      storage.setString(key, `v${index}`, scope);
+      const value = storage.getString(key, scope);
+      if (value !== `v${index}`) {
+        throw new Error(`${StorageScope[scope]} mismatch at ${key}`);
+      }
+      durations.push(nowMs() - started);
     }
-    durations.push(nowMs() - started);
-  }
-  for (let index = 0; index < count; index += 1) {
-    storage.deleteString(`${prefix}${index}`, scope);
-  }
-  if (scope === StorageScope.Disk) {
-    storage.flushDiskWrites();
-  }
-  if (scope === StorageScope.Secure) {
-    storage.flushSecureWrites();
+  } finally {
+    for (let index = 0; index < count; index += 1) {
+      storage.deleteString(`${prefix}${index}`, scope);
+    }
+    if (scope === StorageScope.Disk) {
+      storage.flushDiskWrites();
+    }
+    if (scope === StorageScope.Secure) {
+      storage.flushSecureWrites();
+    }
   }
   return durations;
 }
@@ -113,6 +116,11 @@ export default function StressLabScreen() {
     >
       <Page title="Stress lab" subtitle="Deep link nitrostorage://e2e-stress">
         <StatusRow testID="e2e-stress-ready" label="state" value="ready" />
+        <StatusRow
+          testID="e2e-stress-finished"
+          label="run"
+          value={report ? "finished" : "running"}
+        />
         <StatusRow
           testID="e2e-stress-summary"
           label="summary"

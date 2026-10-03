@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes are always listed first in each release section.
 
+## [0.14.0] - 2026-10-03
+
+### Breaking changes
+
+- Transaction and migration callbacks must finish synchronously. Promise and thenable results now throw `TypeError`, roll back writes made through the transaction context, and leave migration versions unchanged. Context methods reject calls after the callback ends. Migration: finish asynchronous work before entering the callback and keep all context access inside it. TypeScript now rejects direct async callbacks.
+
+### Added
+
+- `storage.setScheduledFlushErrorObserver()` reports scheduled Disk and Secure flush failures with their scope and backend adapter error. Failed writes stay queued for retry. Explicit flush calls still throw to their caller, and scheduled failures still propagate when no observer is installed.
+
+### Documentation
+
+- `flushSecureWrites()` drains the JavaScript queue; it is not an Android `apply()` durability barrier. Select synchronous secure-write mode before writes that need synchronous native persistence.
+- Biometric policy documentation now distinguishes iOS Keychain prompts from Android authentication when a protected store first opens and its cached keyset on later access.
+
 ## [0.13.0] - 2026-10-01
 
 ### Breaking changes

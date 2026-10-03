@@ -40,7 +40,9 @@ export function StorageE2eLab() {
   const [secureAsyncStatus, setSecureAsyncStatus] = useState("(idle)");
   const [auditStatus, setAuditStatus] = useState("(idle)");
   const [setStatus, setSetStatus] = useState("(idle)");
-  const [biometricStatus, setBiometricStatus] = useState("(idle)");
+  const [secureCapabilityStatus, setSecureCapabilityStatus] =
+    useState("(idle)");
+  const [flushObserverStatus, setFlushObserverStatus] = useState("(idle)");
   const [stressStatus, setStressStatus] = useState("(idle)");
 
   return (
@@ -72,9 +74,14 @@ export function StorageE2eLab() {
         />
         <StatusRow testID="e2e-set-status" label="set item" value={setStatus} />
         <StatusRow
-          testID="e2e-biometric-status"
-          label="biometric"
-          value={biometricStatus}
+          testID="e2e-secure-capability-status"
+          label="secure capability"
+          value={secureCapabilityStatus}
+        />
+        <StatusRow
+          testID="e2e-flush-observer-status"
+          label="scheduled flush observer"
+          value={flushObserverStatus}
         />
         <StatusRow
           testID="e2e-stress-result"
@@ -199,34 +206,67 @@ export function StorageE2eLab() {
             style={styles.flex1}
           />
           <Button
-            testID="e2e-biometric-run"
-            title="Biometric capability"
+            testID="e2e-secure-capability-run"
+            title="Secure capability"
             onPress={() => {
-              const capabilities = storage.getSecurityCapabilities();
-              const prompt = capabilities.biometric.prompt;
+              const capabilities = storage.getCapabilities();
               const key = "__e2e_lab_secure_roundtrip__";
               try {
+                if (
+                  capabilities.platform !== "native" ||
+                  capabilities.backend.secure !== "platform-secure-storage"
+                ) {
+                  throw new Error("expected native secure backend");
+                }
                 storage.setString(key, "lab-secure", StorageScope.Secure);
                 storage.flushSecureWrites();
                 const value = storage.getString(key, StorageScope.Secure);
                 const exists = storage.getSecureMetadata(key).exists;
                 storage.deleteString(key, StorageScope.Secure);
+                storage.flushSecureWrites();
                 const removed =
                   storage.getString(key, StorageScope.Secure) === undefined;
-                setBiometricStatus(
+                setSecureCapabilityStatus(
                   value === "lab-secure" && exists && removed
-                    ? `ok:capability=${prompt}:secure=roundtrip`
+                    ? "ok:secure-backend=platform-secure-storage:value=lab-secure:deleted=true"
                     : `fail:secure:get=${String(value)}:exists=${exists}:removed=${removed}`,
                 );
               } catch (error) {
-                setBiometricStatus(
+                setSecureCapabilityStatus(
                   `fail:secure:${getStorageErrorCode(error) ?? String(error)}`,
                 );
+              } finally {
+                try {
+                  storage.deleteString(key, StorageScope.Secure);
+                  storage.flushSecureWrites();
+                } catch {
+                  setSecureCapabilityStatus("fail:secure-cleanup");
+                }
               }
             }}
             style={styles.flex1}
           />
         </View>
+
+        <Button
+          testID="e2e-flush-observer-run"
+          title="Flush observer API"
+          onPress={() => {
+            let deliveries = 0;
+            const observer = () => {
+              deliveries += 1;
+            };
+            try {
+              storage.setScheduledFlushErrorObserver(observer);
+              storage.setScheduledFlushErrorObserver(undefined);
+              setFlushObserverStatus(
+                `ok:registered-cleared:deliveries=${deliveries}`,
+              );
+            } catch {
+              setFlushObserverStatus("fail:observer-registration");
+            }
+          }}
+        />
 
         <Button
           testID="e2e-run-stress"

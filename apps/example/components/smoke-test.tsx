@@ -20,8 +20,6 @@ import {
   isKeychainLockedError,
   isStorageError,
   migrateFromMMKV,
-  migrateToLatest,
-  registerMigration,
   removeBatch,
   runTransaction,
   setWebDiskStorageBackend,
@@ -32,23 +30,28 @@ import {
   StorageScope,
 } from "react-native-nitro-storage";
 import { createIndexedDBBackend } from "react-native-nitro-storage/indexeddb-backend";
+import {
+  createNitroStorageMock as createTestingStorageMock,
+  getStorageErrorCode as getTestingStorageErrorCode,
+  isStorageError as isTestingStorageError,
+} from "react-native-nitro-storage/testing";
 import { Button, Colors } from "./shared";
 
 type LogEntry = {
+  id?: string;
   label: string;
   status: "pass" | "fail" | "running" | "skipped";
   detail?: string;
 };
 
-type TestFn = () => void | Promise<void>;
+type TestFn = () => string | void | Promise<string | void>;
 type SmokeTest = {
+  id?: string;
   label: string;
   fn: TestFn;
   isSupported?: () => boolean;
   unsupportedReason?: string;
 };
-
-const INTEGRITY_PERSIST_KEY = "__integrity_disk_persist__";
 
 function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
@@ -149,10 +152,13 @@ function buildTests(): SmokeTest[] {
     {
       label: "Auth storage factory",
       fn: () => {
-        const auth = createSecureAuthStorage({
-          accessToken: {},
-          refreshToken: {},
-        });
+        const auth = createSecureAuthStorage(
+          {
+            accessToken: {},
+            refreshToken: {},
+          },
+          { namespace: "__smoke_auth_factory__" },
+        );
         auth.accessToken.set("at_smoke");
         auth.refreshToken.set("rt_smoke");
         assert(auth.accessToken.get() === "at_smoke", "accessToken mismatch");
@@ -338,16 +344,24 @@ function buildTests(): SmokeTest[] {
       },
     },
     {
+      id: "test-adapter-migration",
       label: "Migration: registerMigration / migrateToLatest",
       fn: () => {
-        const v = Date.now();
-        registerMigration(v, ({ setRaw }) => {
-          setRaw("__smoke_mig_key__", "migrated");
-        });
-        migrateToLatest(StorageScope.Disk);
-        const val = storage.getString("__smoke_mig_key__", StorageScope.Disk);
-        assert(val === "migrated", `expected migrated, got ${val}`);
-        storage.deleteString("__smoke_mig_key__", StorageScope.Disk);
+        const fixture = createTestingStorageMock();
+        try {
+          fixture.registerMigration(1, ({ setRaw }) => {
+            setRaw("__smoke_mig_key__", "migrated");
+          });
+          fixture.migrateToLatest(StorageScope.Disk);
+          const val = fixture.storage.getString(
+            "__smoke_mig_key__",
+            StorageScope.Disk,
+          );
+          assert(val === "migrated", `expected migrated, got ${val}`);
+          return "migration=registered:latest=migrated";
+        } finally {
+          fixture.reset();
+        }
       },
     },
     {
@@ -782,25 +796,62 @@ function buildTests(): SmokeTest[] {
       },
     },
     {
-      label: "clear(scope) individually",
+      label: "clear(scope, except) preserves existing keys",
       fn: () => {
-        storage.setString("__smoke_clr_m__", "m", StorageScope.Memory);
-        storage.setString("__smoke_clr_d__", "d", StorageScope.Disk);
-        storage.clear(StorageScope.Memory);
-        assert(
-          storage.getString("__smoke_clr_m__", StorageScope.Memory) ===
-            undefined,
-          "memory not cleared",
-        );
-        assert(
-          storage.getString("__smoke_clr_d__", StorageScope.Disk) === "d",
-          "disk should survive memory clear",
-        );
-        storage.clear(StorageScope.Disk, { except: [INTEGRITY_PERSIST_KEY] });
-        assert(
-          storage.getString("__smoke_clr_d__", StorageScope.Disk) === undefined,
-          "disk not cleared",
-        );
+        const memoryProbe = "__smoke_clr_m__";
+        const memoryKeep = "__smoke_clr_keep_m__";
+        const diskProbe = "__smoke_clr_d__";
+        const diskKeep = "__smoke_clr_keep_d__";
+
+        storage.deleteString(memoryProbe, StorageScope.Memory);
+        storage.deleteString(memoryKeep, StorageScope.Memory);
+        storage.deleteString(diskProbe, StorageScope.Disk);
+        storage.deleteString(diskKeep, StorageScope.Disk);
+        storage.flushDiskWrites();
+
+        const memoryExisting = storage.getAllKeys(StorageScope.Memory);
+        const diskExisting = storage.getAllKeys(StorageScope.Disk);
+        try {
+          storage.setString(memoryKeep, "keep", StorageScope.Memory);
+          storage.setString(memoryProbe, "remove", StorageScope.Memory);
+          storage.clear(StorageScope.Memory, {
+            except: [...memoryExisting, memoryKeep],
+          });
+          assert(
+            storage.getString(memoryProbe, StorageScope.Memory) === undefined,
+            "memory QA key was not cleared",
+          );
+          assert(
+            storage.getString(memoryKeep, StorageScope.Memory) === "keep" &&
+              memoryExisting.every((key) =>
+                storage.getAllKeys(StorageScope.Memory).includes(key),
+              ),
+            "memory keys were not preserved",
+          );
+
+          storage.setString(diskKeep, "keep", StorageScope.Disk);
+          storage.setString(diskProbe, "remove", StorageScope.Disk);
+          storage.clear(StorageScope.Disk, {
+            except: [...diskExisting, diskKeep],
+          });
+          assert(
+            storage.getString(diskProbe, StorageScope.Disk) === undefined,
+            "Disk QA key was not cleared",
+          );
+          const diskAfter = storage.getAllKeys(StorageScope.Disk);
+          assert(
+            storage.getString(diskKeep, StorageScope.Disk) === "keep" &&
+              diskExisting.every((key) => diskAfter.includes(key)),
+            "Disk keys were not preserved",
+          );
+          return "qa-keys-cleared:existing-keys-preserved";
+        } finally {
+          storage.deleteString(memoryProbe, StorageScope.Memory);
+          storage.deleteString(memoryKeep, StorageScope.Memory);
+          storage.deleteString(diskProbe, StorageScope.Disk);
+          storage.deleteString(diskKeep, StorageScope.Disk);
+          storage.flushDiskWrites();
+        }
       },
     },
     {
@@ -885,44 +936,6 @@ function buildTests(): SmokeTest[] {
         item.set((prev) => prev + 5);
         assert(item.get() === 15, `expected 15, got ${item.get()}`);
         item.delete();
-      },
-    },
-    {
-      label: "clearAll wipes all scopes",
-      fn: () => {
-        storage.setString("__smoke_ca_m__", "m", StorageScope.Memory);
-        storage.setString("__smoke_ca_d__", "d", StorageScope.Disk);
-        storage.setString("__smoke_ca_s__", "s", StorageScope.Secure);
-        const preservedPersist = storage.getString(
-          INTEGRITY_PERSIST_KEY,
-          StorageScope.Disk,
-        );
-        try {
-          storage.clearAll();
-          assert(
-            storage.getString("__smoke_ca_m__", StorageScope.Memory) ===
-              undefined,
-            "memory not cleared",
-          );
-          assert(
-            storage.getString("__smoke_ca_d__", StorageScope.Disk) ===
-              undefined,
-            "disk not cleared",
-          );
-          assert(
-            storage.getString("__smoke_ca_s__", StorageScope.Secure) ===
-              undefined,
-            "secure not cleared",
-          );
-        } finally {
-          if (preservedPersist !== undefined) {
-            storage.setString(
-              INTEGRITY_PERSIST_KEY,
-              preservedPersist,
-              StorageScope.Disk,
-            );
-          }
-        }
       },
     },
     {
@@ -1044,6 +1057,53 @@ function buildTests(): SmokeTest[] {
         }
       },
     },
+    {
+      id: "test-adapter-error-classification",
+      label: "Testing adapter fixture: storage_full classification",
+      fn: () => {
+        const fixture = new Error(
+          "[nitro-error:storage_full] test adapter fixture",
+        );
+        assert(
+          getTestingStorageErrorCode(fixture) === "storage_full",
+          "testing entry did not classify storage_full",
+        );
+        assert(
+          isTestingStorageError(fixture, "storage_full"),
+          "testing entry storage_full predicate mismatch",
+        );
+        assert(
+          !isTestingStorageError(fixture, "keychain_locked"),
+          "testing entry matched the wrong error code",
+        );
+        return "storage_full:tagged-error-classification";
+      },
+    },
+    {
+      id: "qa-key-cleanup",
+      label: "QA cleanup: reserved __smoke_ keys only",
+      fn: () => {
+        const prefix = "__smoke_";
+        for (const scope of [
+          StorageScope.Memory,
+          StorageScope.Disk,
+          StorageScope.Secure,
+        ]) {
+          for (const key of storage.getKeysByPrefix(prefix, scope)) {
+            storage.deleteString(key, scope);
+          }
+        }
+        storage.flushDiskWrites();
+        storage.flushSecureWrites();
+        const remaining = [
+          StorageScope.Memory,
+          StorageScope.Disk,
+          StorageScope.Secure,
+        ].some((scope) => storage.getKeysByPrefix(prefix, scope).length > 0);
+        assert(!remaining, "reserved smoke keys remain after cleanup");
+        return "qa-prefix-only";
+      },
+    },
   ];
 }
 
@@ -1062,6 +1122,7 @@ export function SmokeTestRunner() {
       const test = tests[i];
       if (test.isSupported?.() === false) {
         results.push({
+          id: test.id,
           label: test.label,
           status: "skipped",
           detail: test.unsupportedReason,
@@ -1070,16 +1131,29 @@ export function SmokeTestRunner() {
         continue;
       }
 
-      setLogs([...results, { label: test.label, status: "running" }]);
+      setLogs([
+        ...results,
+        { id: test.id, label: test.label, status: "running" },
+      ]);
 
       await new Promise((r) => setTimeout(r, 16));
 
       try {
-        await test.fn();
-        results.push({ label: test.label, status: "pass" });
+        const detail = await test.fn();
+        results.push({
+          id: test.id,
+          label: test.label,
+          status: "pass",
+          detail: detail ?? undefined,
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        results.push({ label: test.label, status: "fail", detail: msg });
+        results.push({
+          id: test.id,
+          label: test.label,
+          status: "fail",
+          detail: msg,
+        });
       }
 
       setLogs([...results]);
@@ -1158,7 +1232,10 @@ const SmokeTestLogRow = memo(function SmokeTestLogRow({
   entry: LogEntry;
 }) {
   return (
-    <View style={s.logRow}>
+    <View
+      testID={entry.id ? `smoke-case-${entry.id}` : undefined}
+      style={s.logRow}
+    >
       <Text style={s.logIcon}>
         {entry.status === "pass"
           ? "✓"
@@ -1180,7 +1257,12 @@ const SmokeTestLogRow = memo(function SmokeTestLogRow({
         >
           {entry.label}
         </Text>
-        {entry.detail ? <Text style={s.logDetail}>{entry.detail}</Text> : null}
+        {entry.detail ? (
+          <Text style={s.logDetail}>
+            {entry.status === "pass" ? "pass:" : ""}
+            {entry.detail}
+          </Text>
+        ) : null}
       </View>
     </View>
   );

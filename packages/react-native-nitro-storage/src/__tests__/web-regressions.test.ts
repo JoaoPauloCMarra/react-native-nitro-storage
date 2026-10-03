@@ -138,6 +138,55 @@ afterAll(() => {
   setWebSecureStorageBackend(undefined);
 });
 
+describe("public scheduled flush error observer", () => {
+  it.each([StorageScope.Disk, StorageScope.Secure])(
+    "reports a buffered %s failure through the public API and retries",
+    async (scope) => {
+      const backend = createMapBackend("indexeddb:observer-fixture");
+      const persist = backend.setItem;
+      const write = jest.spyOn(backend, "setItem");
+      const failure = new Error("[nitro-error:storage_full] fixture full");
+      write.mockImplementationOnce(() => {
+        throw failure;
+      });
+      if (scope === StorageScope.Disk) setWebDiskStorageBackend(backend);
+      else setWebSecureStorageBackend(backend);
+      const item = createStorageItem({
+        key: "scheduled-observer",
+        scope,
+        defaultValue: "",
+        coalesceDiskWrites: true,
+        coalesceSecureWrites: true,
+      });
+      const observer = jest.fn();
+      storage.setScheduledFlushErrorObserver(observer);
+      try {
+        item.set("retained");
+        await Promise.resolve();
+        expect(observer).toHaveBeenCalledTimes(1);
+        expect(observer.mock.calls[0]?.[0]).toMatchObject({ scope });
+        expect(String(observer.mock.calls[0]?.[0].error)).toContain(
+          "fixture full",
+        );
+        expect(backend.store.size).toBe(0);
+        expect(item.get()).toBe("retained");
+
+        write.mockImplementation(persist);
+        if (scope === StorageScope.Disk) storage.flushDiskWrites();
+        else storage.flushSecureWrites();
+        expect(backend.store.size).toBe(1);
+        expect(observer).toHaveBeenCalledTimes(1);
+      } finally {
+        write.mockImplementation(persist);
+        storage.setScheduledFlushErrorObserver(undefined);
+        if (scope === StorageScope.Disk) storage.flushDiskWrites();
+        else storage.flushSecureWrites();
+        item.delete();
+      }
+    },
+  );
+});
+
 describe("one backend shared by Disk and Secure", () => {
   function setupShared() {
     const backend = createMapBackend("shared");

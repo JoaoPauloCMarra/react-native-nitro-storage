@@ -23,6 +23,10 @@ import type {
 
 export { StorageScope, AccessControl, BiometricLevel } from "./Storage.types";
 export { isKeychainLockedError } from "./shared";
+export type {
+  StorageScheduledFlushError,
+  StorageScheduledFlushErrorObserver,
+} from "./core/durability";
 export { migrateFromMMKV } from "./migration";
 export { getStorageErrorCode, isStorageError } from "./storage-runtime";
 export {
@@ -279,6 +283,7 @@ function buildTestingModule() {
 
   const reset = (): void => {
     storage.setEventObserver(undefined);
+    storage.setScheduledFlushErrorObserver(undefined);
     storage.setMetricsObserver(undefined);
     storage.resetMetrics();
     storage.clearAll();

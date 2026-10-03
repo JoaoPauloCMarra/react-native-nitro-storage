@@ -2,6 +2,15 @@ import { runMicrotask } from "../shared";
 import { StorageScope, type AccessControl } from "../Storage.types";
 import type { PendingDiskWrite, PendingSecureWrite } from "../shared";
 
+export type StorageScheduledFlushError = {
+  readonly scope: StorageScope.Disk | StorageScope.Secure;
+  readonly error: unknown;
+};
+
+export type StorageScheduledFlushErrorObserver = (
+  error: StorageScheduledFlushError,
+) => void;
+
 export type DurabilityBackend = {
   setBatch(keys: string[], values: string[], scope: number): void;
   removeBatch(keys: string[], scope: number): void;
@@ -9,6 +18,9 @@ export type DurabilityBackend = {
 };
 
 export type DurabilityCoordinator = {
+  setScheduledFlushErrorObserver(
+    observer: StorageScheduledFlushErrorObserver | undefined,
+  ): void;
   setDiskWritesAsync(enabled: boolean): void;
   isDiskWritesAsync(): boolean;
   hasPendingDiskWrite(key: string): boolean;
@@ -42,6 +54,8 @@ export function createDurabilityCoordinator(options: {
   let nextGeneration = 0;
   let diskFlushScheduled = false;
   let diskWritesAsync = false;
+  let scheduledFlushErrorObserver:
+    StorageScheduledFlushErrorObserver | undefined;
   const pendingSecureWrites = new Map<string, PendingSecureWrite>();
   let secureFlushScheduled = false;
   const securePromotionsInProgress = new Set<string>();
@@ -168,6 +182,33 @@ export function createDurabilityCoordinator(options: {
     }
   }
 
+  function reportScheduledFlushError(
+    scope: StorageScheduledFlushError["scope"],
+    error: unknown,
+  ): void {
+    const observer = scheduledFlushErrorObserver;
+    if (observer === undefined) {
+      throw error;
+    }
+    observer({ scope, error });
+  }
+
+  function flushScheduledDiskWrites(): void {
+    try {
+      flushDiskWrites();
+    } catch (error) {
+      reportScheduledFlushError(StorageScope.Disk, error);
+    }
+  }
+
+  function flushScheduledSecureWrites(): void {
+    try {
+      flushSecureWrites();
+    } catch (error) {
+      reportScheduledFlushError(StorageScope.Secure, error);
+    }
+  }
+
   function scheduleDiskWrite(
     key: string,
     value: string | undefined,
@@ -182,7 +223,7 @@ export function createDurabilityCoordinator(options: {
       return pendingWrite;
     }
     diskFlushScheduled = true;
-    runMicrotask(flushDiskWrites);
+    runMicrotask(flushScheduledDiskWrites);
     return pendingWrite;
   }
 
@@ -204,7 +245,7 @@ export function createDurabilityCoordinator(options: {
       return pendingWrite;
     }
     secureFlushScheduled = true;
-    runMicrotask(flushSecureWrites);
+    runMicrotask(flushScheduledSecureWrites);
     return pendingWrite;
   }
 
@@ -225,6 +266,9 @@ export function createDurabilityCoordinator(options: {
   }
 
   return {
+    setScheduledFlushErrorObserver(observer) {
+      scheduledFlushErrorObserver = observer;
+    },
     setDiskWritesAsync(enabled) {
       diskWritesAsync = enabled;
       if (!enabled) {
