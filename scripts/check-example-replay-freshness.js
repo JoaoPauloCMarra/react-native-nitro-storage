@@ -5,6 +5,7 @@ const path = require("node:path");
 
 const manifestRelativePath = "e2e/storage-replay-coverage.json";
 const lockRelativePath = "e2e/storage-replay-source-lock.json";
+const replayPlatforms = ["ios", "android"];
 const sourceExtensions = new Set([
   ".c",
   ".cc",
@@ -279,6 +280,19 @@ function readCoverageManifest(root, manifestPath = manifestRelativePath) {
       throw new Error(
         "Storage replay manifest contains an invalid or duplicate flow",
       );
+    }
+    if (Object.hasOwn(suite, "platforms")) {
+      const { platforms } = suite;
+      if (
+        !Array.isArray(platforms) ||
+        platforms.length === 0 ||
+        new Set(platforms).size !== platforms.length ||
+        platforms.some((platform) => !replayPlatforms.includes(platform))
+      ) {
+        throw new Error(
+          `${suite.id} platforms must be a non-empty subset of ${replayPlatforms.join(", ")} without duplicates`,
+        );
+      }
     }
     suiteIds.add(suite.id);
     suitePaths.add(suite.path);
@@ -557,6 +571,7 @@ if (require.main === module) {
 
 module.exports = {
   hasStatusSelector,
+  replayPlatforms,
   checkReplayFreshness,
   collectRuntimeFiles,
   inside,

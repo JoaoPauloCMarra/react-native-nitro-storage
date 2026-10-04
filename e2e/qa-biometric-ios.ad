@@ -1,0 +1,12 @@
+settings faceid enroll
+open "com.nitrostorage.example" "nitrostorage://e2e-biometric?runId=${RUN_ID}" --relaunch
+wait id="e2e-biometric-results"
+wait text "bio:seed=ok;"
+wait text "bio:meta=kind-biometric:protected=true:exposed=false;"
+wait text "bio:read=prompting;"
+wait 1500
+settings faceid match
+wait text "bio:read=value-matched;" 20000
+wait text "bio:cleanup=missing;"
+settings faceid unenroll
+close

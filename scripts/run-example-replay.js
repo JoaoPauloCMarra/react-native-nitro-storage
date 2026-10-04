@@ -3,7 +3,10 @@ const { randomUUID } = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { inside } = require("./check-example-replay-freshness.js");
+const {
+  inside,
+  replayPlatforms,
+} = require("./check-example-replay-freshness.js");
 
 const projectRoot = path.resolve(__dirname, "..");
 const coveragePath = path.join(
@@ -77,7 +80,19 @@ function parseArgs(argv) {
   return { platform, targetFlag, target: target.trim(), flowIds: flows };
 }
 
-function readSuites(manifestFile = coveragePath, selectedFlowIds = []) {
+function suiteRunsOn(suite, platform) {
+  return (
+    platform === undefined ||
+    !Array.isArray(suite.platforms) ||
+    suite.platforms.includes(platform)
+  );
+}
+
+function readSuites(
+  manifestFile = coveragePath,
+  selectedFlowIds = [],
+  platform = undefined,
+) {
   const root = path.resolve(path.dirname(manifestFile), "..");
   const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
   if (manifest.version !== 1 || !Array.isArray(manifest.suites)) {
@@ -111,6 +126,17 @@ function readSuites(manifestFile = coveragePath, selectedFlowIds = []) {
         "Storage replay manifest contains an invalid or duplicate flow",
       );
     }
+    if (
+      Object.hasOwn(suite, "platforms") &&
+      (!Array.isArray(suite.platforms) ||
+        suite.platforms.length === 0 ||
+        new Set(suite.platforms).size !== suite.platforms.length ||
+        suite.platforms.some((value) => !replayPlatforms.includes(value)))
+    ) {
+      throw new Error(
+        `${suite.id} platforms must be a non-empty subset of ${replayPlatforms.join(", ")} without duplicates`,
+      );
+    }
     ids.add(suite.id);
     paths.add(suite.path);
     const suiteFile = inside(root, suite.path);
@@ -123,9 +149,20 @@ function readSuites(manifestFile = coveragePath, selectedFlowIds = []) {
   if (unknownFlow) {
     throw new Error(`Unknown replay flow: ${unknownFlow}`);
   }
-  return selectedFlowIds.length === 0
-    ? suites
-    : suites.filter((suite) => selectedFlowIds.includes(suite.id));
+  const excludedFlow = suites.find(
+    (suite) =>
+      selectedFlowIds.includes(suite.id) && !suiteRunsOn(suite, platform),
+  );
+  if (excludedFlow) {
+    throw new Error(
+      `Replay flow ${excludedFlow.id} supports only ${excludedFlow.platforms.join(", ")}; it cannot run with --platform ${platform}`,
+    );
+  }
+  return suites.filter(
+    (suite) =>
+      (selectedFlowIds.length === 0 || selectedFlowIds.includes(suite.id)) &&
+      suiteRunsOn(suite, platform),
+  );
 }
 
 function isWithinDirectory(parent, candidate) {
@@ -163,7 +200,7 @@ function runExampleReplay({
   cwd = projectRoot,
 } = {}) {
   const options = parseArgs(argv ?? []);
-  const suites = readSuites(manifestFile, options.flowIds);
+  const suites = readSuites(manifestFile, options.flowIds, options.platform);
   if (suites.length === 0) {
     throw new Error("Replay selection contains no flows");
   }

@@ -517,7 +517,7 @@ test("default selection runs every manifest flow with one unique temp directory 
       },
     });
     assert.equal(status, 0);
-    const suitePaths = readSuites().map(
+    const suitePaths = readSuites(undefined, [], "android").map(
       (suite: { path: string }) => suite.path,
     );
     assert.deepEqual(
@@ -691,5 +691,124 @@ test("git-ignored files inside hashed directories stay out of the runtime digest
     assert.ok(files.includes("apps/example/app/e2e.tsx"));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function withSuitePlatforms(
+  root: string,
+  platforms: unknown,
+): { manifestFile: string } {
+  const manifestFile = path.join(root, "e2e/storage-replay-coverage.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+  manifest.suites[0].platforms = platforms;
+  fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
+  return { manifestFile };
+}
+
+test("suite platforms must be a non-empty unique subset of ios and android", () => {
+  for (const platforms of [[], ["web"], ["ios", "ios"], "ios"]) {
+    const root = createReplayFixture();
+    try {
+      withSuitePlatforms(root, platforms);
+      assert.throws(
+        () => readCoverageManifest(root),
+        /platforms/,
+        JSON.stringify(platforms),
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+  for (const platforms of [["ios"], ["android"], ["ios", "android"]]) {
+    const root = createReplayFixture();
+    try {
+      withSuitePlatforms(root, platforms);
+      assert.doesNotThrow(() => readCoverageManifest(root));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("platform-limited suites run only on their platform and clear-all stays last", () => {
+  const { manifest } = readCoverageManifest(projectRoot);
+  assert.equal(manifest.suites.at(-1)?.id, "clear-all");
+  const biometric = manifest.suites.find(
+    (suite: { id: string }) => suite.id === "biometric-ios",
+  );
+  assert.deepEqual(biometric?.platforms, ["ios"]);
+  const iosPaths = readSuites(undefined, [], "ios").map(
+    (suite: { path: string }) => suite.path,
+  );
+  const androidPaths = readSuites(undefined, [], "android").map(
+    (suite: { path: string }) => suite.path,
+  );
+  assert.deepEqual(iosPaths.slice(-2), [
+    "e2e/qa-biometric-ios.ad",
+    "e2e/qa-clear-all.ad",
+  ]);
+  assert.equal(androidPaths.includes("e2e/qa-biometric-ios.ad"), false);
+  assert.equal(androidPaths.at(-1), "e2e/qa-clear-all.ad");
+  assert.equal(iosPaths.length, androidPaths.length + 1);
+});
+
+test("selecting a suite excluded from the platform fails before spawn", () => {
+  const calls: unknown[][] = [];
+  let tempDirectoryCalls = 0;
+  assert.throws(
+    () =>
+      runExampleReplay({
+        argv: [
+          "--platform",
+          "android",
+          "--serial",
+          "emulator-5554",
+          "--flow",
+          "biometric-ios",
+        ],
+        env: {},
+        makeTempDirectory: () => {
+          tempDirectoryCalls += 1;
+          return "unused";
+        },
+        spawn: (...args: unknown[]) => {
+          calls.push(args);
+          return { status: 0 };
+        },
+      }),
+    /biometric-ios.*supports only ios.*android/,
+  );
+  assert.equal(calls.length, 0);
+  assert.equal(tempDirectoryCalls, 0);
+});
+
+test("default ios selection passes the ios-only suite to agent-device", () => {
+  const calls: { args: string[] }[] = [];
+  const artifacts: string[] = [];
+  try {
+    const status = runExampleReplay({
+      argv: ["--platform", "ios", "--udid", "sim-bio"],
+      env: {},
+      uuid: () => "ios-run",
+      makeTempDirectory: (prefix: string) => {
+        const directory = fs.mkdtempSync(prefix);
+        artifacts.push(directory);
+        return directory;
+      },
+      spawn: (_command: string, args: string[]) => {
+        calls.push({ args });
+        return { status: 0 };
+      },
+    });
+    assert.equal(status, 0);
+    const args = calls[0]?.args ?? [];
+    assert.ok(args.includes("e2e/qa-biometric-ios.ad"));
+    assert.equal(
+      args.indexOf("e2e/qa-biometric-ios.ad") + 1,
+      args.indexOf("e2e/qa-clear-all.ad"),
+    );
+    assert.ok(args.includes("RUN_ID=ios-run"));
+  } finally {
+    removeTempDirectories(artifacts);
   }
 });
