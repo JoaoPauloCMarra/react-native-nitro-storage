@@ -43,6 +43,12 @@
       "purpose": "Assert item merge and setOrDelete, Set toggle, clearGroup, TTL expiry events, Secure inventory, access control, coalesced Secure writes, invalid keys, scoped metrics, native Disk events, hooks, auth-storage TTL, and a passcode access-control probe on reserved QA keys"
     },
     {
+      "id": "biometric-ios",
+      "path": "e2e/qa-biometric-ios.ad",
+      "purpose": "Enroll simulator Face ID, seed one RUN_ID-scoped biometric Secure item, match the read prompt, delete it, and unenroll; iOS simulator only",
+      "platforms": ["ios"]
+    },
+    {
       "id": "clear-all",
       "path": "e2e/qa-clear-all.ad",
       "purpose": "Seed one reserved key per scope, call clearAll, and verify each is absent; this wipes all example storage and must run last"
@@ -870,6 +876,48 @@
       "statusId": "e2e-clear-all-results",
       "expectedText": "clearall:memory=missing:disk=missing:secure=missing;",
       "assertion": "storage.clearAll();"
+    },
+    {
+      "id": "biometric.ios-seed-metadata",
+      "coverage": "replay-asserted",
+      "kind": "public-api",
+      "transport": "A Secure createStorageItem with biometric: true and no biometricLevel (the default level) writes a RUN_ID-scoped value without a prompt, and getSecureMetadata reports it as a biometric-protected entry without exposing its value.",
+      "claimLimit": "iOS simulator only. The resolved default biometric level is not publicly observable; metadata proves the biometric representation, not the Keychain access-control flags.",
+      "suite": "e2e/qa-biometric-ios.ad",
+      "source": "apps/example/app/e2e-biometric.tsx",
+      "statusSource": "apps/example/app/e2e-biometric.tsx",
+      "trigger": "screen-load",
+      "statusId": "e2e-biometric-results",
+      "expectedText": "bio:meta=kind-biometric:protected=true:exposed=false;",
+      "assertion": "protected=${String(metadata.biometricProtected)}:exposed=${String(metadata.valueExposed)};"
+    },
+    {
+      "id": "biometric.ios-prompt-match",
+      "coverage": "replay-asserted",
+      "kind": "public-api",
+      "transport": "The screen renders a prompting token, then item.get() blocks on the Face ID sheet; after `settings faceid match` the public read returns the seeded value.",
+      "claimLimit": "Simulator Face ID via `settings faceid match` after a fixed 1500 ms wait; not hardware Secure Enclave evidence. Nonmatch and cancel outcomes are not asserted.",
+      "suite": "e2e/qa-biometric-ios.ad",
+      "source": "apps/example/app/e2e-biometric.tsx",
+      "statusSource": "apps/example/app/e2e-biometric.tsx",
+      "trigger": "screen-load",
+      "statusId": "e2e-biometric-results",
+      "expectedText": "bio:read=value-matched;",
+      "assertion": "value === expectedValue"
+    },
+    {
+      "id": "biometric.cleanup",
+      "coverage": "replay-asserted",
+      "kind": "public-api",
+      "transport": "item.delete() and storage.clearBiometric() remove the RUN_ID-scoped biometric item, and getSecureMetadata reads it back as missing without a second prompt.",
+      "claimLimit": "iOS simulator only. Removes the example's biometric Secure items; it does not assert other Secure keys.",
+      "suite": "e2e/qa-biometric-ios.ad",
+      "source": "apps/example/app/e2e-biometric.tsx",
+      "statusSource": "apps/example/app/e2e-biometric.tsx",
+      "trigger": "screen-load",
+      "statusId": "e2e-biometric-results",
+      "expectedText": "bio:cleanup=missing;",
+      "assertion": "metadata.kind === \"missing\" && !metadata.exists"
     }
   ],
   "pending": [
@@ -886,12 +934,12 @@
     {
       "id": "secure.biometric-authentication",
       "state": "pending-prerequisites",
-      "reason": "No biometric write or prompt runs in the default replay. A skipped or unavailable biometric path is not a pass.",
+      "reason": "The iOS simulator Face ID match path is replay-asserted by biometric-ios. Android is not: biometric replay needs fingerprint or PIN enrollment through the device Settings app, which the device rules block. iOS nonmatch and cancel outcomes are not asserted because no `.ad` step dismisses the SpringBoard Face ID sheet, so the blocked read cannot complete. A skipped or unavailable biometric path is not a pass.",
       "prerequisites": [
-        "A device with an enrolled supported biometric and passcode",
-        "An explicitly authorized biometric prompt on the selected release build"
+        "Android: a QA emulator or device with fingerprint and PIN enrolled through an authorized path other than the device Settings app",
+        "iOS: an `.ad` step or authorized interaction that dismisses the SpringBoard Face ID sheet after a nonmatch or cancel"
       ],
-      "acceptance": "Run the dedicated biometric lifecycle flow on the requested physical target and verify the public Secure value and prompt outcome without recording credentials."
+      "acceptance": "On Android, run the biometric lifecycle flow and verify the public Secure value and prompt outcome. On iOS, assert the documented public error for a nonmatch and a cancel on the RUN_ID-scoped item, then confirm cleanup. Never record credentials."
     },
     {
       "id": "secure.locked-state-and-invalidation",

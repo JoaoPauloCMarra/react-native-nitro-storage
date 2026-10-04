@@ -60,6 +60,20 @@ flow asserts only that a `passcode-acl=` result rendered. A device without a
 passcode can reject that write, and the row is not a pass for passcode-protected
 storage.
 
+The `biometric-ios` suite (`e2e/qa-biometric-ios.ad`) runs only with
+`--platform ios`; its manifest entry sets `platforms: ["ios"]`, the runner skips
+it for Android, and `--flow biometric-ios` with `--platform android` fails before
+any device command. It enrolls simulator Face ID, opens the run-on-load
+`e2e-biometric` route with `RUN_ID`, and writes one `__e2e_bio_<RUN_ID>` item
+with `biometric: true` and the default level. The `e2e-biometric-results` label
+then shows the seed and metadata tokens and `bio:read=prompting;`. After a fixed
+1500 ms wait, `settings faceid match` resolves the blocked read, and the flow
+expects `bio:read=value-matched;` and `bio:cleanup=missing;` before it unenrolls
+Face ID. Cleanup calls `storage.clearBiometric()`, which removes every
+biometric Secure item in the example install. This is simulator evidence only,
+not Secure Enclave hardware evidence. Android biometrics and iOS nonmatch or
+cancel outcomes remain pending.
+
 Each run uses a unique session and an artifact directory under the OS temporary
 directory. `agent-device test` closes each attempt session itself, including
 on failure.
@@ -70,7 +84,8 @@ itself is not sufficient. Smoke and integrity rows are asserted through the
 on-screen `smoke-results` and `e2e-integrity-results` labels because
 agent-device `.ad` waits only see on-screen elements. The keychain suite runs one no-prompt Secure
 roundtrip and keeps biometric, lock, corruption, and hardware-backed checks
-explicitly pending. The smoke test's constructed `storage_full` error is read
+explicitly pending; only the iOS simulator Face ID match path is asserted, by
+`biometric-ios`. The smoke test's constructed `storage_full` error is read
 through the public `/testing` entrypoint; it proves error-code classification
 at that test adapter boundary only.
 
@@ -82,8 +97,9 @@ Disk, and Secure.
 
 Native replay rows identify the public runtime platform and backend capability,
 then assert values returned through the default package entrypoint. This
-supports installed-app Disk and Secure behavior claims for that target. It does
-not prove hardware-backed keys, biometrics, locked-device behavior, corruption
+supports installed-app Disk and Secure behavior claims for that target. Apart
+from the iOS simulator Face ID match in `biometric-ios`, it does not prove
+hardware-backed keys, biometrics, locked-device behavior, corruption
 recovery, or a native Disk/Secure write failure. Those checks need controlled
 native or hardware prerequisites and remain pending in the coverage manifest.
 Unit tests for an injected adapter boundary are useful logic evidence, but they

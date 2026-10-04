@@ -1,10 +1,11 @@
 {
   "version": 1,
-  "runtimeSourceSha256": "93a20d2dbafef8ce8b4a3591cfa4d58d01504ae13118e1493bab5388ad339ca1",
+  "runtimeSourceSha256": "d29455df3a63891ee2e8ef5fe437eb3044ce10ad81fd5550e6e5285888929ef4",
   "runtimeSourceFiles": [
     "apps/example/app.config.js",
     "apps/example/app/_layout.tsx",
     "apps/example/app/e2e-api-extended.tsx",
+    "apps/example/app/e2e-biometric.tsx",
     "apps/example/app/e2e-clear-all.tsx",
     "apps/example/app/e2e-integrity.tsx",
     "apps/example/app/e2e-keychain.tsx",
@@ -81,9 +82,10 @@
     "packages/react-native-nitro-storage/src/web-backend-contract.ts",
     "packages/react-native-nitro-storage/src/web-storage-backend.ts"
   ],
-  "replayInputsSha256": "ac25089fda9899885d970d52b8bb04ee220b5d6ac15a190ddae85ec52ba617a3",
+  "replayInputsSha256": "a97659a3187344c43e8ad17e8e1877f9d7cd2efbe035a9ed21566d41bebe78b0",
   "replayInputs": [
     "e2e/qa-api-extended.ad",
+    "e2e/qa-biometric-ios.ad",
     "e2e/qa-clear-all.ad",
     "e2e/qa-deeplink.ad",
     "e2e/qa-full-features.ad",
@@ -101,6 +103,7 @@
     "deeplink",
     "persistence-relaunch",
     "api-extended",
+    "biometric-ios",
     "clear-all"
   ]
 }
