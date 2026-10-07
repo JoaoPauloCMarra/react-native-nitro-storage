@@ -3,6 +3,7 @@
 #include "../core/NativeStorageAdapter.hpp"
 #include <atomic>
 #include <functional>
+#include <optional>
 #include <memory>
 #include <mutex>
 #include <unordered_set>
@@ -11,7 +12,7 @@ namespace NitroStorage {
 
 class IOSStorageAdapterCpp : public NativeStorageAdapter {
 public:
-    using ProtectedDataReader = std::function<bool()>;
+    using ProtectedDataReader = std::function<std::optional<bool>()>;
 
     IOSStorageAdapterCpp();
     explicit IOSStorageAdapterCpp(ProtectedDataReader protectedDataReader);

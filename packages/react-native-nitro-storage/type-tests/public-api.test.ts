@@ -244,6 +244,8 @@ const missingKeys: string[] = migrationResult.missing;
 const skippedKeys: string[] = migrationResult.skipped;
 const failedKeys: { key: string; code?: StorageErrorCode }[] =
   migrationResult.failed;
+const enumerationLocked: boolean = migrationResult.enumerationLocked;
+void enumerationLocked;
 void migratedKeys;
 void lockedKeys;
 void missingKeys;
@@ -418,3 +420,15 @@ actionsOnly.set({ theme: "dark", compact: false });
 void typedActions;
 void valueOnly;
 void actionsOnly;
+
+import {
+  createNitroStorageMock,
+  setMockProtectedDataAvailable,
+} from "../src/testing";
+
+setMockProtectedDataAvailable(false);
+createNitroStorageMock().setProtectedDataAvailable(true);
+// @ts-expect-error availability must be a boolean
+setMockProtectedDataAvailable("locked");
+// @ts-expect-error availability is required
+setMockProtectedDataAvailable();

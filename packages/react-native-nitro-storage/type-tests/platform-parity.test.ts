@@ -95,7 +95,10 @@ type NativeExports = keyof typeof import("../src");
 type WebExports = keyof typeof import("../src/index.web");
 type TestingExports = Exclude<
   keyof typeof import("../src/testing"),
-  "resetNitroStorageMock" | "createNitroStorageMock" | "NitroStorageTestModule"
+  | "resetNitroStorageMock"
+  | "createNitroStorageMock"
+  | "NitroStorageTestModule"
+  | "setMockProtectedDataAvailable"
 >;
 type NativeMatchesWebExports = Assert<Equals<NativeExports, WebExports>>;
 type TestingMatchesNativeExports = Assert<

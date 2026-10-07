@@ -6,6 +6,7 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -15,6 +16,8 @@ namespace {
 
 NSString* const kBecameAvailable = @"UIApplicationProtectedDataDidBecomeAvailable";
 NSString* const kWillBecomeUnavailable = @"UIApplicationProtectedDataWillBecomeUnavailable";
+NSString* const kDidBecomeActive = @"UIApplicationDidBecomeActiveNotification";
+NSString* const kWillEnterForeground = @"UIApplicationWillEnterForegroundNotification";
 
 void require(bool condition, const std::string& message) {
     if (!condition) {
@@ -111,35 +114,155 @@ void testDestroyedAdapterIgnoresNotificationsAndLateUnsubscribe() {
 
 void testOffMainSeedingReadsOnTheMainThread() {
     std::atomic<bool> readOnMain{false};
-    std::atomic<bool> built{false};
+    std::atomic<int> reads{0};
     std::unique_ptr<IOSStorageAdapterCpp> adapter;
     std::thread worker([&] {
         adapter = std::make_unique<IOSStorageAdapterCpp>([&] {
             readOnMain.store([NSThread isMainThread]);
-            return false;
+            reads.fetch_add(1);
+            return true;
         });
-        built.store(true);
     });
-    spinMainRunLoop([&] { return built.load(); }, 5.0);
     worker.join();
-    require(built.load(), "construction off the main thread completes");
+    require(reads.load() == 0, "construction off the main thread must not read UIApplication itself");
+
+    spinMainRunLoop([&] { return reads.load() > 0; }, 5.0);
+    require(reads.load() == 1, "the seed reads once");
     require(readOnMain.load(), "UIApplication state is read on the main thread");
-    require(!adapter->isProtectedDataAvailable(), "seed is applied when main serves the read");
+    require(adapter->isProtectedDataAvailable(), "seed is applied when main serves the read");
 }
 
-void testOffMainSeedingNeverBlocksOnABusyMainThread() {
-    std::atomic<bool> built{false};
+void testOffMainConstructionReportsUnknownAsUnavailable() {
     std::unique_ptr<IOSStorageAdapterCpp> adapter;
     std::thread worker([&] {
-        adapter = std::make_unique<IOSStorageAdapterCpp>([] { return false; });
-        built.store(true);
+        adapter = std::make_unique<IOSStorageAdapterCpp>([] { return true; });
     });
     worker.join();
-    require(built.load(), "construction must return while the main thread is busy");
-    require(adapter->isProtectedDataAvailable(), "unknown state is reported available until main reads it");
+    require(!adapter->isProtectedDataAvailable(), "unknown state is reported unavailable");
 
-    spinMainRunLoop([&] { return !adapter->isProtectedDataAvailable(); }, 5.0);
-    require(!adapter->isProtectedDataAvailable(), "late seed is applied once main runs");
+    spinMainRunLoop([&] { return adapter->isProtectedDataAvailable(); }, 5.0);
+    require(adapter->isProtectedDataAvailable(), "seed lands once main runs");
+}
+
+void testQueuedSeedNeverOverwritesANewerNotification() {
+    std::atomic<int> reads{0};
+    int calls = 0;
+    std::unique_ptr<IOSStorageAdapterCpp> adapter;
+    std::thread worker([&] {
+        adapter = std::make_unique<IOSStorageAdapterCpp>([&] { reads.fetch_add(1); return true; });
+    });
+    worker.join();
+    auto unsubscribe = adapter->addProtectedDataAvailableListener([&] { calls += 1; });
+
+    post(kWillBecomeUnavailable);
+    require(!adapter->isProtectedDataAvailable(), "unavailable notification applied");
+
+    spinMainRunLoop([&] { return reads.load() > 0; }, 5.0);
+    require(reads.load() == 1, "the queued seed still ran");
+    require(!adapter->isProtectedDataAvailable(), "a stale seed must not overwrite Unavailable");
+    require(calls == 0, "a stale seed must not fire listeners");
+    unsubscribe();
+}
+
+void testNilApplicationKeepsUnknownUntilForeground() {
+    std::atomic<bool> applicationReady{false};
+    IOSStorageAdapterCpp adapter([&]() -> std::optional<bool> {
+        if (!applicationReady.load()) {
+            return std::nullopt;
+        }
+        return true;
+    });
+    int calls = 0;
+    auto unsubscribe = adapter.addProtectedDataAvailableListener([&] { calls += 1; });
+    require(!adapter.isProtectedDataAvailable(), "no application yet reports unavailable");
+    require(calls == 0, "an unresolved read never fires");
+
+    applicationReady.store(true);
+    post(kDidBecomeActive);
+    require(adapter.isProtectedDataAvailable(), "foreground heals an unresolved seed");
+    require(calls == 1, "unknown to available fires once");
+    unsubscribe();
+}
+
+void testUnknownToAvailableFiresListeners() {
+    int calls = 0;
+    std::unique_ptr<IOSStorageAdapterCpp> adapter;
+    std::thread worker([&] {
+        adapter = std::make_unique<IOSStorageAdapterCpp>([] { return true; });
+    });
+    worker.join();
+    auto unsubscribe = adapter->addProtectedDataAvailableListener([&] { calls += 1; });
+    require(calls == 0, "subscribing never fires");
+
+    spinMainRunLoop([&] { return calls > 0; }, 5.0);
+    require(calls == 1, "unknown to available is a transition");
+    require(adapter->isProtectedDataAvailable(), "available after the seed");
+    unsubscribe();
+}
+
+void testUnknownToUnavailableDoesNotFireListeners() {
+    int calls = 0;
+    std::atomic<int> reads{0};
+    std::unique_ptr<IOSStorageAdapterCpp> adapter;
+    std::thread worker([&] {
+        adapter = std::make_unique<IOSStorageAdapterCpp>([&] { reads.fetch_add(1); return false; });
+    });
+    worker.join();
+    auto unsubscribe = adapter->addProtectedDataAvailableListener([&] { calls += 1; });
+
+    spinMainRunLoop([&] { return reads.load() > 0; }, 5.0);
+    require(reads.load() == 1, "the seed ran");
+    require(!adapter->isProtectedDataAvailable(), "stays unavailable");
+    require(calls == 0, "unknown to unavailable is not a transition to available");
+    unsubscribe();
+}
+
+void testForegroundNotificationsRereadAvailability() {
+    for (NSString* name : {kDidBecomeActive, kWillEnterForeground}) {
+        std::atomic<bool> value{true};
+        IOSStorageAdapterCpp adapter([&] { return value.load(); });
+        int calls = 0;
+        auto unsubscribe = adapter.addProtectedDataAvailableListener([&] { calls += 1; });
+        require(adapter.isProtectedDataAvailable(), "seeded available");
+
+        post(kWillBecomeUnavailable);
+        require(!adapter.isProtectedDataAvailable(), "will-become-unavailable caches false");
+
+        post(name);
+        require(adapter.isProtectedDataAvailable(), "foreground re-read heals a stale false cache");
+        require(calls == 1, "false to true on a foreground re-read fires listeners");
+
+        post(name);
+        require(calls == 1, "an unchanged re-read does not fire");
+
+        value.store(false);
+        post(name);
+        require(!adapter.isProtectedDataAvailable(), "foreground re-read can report unavailable");
+        require(calls == 1, "true to false never fires");
+
+        value.store(true);
+        post(name);
+        require(calls == 2, "recovery fires again");
+        unsubscribe();
+    }
+}
+
+void testForegroundNotificationOffMainReadsOnTheMainThread() {
+    std::atomic<bool> value{false};
+    std::atomic<bool> readOnMain{true};
+    IOSStorageAdapterCpp adapter([&] {
+        if (![NSThread isMainThread]) {
+            readOnMain.store(false);
+        }
+        return value.load();
+    });
+    require(!adapter.isProtectedDataAvailable(), "seeded unavailable");
+    value.store(true);
+    std::thread poster([&] { post(kDidBecomeActive); });
+    poster.join();
+    spinMainRunLoop([&] { return adapter.isProtectedDataAvailable(); }, 5.0);
+    require(adapter.isProtectedDataAvailable(), "off-main notification is re-read on main");
+    require(readOnMain.load(), "UIApplication is never read off the main thread");
 }
 
 } // namespace
@@ -152,7 +275,13 @@ int main() {
         testListenersMayUnsubscribeWhileNotified();
         testDestroyedAdapterIgnoresNotificationsAndLateUnsubscribe();
         testOffMainSeedingReadsOnTheMainThread();
-        testOffMainSeedingNeverBlocksOnABusyMainThread();
+        testOffMainConstructionReportsUnknownAsUnavailable();
+        testQueuedSeedNeverOverwritesANewerNotification();
+        testNilApplicationKeepsUnknownUntilForeground();
+        testUnknownToAvailableFiresListeners();
+        testUnknownToUnavailableDoesNotFireListeners();
+        testForegroundNotificationsRereadAvailability();
+        testForegroundNotificationOffMainReadsOnTheMainThread();
         std::cout << "IOSStorageAdapterCpp protected data tests passed." << std::endl;
     }
     return 0;

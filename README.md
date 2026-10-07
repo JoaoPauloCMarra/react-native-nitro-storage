@@ -620,7 +620,8 @@ const result = migrateSecureAccessControl(
   AccessControl.AfterFirstUnlockThisDeviceOnly,
 );
 // { migrated: string[]; locked: string[]; missing: string[];
-//   skipped: string[]; failed: { key: string; code?: StorageErrorCode }[] }
+//   skipped: string[]; failed: { key: string; code?: StorageErrorCode }[];
+//   enumerationLocked: boolean }
 
 if (result.locked.length > 0) {
   // Retry only the locked keys once protected data is available.
@@ -633,12 +634,21 @@ if (result.locked.length > 0) {
 - Run it while the device is unlocked, for example from a foreground user
   action or after `storage.isProtectedDataAvailable()` returns `true`. Reading
   or rewriting a `WhenUnlocked` item while locked fails with `keychain_locked`.
+- It first runs `flushSecureWrites()` so queued Secure writes land before the
+  rewrite, then (without `options.keys`) lists the Secure keys. If the flush or
+  the listing fails with `keychain_locked`, it changes nothing, including the
+  default level, and returns `enumerationLocked: true` with empty lists (the
+  queued writes stay queued). Call it again once
+  protected data is available. Any other listing error is thrown and also
+  leaves the default level unchanged.
 - A key whose read or write fails with `keychain_locked` is left unchanged and
   listed in `locked`. Any other error leaves the key unchanged and lists it in
   `failed` with its error code. The helper never deletes data.
 - `options.keys` limits the work to specific keys. Without it, every Secure key
   is processed. Biometric-protected items are listed in `skipped` and are never
-  read, because reading them can show a biometric prompt.
+  read, because reading them can show a biometric prompt. A key whose biometric
+  check fails with `keychain_locked` is also listed in `skipped`, not `locked`:
+  biometric items are never migrated.
 - The level becomes the default for later writes even when a key fails, so new
   writes already use it.
 - Items that you configured with their own `accessControl` option are rewritten
@@ -648,7 +658,13 @@ if (result.locked.length > 0) {
   every Secure key in `skipped`.
 - Each rewrite is a native write, so storage listeners and observers receive a
   change event for every migrated key, even though the value is unchanged.
-- It is JavaScript only and works with any 0.14-compatible native module.
+- It reads each key and writes it back as separate steps. An app extension that
+  shares the Keychain access group and writes the same key between the two steps
+  can lose that write. Run the migration while extensions are idle.
+- `migrateSecureAccessControl` is JavaScript only and works with any
+  0.14-compatible native module. The protected-data APIs below need the 0.15.0
+  native module.
+- Its result has `enumerationLocked: boolean` besides the key lists.
 
 ### Protected Data Availability
 
@@ -668,16 +684,36 @@ const unsubscribe = storage.onProtectedDataAvailable(() => {
 unsubscribe();
 ```
 
-- `isProtectedDataAvailable()` returns a cached value and never blocks. iOS
-  updates it from the `UIApplicationProtectedDataDidBecomeAvailable` and
-  `UIApplicationProtectedDataWillBecomeUnavailable` notifications. The first
-  value is read from `UIApplication` on the main thread when the native storage
-  module is first created. If the main thread is busy, the value reads `true` until that read
-  completes.
+- `isProtectedDataAvailable()` returns a cached value and never blocks. The
+  state starts unknown, and unknown reports `false`, so a locked device is never
+  reported as open. The first value is read from `UIApplication` on the main
+  thread: synchronously when the native module is created on the main thread,
+  otherwise asynchronously on the main queue, usually within a few
+  milliseconds. Until then the first calls can report `false` even when data is
+  available. When the read finds protected data available, listeners fire, so
+  gate on `onProtectedDataAvailable` instead of treating an early `false` as
+  final. iOS keeps the value current from the
+  `UIApplicationProtectedDataDidBecomeAvailable` and
+  `UIApplicationProtectedDataWillBecomeUnavailable` notifications, and
+  re-reads `UIApplication` when the app becomes active or enters the
+  foreground, because the available notification is not guaranteed when the
+  user unlocks inside the short window before protected data drops.
+- Residual cases. A cold background launch that happens inside the grace
+  window after the device locks reads `true` until the app next becomes active,
+  because `UIApplication` still reports available during that window. A
+  background-only consumer can also keep a `false` cache after an unlock inside
+  the grace window until the next foreground. Treat `keychain_locked` and the
+  success of the actual read as the source of truth, not the cached value.
+  Before `UIApplication` exists (before `UIApplicationMain`), the state stays
+  unknown and reports `false` until the app becomes active.
 - `onProtectedDataAvailable(listener)` calls `listener` each time protected data
-  changes from unavailable to available, and returns an unsubscribe function. It
-  does not call the listener on subscribe. Subscribe first, then check
-  `isProtectedDataAvailable()`, so a change between the two calls is not missed.
+  changes from unavailable or unknown to available, and returns an unsubscribe
+  function. It does not call the listener on subscribe. Subscribe first, then
+  check `isProtectedDataAvailable()`, so a change between the two calls is not
+  missed.
+- Both functions need the 0.15.0 native module. On an older native binary,
+  `isProtectedDataAvailable()` returns `true` and `onProtectedDataAvailable`
+  returns a no-op unsubscribe. Rebuild the app to get real values.
 - In an iOS app extension `UIApplication` is not available. The module cannot
   read the state there, so `isProtectedDataAvailable()` returns `true` and
   `keychain_locked` remains the signal.
@@ -907,7 +943,10 @@ and Storybook run without native modules. Item subscribers and hooks re-render
 for Memory, Disk, and Secure writes. It does not model platform behaviour:
 there are no keychain locks, biometric prompts, access-control levels,
 coalesced native write timing, or web backends (the web backend functions are
-no-ops). Mock the package with it, or use it directly.
+no-ops). Mock the package with it, or use it directly. To simulate a locked
+device, call `setMockProtectedDataAvailable(false)`; `true` fires the
+`onProtectedDataAvailable` listeners, and `resetNitroStorageMock()` restores
+`true` and drops every `onProtectedDataAvailable` listener.
 
 ```ts
 import {
@@ -926,6 +965,18 @@ beforeEach(() => {
 
 // Or build an isolated instance per test file.
 const { storage, memoryItem } = createNitroStorageMock();
+```
+
+```ts
+import {
+  setMockProtectedDataAvailable,
+  storage,
+} from "react-native-nitro-storage/testing";
+
+const stop = storage.onProtectedDataAvailable(() => loadSession());
+setMockProtectedDataAvailable(false); // storage.isProtectedDataAvailable() === false
+setMockProtectedDataAvailable(true); // listener fires once
+stop();
 ```
 
 ## API

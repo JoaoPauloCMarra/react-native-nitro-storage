@@ -9,7 +9,6 @@
 #include "SqliteDiskStore.hpp"
 
 #include <chrono>
-#include <future>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -328,11 +327,14 @@ static CFStringRef accessControlAttr(int level) {
 #if TARGET_OS_IPHONE
 static NSNotificationName const kProtectedDataBecameAvailable = UIApplicationProtectedDataDidBecomeAvailable;
 static NSNotificationName const kProtectedDataWillBecomeUnavailable = UIApplicationProtectedDataWillBecomeUnavailable;
+static NSNotificationName const kApplicationDidBecomeActive = UIApplicationDidBecomeActiveNotification;
+static NSNotificationName const kApplicationWillEnterForeground = UIApplicationWillEnterForegroundNotification;
 #else
 static NSNotificationName const kProtectedDataBecameAvailable = @"UIApplicationProtectedDataDidBecomeAvailable";
 static NSNotificationName const kProtectedDataWillBecomeUnavailable = @"UIApplicationProtectedDataWillBecomeUnavailable";
+static NSNotificationName const kApplicationDidBecomeActive = @"UIApplicationDidBecomeActiveNotification";
+static NSNotificationName const kApplicationWillEnterForeground = @"UIApplicationWillEnterForegroundNotification";
 #endif
-static constexpr std::chrono::milliseconds kProtectedDataSeedTimeout{25};
 
 struct IOSStorageAdapterCpp::ProtectedDataState {
     struct Listener {
@@ -340,17 +342,23 @@ struct IOSStorageAdapterCpp::ProtectedDataState {
         std::function<void()> callback;
     };
 
-    std::atomic<bool> available{true};
+    // Unknown until the first read on the main thread. Unknown reports
+    // unavailable so a locked device never looks open; a transition to
+    // available from Unknown or Unavailable notifies listeners.
+    enum Value : int { Unknown = 0, Available = 1, Unavailable = 2 };
+
+    std::atomic<int> value{Unknown};
     std::mutex mutex;
     std::vector<Listener> listeners;
     size_t nextListenerId = 0;
     NSArray<id>* observers = nil;
+    ProtectedDataReader reader;
 
-    void update(bool value) {
-        const bool wasAvailable = available.exchange(value, std::memory_order_acq_rel);
-        if (!value || wasAvailable) {
-            return;
-        }
+    bool isAvailable() const {
+        return value.load(std::memory_order_acquire) == Available;
+    }
+
+    void notifyBecameAvailable() {
         std::vector<Listener> snapshot;
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -360,9 +368,50 @@ struct IOSStorageAdapterCpp::ProtectedDataState {
             listener.callback();
         }
     }
+
+    void update(bool available) {
+        const int previous = value.exchange(available ? Available : Unavailable, std::memory_order_acq_rel);
+        if (!available || previous == Available) {
+            return;
+        }
+        notifyBecameAvailable();
+    }
+
+    // The seed only resolves Unknown. A notification delivered before the
+    // queued seed runs is newer than the read and must not be overwritten.
+    void seed(std::optional<bool> available) {
+        if (!available.has_value()) {
+            return;
+        }
+        int expected = Unknown;
+        if (value.compare_exchange_strong(expected, *available ? Available : Unavailable, std::memory_order_acq_rel)) {
+            if (*available) {
+                notifyBecameAvailable();
+            }
+        }
+    }
+
+    void reread(std::optional<bool> available) {
+        if (available.has_value()) {
+            update(*available);
+        }
+    }
+
+    static void refreshOnMain(const std::shared_ptr<ProtectedDataState>& state, bool seedOnly) {
+        if ([NSThread isMainThread]) {
+            seedOnly ? state->seed(state->reader()) : state->reread(state->reader());
+            return;
+        }
+        std::weak_ptr<ProtectedDataState> weakState = state;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (auto alive = weakState.lock()) {
+                seedOnly ? alive->seed(alive->reader()) : alive->reread(alive->reader());
+            }
+        });
+    }
 };
 
-static bool readApplicationProtectedDataAvailability() {
+static std::optional<bool> readApplicationProtectedDataAvailability() {
     if ([[[NSBundle mainBundle] bundlePath] hasSuffix:@".appex"]) {
         return true;
     }
@@ -371,7 +420,10 @@ static bool readApplicationProtectedDataAvailability() {
         return true;
     }
     id application = ((id (*)(Class, SEL))objc_msgSend)(applicationClass, @selector(sharedApplication));
-    if (application == nil || ![application respondsToSelector:@selector(isProtectedDataAvailable)]) {
+    if (application == nil) {
+        return std::nullopt;
+    }
+    if (![application respondsToSelector:@selector(isProtectedDataAvailable)]) {
         return true;
     }
     return ((BOOL (*)(id, SEL))objc_msgSend)(application, @selector(isProtectedDataAvailable));
@@ -382,6 +434,7 @@ IOSStorageAdapterCpp::IOSStorageAdapterCpp()
 
 IOSStorageAdapterCpp::IOSStorageAdapterCpp(ProtectedDataReader protectedDataReader)
     : protectedData_(std::make_shared<ProtectedDataState>()) {
+    protectedData_->reader = std::move(protectedDataReader);
     std::weak_ptr<ProtectedDataState> weakState = protectedData_;
     NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
     id available = [center addObserverForName:kProtectedDataBecameAvailable
@@ -400,21 +453,18 @@ IOSStorageAdapterCpp::IOSStorageAdapterCpp(ProtectedDataReader protectedDataRead
             state->update(false);
         }
     }];
-    protectedData_->observers = @[available, unavailable];
-
-    if ([NSThread isMainThread]) {
-        protectedData_->update(protectedDataReader());
-        return;
-    }
-    auto seeded = std::make_shared<std::promise<void>>();
-    auto seededFuture = seeded->get_future();
-    dispatch_async(dispatch_get_main_queue(), ^{
+    // DidBecomeAvailable is not guaranteed after WillBecomeUnavailable when the
+    // user unlocks inside the grace window, so foregrounding re-reads the truth.
+    auto refresh = ^(NSNotification*) {
         if (auto state = weakState.lock()) {
-            state->update(protectedDataReader());
+            ProtectedDataState::refreshOnMain(state, false);
         }
-        seeded->set_value();
-    });
-    seededFuture.wait_for(kProtectedDataSeedTimeout);
+    };
+    id active = [center addObserverForName:kApplicationDidBecomeActive object:nil queue:nil usingBlock:refresh];
+    id foreground = [center addObserverForName:kApplicationWillEnterForeground object:nil queue:nil usingBlock:refresh];
+    protectedData_->observers = @[available, unavailable, active, foreground];
+
+    ProtectedDataState::refreshOnMain(protectedData_, true);
 }
 
 IOSStorageAdapterCpp::~IOSStorageAdapterCpp() {
@@ -424,7 +474,7 @@ IOSStorageAdapterCpp::~IOSStorageAdapterCpp() {
 }
 
 bool IOSStorageAdapterCpp::isProtectedDataAvailable() {
-    return protectedData_->available.load(std::memory_order_acquire);
+    return protectedData_->isAvailable();
 }
 
 std::function<void()> IOSStorageAdapterCpp::addProtectedDataAvailableListener(std::function<void()> listener) {

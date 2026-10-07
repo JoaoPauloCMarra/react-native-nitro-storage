@@ -308,11 +308,19 @@ export const storage = {
       },
     );
   },
-  isProtectedDataAvailable: (): boolean =>
-    getStorageModule().isProtectedDataAvailable(),
+  isProtectedDataAvailable: (): boolean => {
+    const module = getStorageModule();
+    return typeof module.isProtectedDataAvailable === "function"
+      ? module.isProtectedDataAvailable()
+      : true;
+  },
   onProtectedDataAvailable: (listener: () => void): (() => void) => {
     assertProtectedDataListener(listener);
-    const unsubscribe = getStorageModule().onProtectedDataAvailable(listener);
+    const module = getStorageModule();
+    if (typeof module.onProtectedDataAvailable !== "function") {
+      return () => {};
+    }
+    const unsubscribe = module.onProtectedDataAvailable(listener);
     return typeof unsubscribe === "function" ? unsubscribe : () => {};
   },
   setSecureWritesAsync: (enabled: boolean) => {

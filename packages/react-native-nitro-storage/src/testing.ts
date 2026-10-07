@@ -241,6 +241,8 @@ function buildTestingModule() {
 
   const core = createStorageCore(buildAdapter);
   const { internals } = core;
+  let protectedDataAvailable = true;
+  const protectedDataListeners = new Set<() => void>();
 
   const storage = {
     ...core.storage,
@@ -248,10 +250,13 @@ function buildTestingModule() {
       assertAccessControlLevel(level);
       internals.setSecureDefaultAccessControl(level);
     },
-    isProtectedDataAvailable: (): boolean => true,
+    isProtectedDataAvailable: (): boolean => protectedDataAvailable,
     onProtectedDataAvailable: (listener: () => void): (() => void) => {
       assertProtectedDataListener(listener);
-      return () => {};
+      protectedDataListeners.add(listener);
+      return () => {
+        protectedDataListeners.delete(listener);
+      };
     },
     setSecureWritesAsync: (_enabled: boolean) => {},
     setKeychainAccessGroup: (_group: string) => {},
@@ -290,7 +295,24 @@ function buildTestingModule() {
     }),
   };
 
+  const setProtectedDataAvailable = (available: boolean): void => {
+    if (typeof available !== "boolean") {
+      throw new TypeError(
+        "NitroStorage: Protected data availability must be a boolean",
+      );
+    }
+    const wasAvailable = protectedDataAvailable;
+    protectedDataAvailable = available;
+    if (available && !wasAvailable) {
+      Array.from(protectedDataListeners).forEach((listener) => {
+        listener();
+      });
+    }
+  };
+
   const reset = (): void => {
+    protectedDataAvailable = true;
+    protectedDataListeners.clear();
     storage.setEventObserver(undefined);
     storage.setScheduledFlushErrorObserver(undefined);
     storage.setMetricsObserver(undefined);
@@ -315,6 +337,7 @@ function buildTestingModule() {
     migrateSecureAccessControl: core.migrateSecureAccessControl,
     runTransaction: core.runTransaction,
     createSecureAuthStorage: core.createSecureAuthStorage,
+    setProtectedDataAvailable,
     reset,
   };
 }
@@ -338,6 +361,8 @@ export const migrateSecureAccessControl =
   defaultModule.migrateSecureAccessControl;
 export const runTransaction = defaultModule.runTransaction;
 export const createSecureAuthStorage = defaultModule.createSecureAuthStorage;
+export const setMockProtectedDataAvailable =
+  defaultModule.setProtectedDataAvailable;
 
 export function setWebSecureStorageBackend(
   _backend?: WebSecureStorageBackend,

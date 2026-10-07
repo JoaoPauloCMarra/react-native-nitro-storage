@@ -238,6 +238,12 @@ export type SecureAccessControlMigrationResult = {
   skipped: string[];
   /** Keys left unchanged because of another error. */
   failed: { key: string; code?: StorageErrorCode }[];
+  /**
+   * `true` when flushing queued Secure writes or listing the Secure keys
+   * failed with `keychain_locked`. The default level and every item are
+   * unchanged; retry once protected data is available.
+   */
+  enumerationLocked: boolean;
 };
 
 export type SetItemConfig<TMember extends string = string> = Omit<
@@ -3405,21 +3411,37 @@ export function createStorageCore(
           assertValidStorageKey(key);
         });
 
-        flushSecureWrites();
+        let keys: string[];
+        try {
+          flushSecureWrites();
+          keys = Array.from(
+            new Set(
+              requestedKeys ?? adapter.backend.getAllKeys(StorageScope.Secure),
+            ),
+          );
+        } catch (error) {
+          if (getStorageErrorCode(error) !== "keychain_locked") {
+            throw error;
+          }
+          return {
+            migrated: [],
+            locked: [],
+            missing: [],
+            skipped: [],
+            failed: [],
+            enumerationLocked: true,
+          };
+        }
         secureDefaultAccessControl = level;
         adapter.backend.setSecureAccessControl(level);
 
-        const keys = Array.from(
-          new Set(
-            requestedKeys ?? adapter.backend.getAllKeys(StorageScope.Secure),
-          ),
-        );
         const result: SecureAccessControlMigrationResult = {
           migrated: [],
           locked: [],
           missing: [],
           skipped: [],
           failed: [],
+          enumerationLocked: false,
         };
         if (!adapter.supportsSecureAccessControlMigration()) {
           result.skipped = keys;
@@ -3428,7 +3450,17 @@ export function createStorageCore(
 
         keys.forEach((key) => {
           try {
-            if (adapter.backend.hasSecureBiometric(key)) {
+            let hasBiometric: boolean;
+            try {
+              hasBiometric = adapter.backend.hasSecureBiometric(key);
+            } catch (error) {
+              if (getStorageErrorCode(error) !== "keychain_locked") {
+                throw error;
+              }
+              result.skipped.push(key);
+              return;
+            }
+            if (hasBiometric) {
               result.skipped.push(key);
               return;
             }

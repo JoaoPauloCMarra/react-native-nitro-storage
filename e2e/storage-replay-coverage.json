@@ -999,7 +999,7 @@
         "A dedicated iOS QA device with a passcode and a user-approved lock/unlock interaction",
         "An installed release app that reports protected-data availability and listener calls on a deterministic status row"
       ],
-      "acceptance": "Lock the device and assert isProtectedDataAvailable reports false, unlock it and assert the listener fires once and the value reports true; record Android and web as always true with a listener that never fires."
+      "acceptance": "Lock the device and assert isProtectedDataAvailable reports false, unlock it (including inside the grace window before protected data drops, then foreground the app) and assert the listener fires once and the value reports true; on a cold background launch while locked, assert the value is false before and after the first main-thread read; record Android and web as always true with a listener that never fires."
     }
   ]
 }

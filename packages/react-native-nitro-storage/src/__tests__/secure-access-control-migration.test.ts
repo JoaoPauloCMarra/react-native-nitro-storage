@@ -107,6 +107,7 @@ describe("migrateSecureAccessControl", () => {
       missing: [],
       skipped: [],
       failed: [],
+      enumerationLocked: false,
     });
     expect(mockHybridObject.getAllKeys).toHaveBeenCalledWith(
       StorageScope.Secure,
@@ -193,6 +194,76 @@ describe("migrateSecureAccessControl", () => {
     expect(mockHybridObject.setSecureBiometricWithLevel).not.toHaveBeenCalled();
   });
 
+  it("leaves the default level and every key untouched when enumeration is locked", () => {
+    mockHybridObject.getAllKeys.mockImplementation(() => {
+      throw LOCKED;
+    });
+
+    const result = migrateSecureAccessControl(AccessControl.AfterFirstUnlock);
+
+    expect(result).toEqual({
+      migrated: [],
+      locked: [],
+      missing: [],
+      skipped: [],
+      failed: [],
+      enumerationLocked: true,
+    });
+    expect(mockHybridObject.setSecureAccessControl).not.toHaveBeenCalled();
+    expect(mockHybridObject.set).not.toHaveBeenCalled();
+    expect(mockHybridObject.get).not.toHaveBeenCalled();
+
+    mockHybridObject.getAllKeys.mockReturnValue([]);
+    storage.setString("later", "v", StorageScope.Secure);
+    expect(mockHybridObject.setSecureAccessControl).toHaveBeenLastCalledWith(
+      AccessControl.WhenUnlocked,
+    );
+  });
+
+  it("rethrows other enumeration errors without changing the default level", () => {
+    mockHybridObject.getAllKeys.mockImplementation(() => {
+      throw CORRUPT;
+    });
+
+    expect(() =>
+      migrateSecureAccessControl(AccessControl.AfterFirstUnlock),
+    ).toThrow(CORRUPT);
+    expect(mockHybridObject.setSecureAccessControl).not.toHaveBeenCalled();
+    expect(mockHybridObject.set).not.toHaveBeenCalled();
+  });
+
+  it("treats a locked biometric probe as skipped, not locked", () => {
+    seedSecureKeys({ plain: "1", bio: "2" });
+    mockHybridObject.hasSecureBiometric.mockImplementation((key: string) => {
+      if (key === "bio") {
+        throw LOCKED;
+      }
+      return false;
+    });
+
+    const result = migrateSecureAccessControl(AccessControl.AfterFirstUnlock);
+
+    expect(result.migrated).toEqual(["plain"]);
+    expect(result.skipped).toEqual(["bio"]);
+    expect(result.locked).toEqual([]);
+    expect(mockHybridObject.get).not.toHaveBeenCalledWith(
+      "bio",
+      StorageScope.Secure,
+    );
+  });
+
+  it("reports other biometric probe errors as failed", () => {
+    seedSecureKeys({ bio: "2" });
+    mockHybridObject.hasSecureBiometric.mockImplementation(() => {
+      throw CORRUPT;
+    });
+
+    const result = migrateSecureAccessControl(AccessControl.AfterFirstUnlock);
+
+    expect(result.failed).toEqual([{ key: "bio", code: "storage_corruption" }]);
+    expect(result.skipped).toEqual([]);
+  });
+
   it("reports keys that vanished before the read as missing", () => {
     mockHybridObject.getAllKeys.mockReturnValue(["gone"]);
     mockHybridObject.get.mockReturnValue(undefined);
@@ -269,6 +340,44 @@ describe("migrateSecureAccessControl", () => {
     queued.delete();
   });
 
+  it("reports a locked flush of queued writes as locked and changes nothing", () => {
+    const queued = createStorageItem<string>({
+      key: "queued-locked",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      coalesceSecureWrites: true,
+    });
+    queued.set("pending");
+    seedSecureKeys({ a: "1" });
+    mockHybridObject.setSecureAccessControl.mockClear();
+    mockHybridObject.set.mockClear();
+    mockHybridObject.getAllKeys.mockClear();
+    mockHybridObject.setBatch.mockImplementation(() => {
+      throw LOCKED;
+    });
+    mockHybridObject.set.mockImplementation(() => {
+      throw LOCKED;
+    });
+
+    const result = migrateSecureAccessControl(AccessControl.AfterFirstUnlock);
+
+    expect(result).toEqual({
+      migrated: [],
+      locked: [],
+      missing: [],
+      skipped: [],
+      failed: [],
+      enumerationLocked: true,
+    });
+    expect(mockHybridObject.getAllKeys).not.toHaveBeenCalled();
+    expect(mockHybridObject.setSecureAccessControl).not.toHaveBeenCalledWith(
+      AccessControl.AfterFirstUnlock,
+    );
+    mockHybridObject.setBatch.mockReset();
+    mockHybridObject.set.mockReset();
+    queued.delete();
+  });
+
   it("only records the default level on Android", () => {
     const restore = setPlatform("android");
     try {
@@ -282,6 +391,7 @@ describe("migrateSecureAccessControl", () => {
         missing: [],
         skipped: ["a"],
         failed: [],
+        enumerationLocked: false,
       });
       expect(mockHybridObject.get).not.toHaveBeenCalled();
       expect(mockHybridObject.set).not.toHaveBeenCalled();
@@ -349,6 +459,28 @@ describe("protected data availability", () => {
     expect(nativeUnsubscribe).toHaveBeenCalledTimes(1);
   });
 
+  it("reports available and returns a no-op unsubscribe on an older native binary", () => {
+    const original = mockHybridObject.isProtectedDataAvailable;
+    const originalSubscribe = mockHybridObject.onProtectedDataAvailable;
+    const legacy = mockHybridObject as Partial<typeof mockHybridObject>;
+    delete legacy.isProtectedDataAvailable;
+    delete legacy.onProtectedDataAvailable;
+    try {
+      expect(storage.isProtectedDataAvailable()).toBe(true);
+      const listener = jest.fn();
+      const unsubscribe = storage.onProtectedDataAvailable(listener);
+      expect(typeof unsubscribe).toBe("function");
+      expect(() => unsubscribe()).not.toThrow();
+      expect(listener).not.toHaveBeenCalled();
+      expect(() =>
+        storage.onProtectedDataAvailable(undefined as unknown as () => void),
+      ).toThrow(TypeError);
+    } finally {
+      mockHybridObject.isProtectedDataAvailable = original;
+      mockHybridObject.onProtectedDataAvailable = originalSubscribe;
+    }
+  });
+
   it("rejects a listener that is not a function", () => {
     expect(() =>
       storage.onProtectedDataAvailable(undefined as unknown as () => void),
@@ -368,5 +500,61 @@ describe("protected data availability", () => {
         entry.storage.onProtectedDataAvailable(null as unknown as () => void),
       ).toThrow(TypeError);
     }
+  });
+});
+
+describe("testing entry protected data simulation", () => {
+  afterEach(() => {
+    TestingEntry.resetNitroStorageMock();
+  });
+
+  it("simulates unavailable protected data and fires listeners when it returns", () => {
+    const listener = jest.fn();
+    const unsubscribe = TestingEntry.storage.onProtectedDataAvailable(listener);
+
+    TestingEntry.setMockProtectedDataAvailable(false);
+    expect(TestingEntry.storage.isProtectedDataAvailable()).toBe(false);
+    expect(listener).not.toHaveBeenCalled();
+
+    TestingEntry.setMockProtectedDataAvailable(false);
+    TestingEntry.setMockProtectedDataAvailable(true);
+    expect(TestingEntry.storage.isProtectedDataAvailable()).toBe(true);
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    TestingEntry.setMockProtectedDataAvailable(true);
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    unsubscribe();
+    TestingEntry.setMockProtectedDataAvailable(false);
+    TestingEntry.setMockProtectedDataAvailable(true);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("resets to available and drops listeners", () => {
+    const listener = jest.fn();
+    TestingEntry.storage.onProtectedDataAvailable(listener);
+    TestingEntry.setMockProtectedDataAvailable(false);
+
+    TestingEntry.resetNitroStorageMock();
+
+    expect(TestingEntry.storage.isProtectedDataAvailable()).toBe(true);
+    TestingEntry.setMockProtectedDataAvailable(false);
+    TestingEntry.setMockProtectedDataAvailable(true);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("keeps simulated state per mock module", () => {
+    const other = TestingEntry.createNitroStorageMock();
+    TestingEntry.setMockProtectedDataAvailable(false);
+    expect(other.storage.isProtectedDataAvailable()).toBe(true);
+    other.setProtectedDataAvailable(false);
+    expect(other.storage.isProtectedDataAvailable()).toBe(false);
+    expect(TestingEntry.storage.isProtectedDataAvailable()).toBe(false);
+  });
+
+  it("rejects a non-boolean value", () => {
+    expect(() =>
+      TestingEntry.setMockProtectedDataAvailable("no" as unknown as boolean),
+    ).toThrow(TypeError);
   });
 });
