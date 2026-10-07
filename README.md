@@ -91,7 +91,7 @@ before installing this package, then rebuild the native app so the generated
 Nitro bindings and native runtime use the same major-minor version:
 
 ```sh
-bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.14.0
+bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.15.0
 bunx expo prebuild
 ```
 
@@ -577,6 +577,154 @@ and an observer that throws also propagates its error. Register one observer per
 storage instance and handle retry failures at the calling boundary. The observer
 reports the synchronous backend handoff; it cannot report a later Android
 `apply()` or IndexedDB persistence failure that the backend does not expose.
+
+### Access Control Lifecycle
+
+`storage.setAccessControl(level)` sets the default `AccessControl` for Secure
+writes. Follow these rules:
+
+- It is per process and is not persisted. Call it on every launch, before the
+  first Secure write, for example at module scope in your app entry.
+- It affects writes only. Reads never use the level, and an existing Keychain
+  item keeps its accessibility class until it is written again. On iOS every
+  Secure write, including an update of an existing item, sets
+  `kSecAttrAccessible`, so a rewrite moves the item to the current level.
+- An item created with its own `accessControl` option uses that level instead
+  of the default.
+- Android has no Keychain accessibility classes. `setAccessControl` only records
+  the JavaScript default there and changes no native behavior.
+- Raw `storage.setString(key, value, StorageScope.Secure)` writes use the same
+  default level.
+
+```ts
+import { AccessControl, storage } from "react-native-nitro-storage";
+
+storage.setAccessControl(AccessControl.AfterFirstUnlockThisDeviceOnly);
+```
+
+### Migrating Existing Secure Items
+
+Items written under `WhenUnlocked` stay unreadable while the device is locked,
+even after you change the default. `migrateSecureAccessControl(level, options?)`
+sets `level` as the default and rewrites each Secure item so the Keychain item
+gets the new class. It reads the stored string and writes the same string back,
+so values are never decoded, changed, or deleted.
+
+```ts
+import {
+  AccessControl,
+  migrateSecureAccessControl,
+} from "react-native-nitro-storage";
+
+const result = migrateSecureAccessControl(
+  AccessControl.AfterFirstUnlockThisDeviceOnly,
+);
+// { migrated: string[]; locked: string[]; missing: string[];
+//   skipped: string[]; failed: { key: string; code?: StorageErrorCode }[] }
+
+if (result.locked.length > 0) {
+  // Retry only the locked keys once protected data is available.
+  migrateSecureAccessControl(AccessControl.AfterFirstUnlockThisDeviceOnly, {
+    keys: result.locked,
+  });
+}
+```
+
+- Run it while the device is unlocked, for example from a foreground user
+  action or after `storage.isProtectedDataAvailable()` returns `true`. Reading
+  or rewriting a `WhenUnlocked` item while locked fails with `keychain_locked`.
+- A key whose read or write fails with `keychain_locked` is left unchanged and
+  listed in `locked`. Any other error leaves the key unchanged and lists it in
+  `failed` with its error code. The helper never deletes data.
+- `options.keys` limits the work to specific keys. Without it, every Secure key
+  is processed. Biometric-protected items are listed in `skipped` and are never
+  read, because reading them can show a biometric prompt.
+- The level becomes the default for later writes even when a key fails, so new
+  writes already use it.
+- Items that you configured with their own `accessControl` option are rewritten
+  with `level` too. Pass `options.keys` to leave them out.
+- On Android and web there is no accessibility class to change. The helper
+  validates the level, records the default, reads and writes nothing, and lists
+  every Secure key in `skipped`.
+- Each rewrite is a native write, so storage listeners and observers receive a
+  change event for every migrated key, even though the value is unchanged.
+- It is JavaScript only and works with any 0.14-compatible native module.
+
+### Protected Data Availability
+
+On iOS, Keychain items in the `WhenUnlocked` classes (`WhenUnlocked`,
+`WhenUnlockedThisDeviceOnly`, and `WhenPasscodeSetThisDeviceOnly`) can be read
+only while protected data is available. Use these APIs to
+wait instead of catching `keychain_locked`:
+
+```ts
+import { storage } from "react-native-nitro-storage";
+
+const available: boolean = storage.isProtectedDataAvailable();
+
+const unsubscribe = storage.onProtectedDataAvailable(() => {
+  // Protected data became available again.
+});
+unsubscribe();
+```
+
+- `isProtectedDataAvailable()` returns a cached value and never blocks. iOS
+  updates it from the `UIApplicationProtectedDataDidBecomeAvailable` and
+  `UIApplicationProtectedDataWillBecomeUnavailable` notifications. The first
+  value is read from `UIApplication` on the main thread when the native storage
+  module is first created. If the main thread is busy, the value reads `true` until that read
+  completes.
+- `onProtectedDataAvailable(listener)` calls `listener` each time protected data
+  changes from unavailable to available, and returns an unsubscribe function. It
+  does not call the listener on subscribe. Subscribe first, then check
+  `isProtectedDataAvailable()`, so a change between the two calls is not missed.
+- In an iOS app extension `UIApplication` is not available. The module cannot
+  read the state there, so `isProtectedDataAvailable()` returns `true` and
+  `keychain_locked` remains the signal.
+- Android and web always return `true`, and the listener never fires.
+
+### Handling keychain_locked
+
+When a production app sees `keychain_locked` because Secure reads run while the
+device is locked, for example during a background launch, defer those reads
+until protected data is available. This keeps the default `WhenUnlocked`
+protection.
+
+```ts
+import { storage } from "react-native-nitro-storage";
+
+export function whenProtectedDataAvailable(run: () => void): () => void {
+  let done = false;
+  const runOnce = () => {
+    if (done) return;
+    done = true;
+    unsubscribe();
+    run();
+  };
+  const unsubscribe = storage.onProtectedDataAvailable(runOnce);
+  if (storage.isProtectedDataAvailable()) runOnce();
+  return unsubscribe;
+}
+```
+
+Moving items to `AfterFirstUnlock` or `AfterFirstUnlockThisDeviceOnly` removes
+the lock failure after the first unlock following a restart, but it weakens
+protection: the items stay readable while the device is locked. Choose the
+`ThisDeviceOnly` variant when items must not leave the device:
+
+| Level                            | Readable while locked after first unlock | Included in backups and device transfer |
+| -------------------------------- | ---------------------------------------- | --------------------------------------- |
+| `WhenUnlocked`                   | No                                       | Yes                                     |
+| `AfterFirstUnlock`               | Yes                                      | Yes                                     |
+| `AfterFirstUnlockThisDeviceOnly` | Yes                                      | No                                      |
+
+Items in a `ThisDeviceOnly` class are not restored onto a new device from a
+backup or device transfer, so the user must sign in again there.
+
+Raw `storage.getString(key, StorageScope.Secure)` has no
+`fallbackToCacheOnReadError`. It throws `keychain_locked` while the Keychain is
+locked. Only typed items created with `fallbackToCacheOnReadError: true` return
+their last cached value for that error.
 
 ## Batch Operations
 

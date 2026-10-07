@@ -1,6 +1,7 @@
 import { createIndexedDBBackend as createIndexedDBBackendFromSubpath } from "./indexeddb-backend";
 import {
   assertAccessControlLevel,
+  assertProtectedDataListener,
   notifyAllListeners,
   notifyKeyListeners,
 } from "./shared";
@@ -84,6 +85,8 @@ export type {
   WebStorageScope,
 } from "./web-storage-backend";
 export type {
+  SecureAccessControlMigrationOptions,
+  SecureAccessControlMigrationResult,
   SetItemConfig,
   SetStorageItem,
   StorageBatchSetItem,
@@ -224,6 +227,7 @@ function buildTestingModule() {
       backend,
       changeSource: "native",
       applyAccessControlOnSecureRawWrite: true,
+      supportsSecureAccessControlMigration: () => true,
       ensureScopeSubscription: (_scope: NonMemoryScope) => {},
       maybeCleanupScopeSubscription: (_scope: NonMemoryScope) => {},
       onWillEmitChanges: () => {},
@@ -243,6 +247,11 @@ function buildTestingModule() {
     setAccessControl: (level: AccessControl) => {
       assertAccessControlLevel(level);
       internals.setSecureDefaultAccessControl(level);
+    },
+    isProtectedDataAvailable: (): boolean => true,
+    onProtectedDataAvailable: (listener: () => void): (() => void) => {
+      assertProtectedDataListener(listener);
+      return () => {};
     },
     setSecureWritesAsync: (_enabled: boolean) => {},
     setKeychainAccessGroup: (_group: string) => {},
@@ -303,6 +312,7 @@ function buildTestingModule() {
     removeBatch: core.removeBatch,
     registerMigration: core.registerMigration,
     migrateToLatest: core.migrateToLatest,
+    migrateSecureAccessControl: core.migrateSecureAccessControl,
     runTransaction: core.runTransaction,
     createSecureAuthStorage: core.createSecureAuthStorage,
     reset,
@@ -324,6 +334,8 @@ export const setBatch = defaultModule.setBatch;
 export const removeBatch = defaultModule.removeBatch;
 export const registerMigration = defaultModule.registerMigration;
 export const migrateToLatest = defaultModule.migrateToLatest;
+export const migrateSecureAccessControl =
+  defaultModule.migrateSecureAccessControl;
 export const runTransaction = defaultModule.runTransaction;
 export const createSecureAuthStorage = defaultModule.createSecureAuthStorage;
 

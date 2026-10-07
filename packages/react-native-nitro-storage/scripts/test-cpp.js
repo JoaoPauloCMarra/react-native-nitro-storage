@@ -467,6 +467,10 @@ try {
       buildDir,
       "ios_adapter_keychain_test",
     );
+    const iosProtectedDataOutputFile = path.join(
+      buildDir,
+      "ios_adapter_protected_data_test",
+    );
     binaries.push(
       {
         name: "ios-adapter",
@@ -484,6 +488,16 @@ try {
         args: iosAdapterArgs(
           path.join(iosDir, "IOSStorageAdapterKeychainTest.mm"),
           iosKeychainOutputFile,
+        ),
+        groups: ["ios"],
+        isolatedHome: true,
+      },
+      {
+        name: "ios-adapter-protected-data",
+        output: iosProtectedDataOutputFile,
+        args: iosAdapterArgs(
+          path.join(iosDir, "IOSStorageAdapterProtectedDataTest.mm"),
+          iosProtectedDataOutputFile,
         ),
         groups: ["ios"],
         isolatedHome: true,

@@ -980,6 +980,26 @@
         "Platform evidence that identifies the actual key protection level"
       ],
       "acceptance": "Capture platform-level evidence for the QA key and match it with the public capability and Secure roundtrip result."
+    },
+    {
+      "id": "secure.access-control-migration-on-device",
+      "state": "pending-prerequisites",
+      "reason": "The default replay does not seed WhenUnlocked Keychain items under an older class, lock the device, or inspect kSecAttrAccessible. Jest and the iOS fake-Keychain tests prove the rewrite contract, not a real Keychain class change.",
+      "prerequisites": [
+        "A disposable iOS device or simulator app install with RUN_ID-scoped Secure QA keys written under the default WhenUnlocked class",
+        "A way to read the stored kSecAttrAccessible of those QA keys, and a user-approved lock/unlock interaction"
+      ],
+      "acceptance": "Call migrateSecureAccessControl on the QA keys while unlocked and assert they are listed as migrated and still read their exact values; repeat while locked and assert they are listed as locked and unchanged; then delete only the QA keys."
+    },
+    {
+      "id": "secure.protected-data-availability",
+      "state": "pending-prerequisites",
+      "reason": "The default replay never locks the device, so isProtectedDataAvailable and onProtectedDataAvailable are asserted only against injected providers and notification posts, not against a real iOS data protection transition.",
+      "prerequisites": [
+        "A dedicated iOS QA device with a passcode and a user-approved lock/unlock interaction",
+        "An installed release app that reports protected-data availability and listener calls on a deterministic status row"
+      ],
+      "acceptance": "Lock the device and assert isProtectedDataAvailable reports false, unlock it and assert the listener fires once and the value reports true; record Android and web as always true with a listener that never fires."
     }
   ]
 }

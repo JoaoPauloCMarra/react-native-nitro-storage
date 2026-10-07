@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -58,6 +59,11 @@ public:
     virtual void deleteSecureBiometric(const std::string& key) = 0;
     virtual bool hasSecureBiometric(const std::string& key) = 0;
     virtual void clearSecureBiometric() = 0;
+
+    virtual bool isProtectedDataAvailable() { return true; }
+    virtual std::function<void()> addProtectedDataAvailableListener(std::function<void()>) {
+        return []() {};
+    }
 };
 
 } // namespace NitroStorage

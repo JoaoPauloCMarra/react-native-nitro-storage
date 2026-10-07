@@ -535,6 +535,27 @@ void HybridStorage::clearSecureBiometric() {
     notifyListeners(static_cast<int>(Scope::Secure), kClearSentinelKey, std::nullopt);
 }
 
+bool HybridStorage::isProtectedDataAvailable() {
+    ensureAdapter();
+    return runAdapterOperation(
+        [&] { return nativeAdapter_->isProtectedDataAvailable(); },
+        "Protected data availability");
+}
+
+std::function<void()> HybridStorage::onProtectedDataAvailable(const std::function<void()>& listener) {
+    ensureAdapter();
+    return runAdapterOperation(
+        [&] {
+            return nativeAdapter_->addProtectedDataAvailableListener([listener]() {
+                try {
+                    listener();
+                } catch (...) {
+                }
+            });
+        },
+        "Protected data subscription");
+}
+
 // --- Internal ---
 
 std::vector<HybridStorage::Listener> HybridStorage::copyListenersForScope(int scope) {

@@ -2,7 +2,10 @@ import {
   AccessControl,
   BiometricLevel,
   StorageScope,
+  type SecureAccessControlMigrationOptions,
+  type SecureAccessControlMigrationResult,
   type SecureStorageMetadata,
+  type StorageErrorCode,
   type SecurityCapabilities,
   type StorageMetricsEvent,
   type StorageMetricsObserver,
@@ -19,6 +22,7 @@ import {
   getWebSecureStorageBackend,
   getBatch,
   memoryItem,
+  migrateSecureAccessControl,
   registerMigration,
   removeBatch,
   secureItem,
@@ -227,6 +231,47 @@ storage.setAccessControl(AccessControl.WhenUnlockedThisDeviceOnly);
 storage.setSecureWritesAsync(true);
 storage.flushSecureWrites();
 storage.setKeychainAccessGroup("group.test");
+
+const migrationOptions: SecureAccessControlMigrationOptions = {
+  keys: ["auth:accessToken"] as readonly string[],
+};
+const migrationResult: SecureAccessControlMigrationResult =
+  migrateSecureAccessControl(AccessControl.AfterFirstUnlock, migrationOptions);
+migrateSecureAccessControl(AccessControl.AfterFirstUnlockThisDeviceOnly);
+const migratedKeys: string[] = migrationResult.migrated;
+const lockedKeys: string[] = migrationResult.locked;
+const missingKeys: string[] = migrationResult.missing;
+const skippedKeys: string[] = migrationResult.skipped;
+const failedKeys: { key: string; code?: StorageErrorCode }[] =
+  migrationResult.failed;
+void migratedKeys;
+void lockedKeys;
+void missingKeys;
+void skippedKeys;
+void failedKeys;
+// @ts-expect-error the level must be an AccessControl value
+migrateSecureAccessControl(9);
+// @ts-expect-error the level must be an AccessControl value
+migrateSecureAccessControl("AfterFirstUnlock");
+// @ts-expect-error the level is required
+migrateSecureAccessControl();
+// @ts-expect-error keys must be strings
+migrateSecureAccessControl(AccessControl.WhenUnlocked, { keys: [1] });
+// @ts-expect-error unknown options are rejected
+migrateSecureAccessControl(AccessControl.WhenUnlocked, { all: true });
+
+const protectedDataAvailable: boolean = storage.isProtectedDataAvailable();
+const stopProtectedDataListener: () => void = storage.onProtectedDataAvailable(
+  () => {},
+);
+stopProtectedDataListener();
+void protectedDataAvailable;
+// @ts-expect-error the listener takes no arguments and is required
+storage.onProtectedDataAvailable();
+// @ts-expect-error the listener must be a function
+storage.onProtectedDataAvailable("listener");
+// @ts-expect-error the availability getter takes no arguments
+storage.isProtectedDataAvailable(true);
 storage.clearNamespace("auth", StorageScope.Secure);
 const securityCapabilities: SecurityCapabilities =
   storage.getSecurityCapabilities();

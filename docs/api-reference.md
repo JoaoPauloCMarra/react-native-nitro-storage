@@ -135,6 +135,8 @@ See [react-hooks.md](react-hooks.md).
 | `getAll(scope)`                                  | Read all raw string values in a scope.                                                                                         |
 | `size(scope)`                                    | Return approximate scope entry count.                                                                                          |
 | `setAccessControl(accessControl)`                | Set the default Secure access control level.                                                                                   |
+| `isProtectedDataAvailable()`                     | Read cached iOS protected-data availability. Android and web return `true`.                                                    |
+| `onProtectedDataAvailable(listener)`             | Call `listener` when protected data becomes available; returns an unsubscribe function. Android and web never fire.            |
 | `setSecureWritesAsync(enabled)`                  | Toggle Android secure writes between sync and async modes.                                                                     |
 | `setDiskWritesAsync(enabled)`                    | Toggle coalesced Disk write behavior.                                                                                          |
 | `flushDiskWrites()`                              | Flush pending Disk writes.                                                                                                     |

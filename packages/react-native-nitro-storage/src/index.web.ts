@@ -3,6 +3,7 @@ import { createIndexedDBBackend as createIndexedDBBackendFromSubpath } from "./i
 import { unescapeCollidingRawValue } from "./internal";
 import {
   assertAccessControlLevel,
+  assertProtectedDataListener,
   createStorageCompositeError,
   assertBiometricLevel,
   notifyAllListeners,
@@ -86,6 +87,8 @@ export {
   type WebBackendCapabilities,
 } from "./web-backend-contract";
 export type {
+  SecureAccessControlMigrationOptions,
+  SecureAccessControlMigrationResult,
   SetItemConfig,
   SetStorageItem,
   StorageBatchSetItem,
@@ -811,6 +814,11 @@ const WebStorage: Storage = {
   },
   setSecureWritesAsync: (_enabled: boolean) => {},
   setKeychainAccessGroup: () => {},
+  isProtectedDataAvailable: () => true,
+  onProtectedDataAvailable: (listener: () => void) => {
+    assertProtectedDataListener(listener);
+    return () => {};
+  },
   setSecureBiometric: (key: string, value: string) => {
     WebStorage.setSecureBiometricWithLevel(
       key,
@@ -1023,6 +1031,7 @@ function buildWebAdapter(
     backend: WebStorage,
     changeSource: "web",
     applyAccessControlOnSecureRawWrite: false,
+    supportsSecureAccessControlMigration: () => false,
     ensureScopeSubscription: () => {
       ensureExternalSyncSubscriptions();
     },
@@ -1049,6 +1058,10 @@ export const storage = {
       0,
     );
   },
+  isProtectedDataAvailable: (): boolean =>
+    WebStorage.isProtectedDataAvailable(),
+  onProtectedDataAvailable: (listener: () => void): (() => void) =>
+    WebStorage.onProtectedDataAvailable(listener),
   setSecureWritesAsync: (_enabled: boolean) => {
     getInternals().recordMetric(
       "storage:setSecureWritesAsync",
@@ -1114,6 +1127,7 @@ export const setBatch = core.setBatch;
 export const removeBatch = core.removeBatch;
 export const registerMigration = core.registerMigration;
 export const migrateToLatest = core.migrateToLatest;
+export const migrateSecureAccessControl = core.migrateSecureAccessControl;
 export const runTransaction = core.runTransaction;
 export const createSecureAuthStorage = core.createSecureAuthStorage;
 

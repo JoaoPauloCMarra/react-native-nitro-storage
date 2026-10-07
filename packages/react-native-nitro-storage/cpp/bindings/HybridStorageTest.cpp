@@ -201,6 +201,28 @@ public:
         biometric_.clear();
     }
 
+    bool isProtectedDataAvailable() override {
+        return protectedDataAvailable_;
+    }
+
+    std::function<void()> addProtectedDataAvailableListener(std::function<void()> listener) override {
+        const size_t id = nextProtectedListenerId_++;
+        protectedListeners_[id] = std::move(listener);
+        return [this, id]() { protectedListeners_.erase(id); };
+    }
+
+    void setProtectedDataAvailable(bool available) {
+        protectedDataAvailable_ = available;
+        if (!available) return;
+        const auto listeners = protectedListeners_;
+        for (const auto& [id, listener] : listeners) {
+            (void)id;
+            listener();
+        }
+    }
+
+    size_t protectedListenerCount() const { return protectedListeners_.size(); }
+
     int secureAccessControl() const { return secureAccessControl_; }
     bool secureWritesAsync() const { return secureWritesAsync_; }
     int secureWritesAsyncCalls() const { return secureWritesAsyncCalls_; }
@@ -227,6 +249,9 @@ private:
     int secureWritesAsyncCalls_ = 0;
     std::string keychainGroup_;
     int biometricLevel_ = -1;
+    bool protectedDataAvailable_ = true;
+    size_t nextProtectedListenerId_ = 0;
+    std::map<size_t, std::function<void()>> protectedListeners_;
 };
 
 class ThrowingAdapter final : public ::NitroStorage::NativeStorageAdapter {
@@ -313,6 +338,8 @@ public:
     void deleteSecureBiometric(const std::string&) override { throw 1; }
     bool hasSecureBiometric(const std::string&) override { throw 1; }
     void clearSecureBiometric() override { throw 1; }
+    bool isProtectedDataAvailable() override { throw 1; }
+    std::function<void()> addProtectedDataAvailableListener(std::function<void()>) override { throw 1; }
 };
 
 bool contains(const std::vector<std::string>& values, const std::string& value) {
@@ -541,6 +568,81 @@ void testSecureConfigPassThrough() {
     assert(adapter->secureWritesAsync());
     assert(adapter->secureWritesAsyncCalls() == 1);
     assert(adapter->keychainGroup() == "group.test");
+}
+
+void testProtectedDataAvailabilityReadsTheAdapter() {
+    auto adapter = std::make_shared<MockAdapter>();
+    HybridStorage storage(adapter);
+
+    assert(storage.isProtectedDataAvailable());
+    adapter->setProtectedDataAvailable(false);
+    assert(!storage.isProtectedDataAvailable());
+    adapter->setProtectedDataAvailable(true);
+    assert(storage.isProtectedDataAvailable());
+}
+
+void testProtectedDataListenerLifecycle() {
+    auto adapter = std::make_shared<MockAdapter>();
+    HybridStorage storage(adapter);
+    int calls = 0;
+    int otherCalls = 0;
+
+    auto unsubscribe = storage.onProtectedDataAvailable([&]() { calls += 1; });
+    auto unsubscribeOther = storage.onProtectedDataAvailable([&]() { otherCalls += 1; });
+    assert(adapter->protectedListenerCount() == 2);
+
+    adapter->setProtectedDataAvailable(false);
+    assert(calls == 0 && otherCalls == 0);
+    adapter->setProtectedDataAvailable(true);
+    assert(calls == 1 && otherCalls == 1);
+
+    unsubscribe();
+    unsubscribe();
+    assert(adapter->protectedListenerCount() == 1);
+    adapter->setProtectedDataAvailable(true);
+    assert(calls == 1 && otherCalls == 2);
+
+    unsubscribeOther();
+    assert(adapter->protectedListenerCount() == 0);
+}
+
+void testProtectedDataListenerFailuresAreIgnored() {
+    auto adapter = std::make_shared<MockAdapter>();
+    HybridStorage storage(adapter);
+    bool secondCalled = false;
+
+    auto unsubscribeThrowing = storage.onProtectedDataAvailable([]() {
+        throw std::runtime_error("listener failed");
+    });
+    auto unsubscribeSecond = storage.onProtectedDataAvailable([&]() { secondCalled = true; });
+
+    adapter->setProtectedDataAvailable(true);
+
+    assert(secondCalled);
+    unsubscribeThrowing();
+    unsubscribeSecond();
+}
+
+void testProtectedDataDefaultsWithoutPlatformSupport() {
+    auto adapter = std::make_shared<ThrowingAdapter>();
+    HybridStorage storage(adapter);
+    bool called = false;
+
+    assert(storage.isProtectedDataAvailable());
+    auto unsubscribe = storage.onProtectedDataAvailable([&]() { called = true; });
+    unsubscribe();
+    assert(!called);
+}
+
+void testProtectedDataRequiresAnAdapterAndWrapsFailures() {
+    HybridStorage withoutAdapter(nullptr);
+    expectThrows([&]() { withoutAdapter.isProtectedDataAvailable(); });
+    expectThrows([&]() { withoutAdapter.onProtectedDataAvailable([]() {}); });
+
+    auto adapter = std::make_shared<UnknownThrowingAdapter>();
+    HybridStorage storage(adapter);
+    expectThrows([&]() { storage.isProtectedDataAvailable(); });
+    expectThrows([&]() { storage.onProtectedDataAvailable([]() {}); });
 }
 
 void testRemoveByPrefix() {
@@ -940,6 +1042,11 @@ int main() {
     testListenerExceptionsAreIgnored();
     testListenerUnsubscribeStress();
     testSecureConfigPassThrough();
+    testProtectedDataAvailabilityReadsTheAdapter();
+    testProtectedDataListenerLifecycle();
+    testProtectedDataListenerFailuresAreIgnored();
+    testProtectedDataDefaultsWithoutPlatformSupport();
+    testProtectedDataRequiresAnAdapterAndWrapsFailures();
     testRemoveByPrefix();
     testGetKeysByPrefix();
     testBiometricLevelPassThrough();

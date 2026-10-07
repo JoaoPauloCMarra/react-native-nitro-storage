@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes are always listed first in each release section.
 
+## [0.15.0] - 2026-10-07
+
+### Breaking changes
+
+None.
+
+### Added
+
+- `migrateSecureAccessControl(level, options?)` sets the default Secure access control level and rewrites existing Secure items so each iOS Keychain item moves to that accessibility class. It reads each stored string and writes it back unchanged, and it never deletes a value. It returns `{ migrated, locked, missing, skipped, failed }`: a key whose read or write fails with `keychain_locked` stays untouched and is listed in `locked`; other failures are listed in `failed` with their error code; biometric-protected items are listed in `skipped` and are not read. `options.keys` limits the keys to rewrite. On Android and web it validates the level, records the default, and lists every Secure key in `skipped`. Each rewrite emits a change event with an unchanged value. It runs in JavaScript on the existing native surface.
+- `storage.isProtectedDataAvailable()` reports whether iOS protected data is available, from a cached value that is never read on the calling thread. `storage.onProtectedDataAvailable(listener)` calls `listener` each time protected data becomes available again and returns an unsubscribe function. In an iOS app extension, where `UIApplication` is unavailable, the value is `true`. On Android and web the value is always `true` and the listener never fires. Both are also exported on the `react-native-nitro-storage/testing` entry, where availability is always `true`.
+- New exported types: `SecureAccessControlMigrationOptions` and `SecureAccessControlMigrationResult`.
+
+### Documentation
+
+- README explains the `setAccessControl` lifecycle (per process, call before the first Secure write, writes only, no effect on Android), when to run `migrateSecureAccessControl`, the protected-data APIs, and how to avoid `keychain_locked` by deferring Secure reads until protected data is available rather than weakening the access class. It compares `AfterFirstUnlock` and `AfterFirstUnlockThisDeviceOnly`, including backup and device-transfer behavior, and notes that raw `storage.getString` has no `fallbackToCacheOnReadError`.
+
 ## [0.14.0] - 2026-10-03
 
 ### Breaking changes
