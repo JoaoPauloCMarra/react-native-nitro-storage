@@ -45,13 +45,7 @@ const nitroDir = [
   path.join(workspaceRoot, "node_modules", "react-native-nitro-modules", "cpp"),
 ].find((candidate) => fs.existsSync(candidate));
 const reactNativeJsiDir = [
-  path.join(
-    packageRoot,
-    "node_modules",
-    "react-native",
-    "ReactCommon",
-    "jsi",
-  ),
+  path.join(packageRoot, "node_modules", "react-native", "ReactCommon", "jsi"),
   path.join(
     workspaceRoot,
     "node_modules",
@@ -163,13 +157,35 @@ const iosAdapterSourceFile = path.join(
   "ios",
   "IOSStorageAdapterCpp.mm",
 );
+const forbiddenBlockingPrimitives = [
+  "wait_for",
+  "#include <future>",
+  "std::promise",
+  "dispatch_sync",
+  "dispatch_semaphore_wait",
+];
+const iosAdapterSource = fs.readFileSync(iosAdapterSourceFile, "utf8");
+const blockingHits = forbiddenBlockingPrimitives.filter((token) =>
+  iosAdapterSource.includes(token),
+);
+if (blockingHits.length > 0) {
+  console.error(
+    `❌ IOSStorageAdapterCpp.mm must never block a caller on the main thread. Forbidden: ${blockingHits.join(", ")}`,
+  );
+  process.exit(1);
+}
+
 const SQLITE_THRESHOLDS = {
   lines: 90,
   functions: 90,
   regions: 85,
   branches: 80,
 };
-const sqliteStoreTestFile = path.join(cppDir, "core", "SqliteDiskStoreTest.cpp");
+const sqliteStoreTestFile = path.join(
+  cppDir,
+  "core",
+  "SqliteDiskStoreTest.cpp",
+);
 const sqliteOutputFile = path.join(buildDir, "sqlite_disk_store_test");
 const sqliteFailureTestFile = path.join(
   cppDir,
@@ -467,6 +483,10 @@ try {
       buildDir,
       "ios_adapter_keychain_test",
     );
+    const iosProtectedDataOutputFile = path.join(
+      buildDir,
+      "ios_adapter_protected_data_test",
+    );
     binaries.push(
       {
         name: "ios-adapter",
@@ -484,6 +504,16 @@ try {
         args: iosAdapterArgs(
           path.join(iosDir, "IOSStorageAdapterKeychainTest.mm"),
           iosKeychainOutputFile,
+        ),
+        groups: ["ios"],
+        isolatedHome: true,
+      },
+      {
+        name: "ios-adapter-protected-data",
+        output: iosProtectedDataOutputFile,
+        args: iosAdapterArgs(
+          path.join(iosDir, "IOSStorageAdapterProtectedDataTest.mm"),
+          iosProtectedDataOutputFile,
         ),
         groups: ["ios"],
         isolatedHome: true,

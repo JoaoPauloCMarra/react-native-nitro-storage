@@ -26,4 +26,6 @@ export interface Storage extends HybridObject<{ ios: "c++"; android: "c++" }> {
   deleteSecureBiometric(key: string): void;
   hasSecureBiometric(key: string): boolean;
   clearSecureBiometric(): void;
+  isProtectedDataAvailable(): boolean;
+  onProtectedDataAvailable(listener: () => void): () => void;
 }

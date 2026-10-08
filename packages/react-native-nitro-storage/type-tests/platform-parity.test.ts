@@ -41,11 +41,7 @@ function consumePlatformStorage(store: PlatformStorage): void {
   store.import({ a: "b" }, StorageScope.Disk);
   const exported: Record<string, string> = store.export(StorageScope.Disk);
   const unsubscribe = store.subscribe(StorageScope.Disk, () => {});
-  const unsubscribeKey = store.subscribeKey(
-    StorageScope.Disk,
-    "key",
-    () => {},
-  );
+  const unsubscribeKey = store.subscribeKey(StorageScope.Disk, "key", () => {});
   const unsubscribePrefix = store.subscribePrefix(
     StorageScope.Disk,
     "p",
@@ -61,6 +57,12 @@ function consumePlatformStorage(store: PlatformStorage): void {
   store.flushDiskWrites();
   store.flushSecureWrites();
   store.setAccessControl(0);
+  const protectedData: boolean = store.isProtectedDataAvailable();
+  const unsubscribeProtectedData: () => void = store.onProtectedDataAvailable(
+    () => {},
+  );
+  unsubscribeProtectedData();
+  void protectedData;
   store.setSecureWritesAsync(false);
   store.setKeychainAccessGroup("group");
   const capabilities: StorageCapabilities = store.getCapabilities();
@@ -93,7 +95,10 @@ type NativeExports = keyof typeof import("../src");
 type WebExports = keyof typeof import("../src/index.web");
 type TestingExports = Exclude<
   keyof typeof import("../src/testing"),
-  "resetNitroStorageMock" | "createNitroStorageMock" | "NitroStorageTestModule"
+  | "resetNitroStorageMock"
+  | "createNitroStorageMock"
+  | "NitroStorageTestModule"
+  | "setMockProtectedDataAvailable"
 >;
 type NativeMatchesWebExports = Assert<Equals<NativeExports, WebExports>>;
 type TestingMatchesNativeExports = Assert<

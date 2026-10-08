@@ -56,6 +56,8 @@ public:
     void deleteSecureBiometric(const std::string& key) override;
     bool hasSecureBiometric(const std::string& key) override;
     void clearSecureBiometric() override;
+    bool isProtectedDataAvailable() override;
+    std::function<void()> onProtectedDataAvailable(const std::function<void()>& listener) override;
 
 private:
     enum class Scope {

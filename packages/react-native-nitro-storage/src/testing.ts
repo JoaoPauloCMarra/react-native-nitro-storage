@@ -1,6 +1,7 @@
 import { createIndexedDBBackend as createIndexedDBBackendFromSubpath } from "./indexeddb-backend";
 import {
   assertAccessControlLevel,
+  assertProtectedDataListener,
   notifyAllListeners,
   notifyKeyListeners,
 } from "./shared";
@@ -84,6 +85,8 @@ export type {
   WebStorageScope,
 } from "./web-storage-backend";
 export type {
+  SecureAccessControlMigrationOptions,
+  SecureAccessControlMigrationResult,
   SetItemConfig,
   SetStorageItem,
   StorageBatchSetItem,
@@ -224,6 +227,7 @@ function buildTestingModule() {
       backend,
       changeSource: "native",
       applyAccessControlOnSecureRawWrite: true,
+      supportsSecureAccessControlMigration: () => true,
       ensureScopeSubscription: (_scope: NonMemoryScope) => {},
       maybeCleanupScopeSubscription: (_scope: NonMemoryScope) => {},
       onWillEmitChanges: () => {},
@@ -237,12 +241,22 @@ function buildTestingModule() {
 
   const core = createStorageCore(buildAdapter);
   const { internals } = core;
+  let protectedDataAvailable = true;
+  const protectedDataListeners = new Set<() => void>();
 
   const storage = {
     ...core.storage,
     setAccessControl: (level: AccessControl) => {
       assertAccessControlLevel(level);
       internals.setSecureDefaultAccessControl(level);
+    },
+    isProtectedDataAvailable: (): boolean => protectedDataAvailable,
+    onProtectedDataAvailable: (listener: () => void): (() => void) => {
+      assertProtectedDataListener(listener);
+      protectedDataListeners.add(listener);
+      return () => {
+        protectedDataListeners.delete(listener);
+      };
     },
     setSecureWritesAsync: (_enabled: boolean) => {},
     setKeychainAccessGroup: (_group: string) => {},
@@ -281,7 +295,24 @@ function buildTestingModule() {
     }),
   };
 
+  const setProtectedDataAvailable = (available: boolean): void => {
+    if (typeof available !== "boolean") {
+      throw new TypeError(
+        "NitroStorage: Protected data availability must be a boolean",
+      );
+    }
+    const wasAvailable = protectedDataAvailable;
+    protectedDataAvailable = available;
+    if (available && !wasAvailable) {
+      Array.from(protectedDataListeners).forEach((listener) => {
+        listener();
+      });
+    }
+  };
+
   const reset = (): void => {
+    protectedDataAvailable = true;
+    protectedDataListeners.clear();
     storage.setEventObserver(undefined);
     storage.setScheduledFlushErrorObserver(undefined);
     storage.setMetricsObserver(undefined);
@@ -303,8 +334,10 @@ function buildTestingModule() {
     removeBatch: core.removeBatch,
     registerMigration: core.registerMigration,
     migrateToLatest: core.migrateToLatest,
+    migrateSecureAccessControl: core.migrateSecureAccessControl,
     runTransaction: core.runTransaction,
     createSecureAuthStorage: core.createSecureAuthStorage,
+    setProtectedDataAvailable,
     reset,
   };
 }
@@ -324,8 +357,12 @@ export const setBatch = defaultModule.setBatch;
 export const removeBatch = defaultModule.removeBatch;
 export const registerMigration = defaultModule.registerMigration;
 export const migrateToLatest = defaultModule.migrateToLatest;
+export const migrateSecureAccessControl =
+  defaultModule.migrateSecureAccessControl;
 export const runTransaction = defaultModule.runTransaction;
 export const createSecureAuthStorage = defaultModule.createSecureAuthStorage;
+export const setMockProtectedDataAvailable =
+  defaultModule.setProtectedDataAvailable;
 
 export function setWebSecureStorageBackend(
   _backend?: WebSecureStorageBackend,

@@ -8,6 +8,7 @@ import { createIndexedDBBackend as createIndexedDBBackendFromSubpath } from "./i
 import { unescapeCollidingRawValue } from "./internal";
 import {
   assertAccessControlLevel,
+  assertProtectedDataListener,
   notifyAllListeners,
   notifyKeyListeners,
   type NonMemoryScope,
@@ -82,6 +83,8 @@ export type {
   WebStorageScope,
 } from "./web-storage-backend";
 export type {
+  SecureAccessControlMigrationOptions,
+  SecureAccessControlMigrationResult,
   SetItemConfig,
   SetStorageItem,
   StorageBatchSetItem,
@@ -264,6 +267,7 @@ function buildNativeAdapter(
     backend: nativeBackend,
     changeSource: "native",
     applyAccessControlOnSecureRawWrite: true,
+    supportsSecureAccessControlMigration: () => Platform.OS === "ios",
     ensureScopeSubscription: ensureNativeScopeSubscription,
     maybeCleanupScopeSubscription: maybeCleanupNativeScopeSubscription,
     onWillEmitChanges: (scope, keys, operation, source) => {
@@ -303,6 +307,21 @@ export const storage = {
         getStorageModule().setSecureAccessControl(level);
       },
     );
+  },
+  isProtectedDataAvailable: (): boolean => {
+    const module = getStorageModule();
+    return typeof module.isProtectedDataAvailable === "function"
+      ? module.isProtectedDataAvailable()
+      : true;
+  },
+  onProtectedDataAvailable: (listener: () => void): (() => void) => {
+    assertProtectedDataListener(listener);
+    const module = getStorageModule();
+    if (typeof module.onProtectedDataAvailable !== "function") {
+      return () => {};
+    }
+    const unsubscribe = module.onProtectedDataAvailable(listener);
+    return typeof unsubscribe === "function" ? unsubscribe : () => {};
   },
   setSecureWritesAsync: (enabled: boolean) => {
     internals.measureOperation(
@@ -368,6 +387,7 @@ export const setBatch = core.setBatch;
 export const removeBatch = core.removeBatch;
 export const registerMigration = core.registerMigration;
 export const migrateToLatest = core.migrateToLatest;
+export const migrateSecureAccessControl = core.migrateSecureAccessControl;
 export const runTransaction = core.runTransaction;
 export const createSecureAuthStorage = core.createSecureAuthStorage;
 

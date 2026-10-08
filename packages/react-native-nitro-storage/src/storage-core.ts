@@ -62,7 +62,12 @@ import {
   type StorageKeyChangeEvent,
 } from "./storage-events";
 import type { StorageSetter } from "./storage-hooks";
-import { isStorageError, type SecureStorageMetadata } from "./storage-runtime";
+import {
+  getStorageErrorCode,
+  isStorageError,
+  type SecureStorageMetadata,
+  type StorageErrorCode,
+} from "./storage-runtime";
 import { StorageScope, AccessControl, BiometricLevel } from "./Storage.types";
 
 export type TransactionContext = {
@@ -217,6 +222,30 @@ export type StorageClearOptions = {
   except?: readonly StorageKeyRef[];
 };
 
+export type SecureAccessControlMigrationOptions = {
+  /** Secure keys to rewrite. Defaults to every Secure key. */
+  keys?: readonly string[];
+};
+
+export type SecureAccessControlMigrationResult = {
+  /** Keys rewritten so the Keychain item carries the new access level. */
+  migrated: string[];
+  /** Keys left unchanged because the Keychain was locked (`keychain_locked`). */
+  locked: string[];
+  /** Keys that no longer exist when the migration reached them. */
+  missing: string[];
+  /** Biometric-protected keys, and every key on platforms without access classes. */
+  skipped: string[];
+  /** Keys left unchanged because of another error. */
+  failed: { key: string; code?: StorageErrorCode }[];
+  /**
+   * `true` when flushing queued Secure writes or listing the Secure keys
+   * failed with `keychain_locked`. The default level and every item are
+   * unchanged; retry once protected data is available.
+   */
+  enumerationLocked: boolean;
+};
+
 export type SetItemConfig<TMember extends string = string> = Omit<
   StorageItemConfig<Record<string, true>>,
   "defaultValue" | "serialize" | "deserialize"
@@ -274,6 +303,7 @@ export type StorageCoreAdapter = {
   backend: StorageCoreBackend;
   changeSource: StorageChangeSource;
   applyAccessControlOnSecureRawWrite: boolean;
+  supportsSecureAccessControlMigration(): boolean;
   ensureScopeSubscription(scope: NonMemoryScope): void;
   maybeCleanupScopeSubscription(scope: NonMemoryScope): void;
   onWillEmitChanges(
@@ -3367,6 +3397,95 @@ export function createStorageCore(
     registeredMigrations.set(version, migration);
   }
 
+  function migrateSecureAccessControl(
+    level: AccessControl,
+    options?: SecureAccessControlMigrationOptions,
+  ): SecureAccessControlMigrationResult {
+    return measureOperation(
+      "storage:migrateSecureAccessControl",
+      StorageScope.Secure,
+      () => {
+        assertAccessControlLevel(level);
+        const requestedKeys = options?.keys;
+        requestedKeys?.forEach((key) => {
+          assertValidStorageKey(key);
+        });
+
+        let keys: string[];
+        try {
+          flushSecureWrites();
+          keys = Array.from(
+            new Set(
+              requestedKeys ?? adapter.backend.getAllKeys(StorageScope.Secure),
+            ),
+          );
+        } catch (error) {
+          if (getStorageErrorCode(error) !== "keychain_locked") {
+            throw error;
+          }
+          return {
+            migrated: [],
+            locked: [],
+            missing: [],
+            skipped: [],
+            failed: [],
+            enumerationLocked: true,
+          };
+        }
+        secureDefaultAccessControl = level;
+        adapter.backend.setSecureAccessControl(level);
+
+        const result: SecureAccessControlMigrationResult = {
+          migrated: [],
+          locked: [],
+          missing: [],
+          skipped: [],
+          failed: [],
+          enumerationLocked: false,
+        };
+        if (!adapter.supportsSecureAccessControlMigration()) {
+          result.skipped = keys;
+          return result;
+        }
+
+        keys.forEach((key) => {
+          try {
+            let hasBiometric: boolean;
+            try {
+              hasBiometric = adapter.backend.hasSecureBiometric(key);
+            } catch (error) {
+              if (getStorageErrorCode(error) !== "keychain_locked") {
+                throw error;
+              }
+              result.skipped.push(key);
+              return;
+            }
+            if (hasBiometric) {
+              result.skipped.push(key);
+              return;
+            }
+            const raw = adapter.backend.get(key, StorageScope.Secure);
+            if (raw === undefined) {
+              result.missing.push(key);
+              return;
+            }
+            adapter.backend.set(key, raw, StorageScope.Secure);
+            result.migrated.push(key);
+          } catch (error) {
+            const code = getStorageErrorCode(error);
+            if (code === "keychain_locked") {
+              result.locked.push(key);
+            } else {
+              result.failed.push(code === undefined ? { key } : { key, code });
+            }
+          }
+        });
+        return result;
+      },
+      options?.keys?.length ?? 1,
+    );
+  }
+
   function migrateToLatest(scope: StorageScope = StorageScope.Disk): number {
     return measureOperation("migration:run", scope, () => {
       assertValidScope(scope);
@@ -3951,6 +4070,7 @@ export function createStorageCore(
     removeBatch,
     registerMigration,
     migrateToLatest,
+    migrateSecureAccessControl,
     runTransaction,
     createSecureAuthStorage,
     internals,

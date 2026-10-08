@@ -228,6 +228,16 @@ export function assertBiometricLevel(level: number): void {
   assertEnumInteger(level, 0, 2, "biometric level");
 }
 
+export function assertProtectedDataListener(
+  listener: unknown,
+): asserts listener is () => void {
+  if (typeof listener !== "function") {
+    throw new TypeError(
+      "NitroStorage: Protected data listener must be a function",
+    );
+  }
+}
+
 export type NonMemoryScope = StorageScope.Disk | StorageScope.Secure;
 
 export type PendingDiskWrite = {

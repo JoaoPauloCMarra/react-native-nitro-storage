@@ -2,6 +2,9 @@
 
 #include "../core/NativeStorageAdapter.hpp"
 #include <atomic>
+#include <functional>
+#include <optional>
+#include <memory>
 #include <mutex>
 #include <unordered_set>
 
@@ -9,7 +12,10 @@ namespace NitroStorage {
 
 class IOSStorageAdapterCpp : public NativeStorageAdapter {
 public:
+    using ProtectedDataReader = std::function<std::optional<bool>()>;
+
     IOSStorageAdapterCpp();
+    explicit IOSStorageAdapterCpp(ProtectedDataReader protectedDataReader);
     ~IOSStorageAdapterCpp() override;
     
     void setDisk(const std::string& key, const std::string& value) override;
@@ -48,7 +54,13 @@ public:
     bool hasSecureBiometric(const std::string& key) override;
     void clearSecureBiometric() override;
 
+    bool isProtectedDataAvailable() override;
+    std::function<void()> addProtectedDataAvailableListener(std::function<void()> listener) override;
+
 private:
+    struct ProtectedDataState;
+    std::shared_ptr<ProtectedDataState> protectedData_;
+
     int accessControlLevel_ = 0;
     std::string keychainAccessGroup_;
     mutable std::mutex secureKeysMutex_;

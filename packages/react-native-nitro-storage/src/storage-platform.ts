@@ -7,6 +7,8 @@ import type { AccessControl, StorageScope } from "./Storage.types";
 
 export type PlatformStorage = StorageCore["storage"] & {
   setAccessControl(level: AccessControl): void;
+  isProtectedDataAvailable(): boolean;
+  onProtectedDataAvailable(listener: () => void): () => void;
   setSecureWritesAsync(enabled: boolean): void;
   setKeychainAccessGroup(group: string): void;
   getCapabilities(): StorageCapabilities;

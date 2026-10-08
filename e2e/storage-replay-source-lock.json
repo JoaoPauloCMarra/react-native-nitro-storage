@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "runtimeSourceSha256": "d29455df3a63891ee2e8ef5fe437eb3044ce10ad81fd5550e6e5285888929ef4",
+  "runtimeSourceSha256": "2179bc5284b90ccd0176f075cd96e369110487a5d009b2158f441ded88e79470",
   "runtimeSourceFiles": [
     "apps/example/app.config.js",
     "apps/example/app/_layout.tsx",
@@ -82,7 +82,7 @@
     "packages/react-native-nitro-storage/src/web-backend-contract.ts",
     "packages/react-native-nitro-storage/src/web-storage-backend.ts"
   ],
-  "replayInputsSha256": "a97659a3187344c43e8ad17e8e1877f9d7cd2efbe035a9ed21566d41bebe78b0",
+  "replayInputsSha256": "020a34e196ab954ae9fabef478dcf0ea7730929e2928a2cf92dc705e51cba8f6",
   "replayInputs": [
     "e2e/qa-api-extended.ad",
     "e2e/qa-biometric-ios.ad",

@@ -36,6 +36,8 @@ namespace margelo::nitro::NitroStorage {
       prototype.registerHybridMethod("deleteSecureBiometric", &HybridStorageSpec::deleteSecureBiometric);
       prototype.registerHybridMethod("hasSecureBiometric", &HybridStorageSpec::hasSecureBiometric);
       prototype.registerHybridMethod("clearSecureBiometric", &HybridStorageSpec::clearSecureBiometric);
+      prototype.registerHybridMethod("isProtectedDataAvailable", &HybridStorageSpec::isProtectedDataAvailable);
+      prototype.registerHybridMethod("onProtectedDataAvailable", &HybridStorageSpec::onProtectedDataAvailable);
     });
   }
 

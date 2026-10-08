@@ -18,6 +18,7 @@ import { StorageScope } from "../Storage.types";
 const TESTING_ONLY_EXPORTS = new Set([
   "resetNitroStorageMock",
   "createNitroStorageMock",
+  "setMockProtectedDataAvailable",
 ]);
 
 beforeEach(() => {

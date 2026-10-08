@@ -28,6 +28,7 @@ struct FakeKeychain {
     std::deque<OSStatus> deleteScript;
     std::vector<std::string> calls;
     NSDictionary* lastAddAttributes = nil;
+    NSDictionary* lastUpdateAttributes = nil;
     NSDictionary* lastQuery = nil;
     bool returnNullResult = false;
 };
@@ -60,6 +61,7 @@ void resetKeychain() {
     fake.deleteScript.clear();
     fake.calls.clear();
     fake.lastAddAttributes = nil;
+    fake.lastUpdateAttributes = nil;
     fake.lastQuery = nil;
     fake.returnNullResult = false;
 }
@@ -197,6 +199,7 @@ OSStatus SecItemUpdate(CFDictionaryRef query, CFDictionaryRef attributesToUpdate
     NSDictionary* nsQuery = (__bridge NSDictionary*)query;
     fake.calls.push_back("update");
     fake.lastQuery = [nsQuery copy];
+    fake.lastUpdateAttributes = [(__bridge NSDictionary*)attributesToUpdate copy];
     const OSStatus scripted = nextStatus(fake.updateScript);
     if (scripted != kRunFake) {
         return scripted;
@@ -551,6 +554,74 @@ void testAccessibilityAndAccessGroupReachTheKeychain() {
     require(keychain().lastQuery[(__bridge id)kSecAttrAccessGroup] == nil, "empty group removes the attribute");
 }
 
+void testRewritingAnExistingItemMigratesItsAccessibilityClass() {
+    const std::vector<std::pair<int, CFStringRef>> levels = {
+        {0, kSecAttrAccessibleWhenUnlocked},
+        {1, kSecAttrAccessibleAfterFirstUnlock},
+        {2, kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly},
+        {3, kSecAttrAccessibleWhenUnlockedThisDeviceOnly},
+        {4, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly},
+        {99, kSecAttrAccessibleAfterFirstUnlock},
+        {-1, kSecAttrAccessibleAfterFirstUnlock},
+    };
+    for (const auto& [level, expected] : levels) {
+        const std::string label = "access control level " + std::to_string(level);
+        resetKeychain();
+        IOSStorageAdapterCpp adapter;
+        adapter.setSecure("k", "first");
+        adapter.setSecureAccessControl(level);
+        keychain().lastAddAttributes = nil;
+
+        adapter.setSecure("k", "second");
+
+        require(keychain().lastAddAttributes == nil, label + ": rewrite must update, not add");
+        require(keychain().lastUpdateAttributes != nil, label + ": rewrite must call SecItemUpdate");
+        id accessible = keychain().lastUpdateAttributes[(__bridge id)kSecAttrAccessible];
+        require(
+            [accessible isEqual:(__bridge id)expected],
+            label + ": SecItemUpdate must carry the accessibility class"
+        );
+        NSData* data = keychain().lastUpdateAttributes[(__bridge id)kSecValueData];
+        require(
+            [[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] isEqualToString:@"second"],
+            label + ": SecItemUpdate must carry the value"
+        );
+        FakeKeychain& fake = keychain();
+        id storedClass = fake.items[itemKey(kPlainService, @"k")][(__bridge id)kSecAttrAccessible];
+        require([storedClass isEqual:(__bridge id)expected], label + ": stored item migrates to the class");
+        require(adapter.getSecure("k").value() == "second", label + ": value survives the rewrite");
+    }
+
+    resetKeychain();
+    IOSStorageAdapterCpp adapter;
+    adapter.setSecureAccessControl(0);
+    adapter.setSecureBatch({"a", "b"}, {"1", "2"});
+    adapter.setSecureAccessControl(4);
+    keychain().lastUpdateAttributes = nil;
+    adapter.setSecureBatch({"a", "b"}, {"1", "2"});
+    require(
+        [keychain().lastUpdateAttributes[(__bridge id)kSecAttrAccessible]
+            isEqual:(__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly],
+        "batch rewrites must carry the accessibility class"
+    );
+}
+
+void testLockedRewriteKeepsTheExistingItemUntouched() {
+    resetKeychain();
+    IOSStorageAdapterCpp adapter;
+    adapter.setSecure("k", "first");
+    adapter.setSecureAccessControl(1);
+    script(keychain().updateScript, {errSecInteractionNotAllowed});
+
+    require(startsWith(failureMessage([&] { adapter.setSecure("k", "first"); }), kLocked), "locked rewrite is tagged");
+
+    FakeKeychain& fake = keychain();
+    id storedClass = fake.items[itemKey(kPlainService, @"k")][(__bridge id)kSecAttrAccessible];
+    require([storedClass isEqual:(__bridge id)kSecAttrAccessibleWhenUnlocked], "locked rewrite keeps the old class");
+    require(adapter.getSecure("k").value() == "first", "locked rewrite keeps the value");
+    require(std::count(fake.calls.begin(), fake.calls.end(), std::string("delete")) == 0, "locked rewrite never deletes");
+}
+
 void testBiometricPromotionCompensatesOnFailure() {
     resetKeychain();
     IOSStorageAdapterCpp adapter;
@@ -659,6 +730,8 @@ int main() {
         testUndecodableKeychainDataIsReportedAsCorruption();
         testLockedEnumerationIsRetriedAndPartialBatchesReportProgress();
         testAccessibilityAndAccessGroupReachTheKeychain();
+        testRewritingAnExistingItemMigratesItsAccessibilityClass();
+        testLockedRewriteKeepsTheExistingItemUntouched();
         testBiometricPromotionCompensatesOnFailure();
         testConcurrentSecureAccess();
         std::cout << "IOSStorageAdapterCpp keychain tests passed." << std::endl;

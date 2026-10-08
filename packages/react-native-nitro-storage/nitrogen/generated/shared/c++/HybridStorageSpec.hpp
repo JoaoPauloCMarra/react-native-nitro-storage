@@ -73,6 +73,8 @@ namespace margelo::nitro::NitroStorage {
       virtual void deleteSecureBiometric(const std::string& key) = 0;
       virtual bool hasSecureBiometric(const std::string& key) = 0;
       virtual void clearSecureBiometric() = 0;
+      virtual bool isProtectedDataAvailable() = 0;
+      virtual std::function<void()> onProtectedDataAvailable(const std::function<void()>& listener) = 0;
 
     protected:
       // Hybrid Setup
