@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes are always listed first in each release section.
 
+## [0.15.1] - 2026-10-12
+
+### Breaking changes
+
+None.
+
+### Fixed
+
+- iOS Disk storage opens and reads on a full device. A cold launch could not create the SQLite WAL index file (`-shm`) when the volume had no space, so `PRAGMA journal_mode=WAL` failed with `[nitro-error:storage_full] NitroStorage: Disk SQLite exec failed: disk I/O error` and every Disk read on that launch failed with it, not only writes. When the normal open fails with `storage_full`, the store now reopens with `PRAGMA locking_mode=EXCLUSIVE`, which keeps the WAL index in memory and needs no new file, so existing rows read from the first call. Writes and deletes keep failing with `storage_full` until space frees. The exclusive lock lasts for that connection; the next launch tries the normal open first. Other IO errors during open still fail as before. Android already retried its open without WAL since 0.13.0.
+
 ## [0.15.0] - 2026-10-07
 
 ### Breaking changes

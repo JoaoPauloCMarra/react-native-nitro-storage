@@ -91,7 +91,7 @@ before installing this package, then rebuild the native app so the generated
 Nitro bindings and native runtime use the same major-minor version:
 
 ```sh
-bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.15.0
+bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.15.1
 bunx expo prebuild
 ```
 
@@ -1032,6 +1032,13 @@ function saveDraft(draft: string): "saved" | "storage_full" {
   }
 }
 ```
+
+A full device does not block reads. When a cold launch cannot create the WAL
+index file (`-shm`) because the volume has no space, the iOS and C++ Disk store
+reopens with exclusive locking, which keeps that index in memory, so every
+existing row stays readable from the first call. Writes and deletes still fail
+with `storage_full` until the user frees space, and the exclusive lock lasts for
+that connection only.
 
 A full device does not block cleanup. `storage.clear(StorageScope.Disk)`
 deletes and recreates the Disk database when a normal delete fails with

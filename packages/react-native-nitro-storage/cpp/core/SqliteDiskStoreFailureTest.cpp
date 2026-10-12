@@ -41,6 +41,7 @@ struct FaultState {
     std::atomic<int> killAfterWrites{-1};
     std::atomic<int> lastErrno{-1};
     std::atomic<int> openRc{SQLITE_OK};
+    std::atomic<int> shmMapRc{SQLITE_OK};
     std::atomic<long long> volumeCapacityBytes{-1};
     std::string volumeDirectory;
     std::atomic<bool> fastSleep{false};
@@ -183,6 +184,10 @@ int faultDeviceCharacteristics(sqlite3_file* file) {
 
 int faultShmMap(sqlite3_file* file, int page, int size, int extend, void volatile** out) {
     sqlite3_file* real = realFile(file);
+    const int injectedShm = gFault.shmMapRc.load();
+    if (reinterpret_cast<FaultFile*>(file)->tracked && injectedShm != SQLITE_OK) {
+        return injectedShm;
+    }
     return real->pMethods->xShmMap(real, page, size, extend, out);
 }
 
@@ -1147,6 +1152,57 @@ void testVolumeWithoutFreeSpaceKeepsStoreReadableAndRecovers() {
     gFault.trackedPrefix.clear();
 }
 
+struct ArmedShmMapFault {
+    explicit ArmedShmMapFault(int rc) { gFault.shmMapRc.store(rc); }
+    ~ArmedShmMapFault() { gFault.shmMapRc.store(SQLITE_OK); }
+};
+
+// A cold launch on a full device cannot create the WAL index file (-shm), so
+// `PRAGMA journal_mode=WAL` fails with SQLITE_IOERR_SHMSIZE and errno ENOSPC on
+// every open. The store must still open and read; only writes report full.
+void testNoSpaceForTheWalIndexKeepsAnExistingStoreReadable() {
+    const std::string path = freshPath("no-space-shm");
+    gFault.trackedPrefix = path;
+    {
+        SqliteDiskStore store(path);
+        store.set("kept", "value");
+        store.migrateOnce("suite_v1", {});
+    }
+    const int before = openFileDescriptorCount();
+    {
+        ArmedShmMapFault shm(SQLITE_IOERR_SHMSIZE);
+        ArmedSystemError system(ENOSPC);
+        SqliteDiskStore store(path);
+        require(store.get("kept").value() == "value", "existing rows must read when the WAL index cannot be created");
+        require(store.hasMigrationMarker("suite_v1"), "migration markers must read on a full device");
+        require(store.getAllKeys().size() == 1, "key enumeration must work without the WAL index file");
+        {
+            DeniedGrowth noSpace;
+            requireFull(failureMessage([&] { store.set("next", std::string(8192, 'n')); }), "set");
+        }
+        require(!store.has("next"), "a failed write on a full device must not appear");
+    }
+    {
+        ArmedShmMapFault shm(SQLITE_IOERR_SHMSIZE);
+        ArmedSystemError system(ENOSPC);
+        const std::string shared = failureMessage([&] { (void)SqliteDiskStore::shared(path).get("kept"); });
+        require(shared.empty(), "shared store must open on a full device: " + shared);
+        SqliteDiskStore::resetShared();
+    }
+    {
+        ArmedShmMapFault shm(SQLITE_IOERR_SHMSIZE);
+        ArmedSystemError system(EIO);
+        const std::string message = failureMessage([&] { SqliteDiskStore store(path); });
+        require(startsWith(message, kUntaggedPrefix + "exec failed: "), "other shm IO errors still fail open: " + message);
+    }
+    require(openFileDescriptorCount() == before, "fallback open must not leak descriptors");
+    SqliteDiskStore recovered(path);
+    recovered.set("next", "value");
+    require(recovered.get("next").value() == "value", "store must write again once space frees");
+    require(recovered.size() == 2, "rows written after recovery must persist alongside old rows");
+    gFault.trackedPrefix.clear();
+}
+
 void testRecreateFreesSpaceOnAVolumeThatIsFull() {
     const std::string path = freshPath("full-volume-clear");
     gFault.trackedPrefix = path;
@@ -1462,6 +1518,7 @@ int main(int argc, char** argv) {
     testLargeDatabaseEnumeration();
     testIoErrorsAreStorageFullOnlyWhenTheSystemReportsNoSpace();
     testNoSpaceWhileCreatingTheDatabaseFileIsTagged();
+    testNoSpaceForTheWalIndexKeepsAnExistingStoreReadable();
     testOversizedKeysAndValuesFailAtBindAndRollBack();
     testClearRecreatesACorruptOrUnopenableStore();
     testUtf8ValidationSelectsTheRangeQueryOnlyForWellFormedPrefixes();

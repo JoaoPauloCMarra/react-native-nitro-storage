@@ -52,7 +52,7 @@ public:
     void limitValueLengthForTesting(int bytes);
 
 private:
-    void openLocked();
+    void openLocked(bool exclusiveLocking);
     void reopenLocked();
     void ensureOpenLocked();
     void closeLocked();

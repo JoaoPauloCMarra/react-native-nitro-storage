@@ -41,6 +41,10 @@ const char* storageErrorTag(sqlite3* db, int code) {
     }
 }
 
+bool isStorageFullError(const std::exception& error) {
+    return std::string(error.what()).rfind("[nitro-error:storage_full] ", 0) == 0;
+}
+
 [[noreturn]] void throwSqlite(sqlite3* db, const char* operation, int code) {
     const char* message = db != nullptr ? sqlite3_errmsg(db) : sqlite3_errstr(code);
     throw std::runtime_error(
@@ -188,9 +192,23 @@ void SqliteDiskStore::recreate() {
     reopenLocked();
 }
 
+// A full device cannot create the WAL index file (-shm) on a cold launch, so a
+// normal open fails on `PRAGMA journal_mode=WAL` with ENOSPC and every read
+// would fail with it. Exclusive locking keeps the WAL index in heap memory and
+// needs no new file, so the existing rows stay readable; writes still report
+// storage_full until space frees. The mode lasts for this connection only.
 void SqliteDiskStore::reopenLocked() {
     try {
-        openLocked();
+        openLocked(false);
+        return;
+    } catch (const std::exception& error) {
+        closeLocked();
+        if (!isStorageFullError(error)) {
+            throw;
+        }
+    }
+    try {
+        openLocked(true);
     } catch (...) {
         closeLocked();
         throw;
@@ -220,7 +238,7 @@ std::string SqliteDiskStore::defaultPath() {
 #endif
 }
 
-void SqliteDiskStore::openLocked() {
+void SqliteDiskStore::openLocked(bool exclusiveLocking) {
     const auto parent = std::filesystem::path(path_).parent_path();
     if (!parent.empty()) {
         std::filesystem::create_directories(parent);
@@ -240,6 +258,9 @@ void SqliteDiskStore::openLocked() {
     }
     db_ = db;
     sqlite3_busy_timeout(db_, 5000);
+    if (exclusiveLocking) {
+        execLocked("PRAGMA locking_mode=EXCLUSIVE;");
+    }
     execLocked("PRAGMA journal_mode=WAL;");
     execLocked("PRAGMA synchronous=NORMAL;");
     execLocked("PRAGMA temp_store=MEMORY;");
