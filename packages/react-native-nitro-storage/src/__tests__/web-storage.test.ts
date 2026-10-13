@@ -1574,14 +1574,46 @@ describe("Web Storage", () => {
     });
 
     queued.set("pending");
+    expect(
+      globalThis.localStorage.getItem("__secure_secure-tx-queued"),
+    ).toBeNull();
 
+    let storedBeforeCallback: string | null = null;
     runTransaction(StorageScope.Secure, (tx) => {
+      storedBeforeCallback = globalThis.localStorage.getItem(
+        "__secure_secure-tx-queued",
+      );
       tx.setRaw("secure-tx-key", serializeWithPrimitiveFastPath("first"));
       tx.setRaw("secure-tx-key", serializeWithPrimitiveFastPath("second"));
       tx.setItem(item, "committed");
     });
 
+    expect(storedBeforeCallback).toBe(
+      serializeWithPrimitiveFastPath("pending"),
+    );
     expect(item.get()).toBe("committed");
+  });
+
+  it("restores the pre-transaction secure value after two raw writes to one key", () => {
+    const item = createStorageItem({
+      key: "secure-tx-twice",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+    });
+    item.set("before");
+
+    expect(() =>
+      runTransaction(StorageScope.Secure, (tx) => {
+        tx.setRaw("secure-tx-twice", serializeWithPrimitiveFastPath("first"));
+        tx.setRaw("secure-tx-twice", serializeWithPrimitiveFastPath("second"));
+        throw new Error("abort");
+      }),
+    ).toThrow("abort");
+
+    expect(item.get()).toBe("before");
+    expect(globalThis.localStorage.getItem("__secure_secure-tx-twice")).toBe(
+      serializeWithPrimitiveFastPath("before"),
+    );
   });
 
   it("notifies listeners when _triggerListeners is called", () => {
