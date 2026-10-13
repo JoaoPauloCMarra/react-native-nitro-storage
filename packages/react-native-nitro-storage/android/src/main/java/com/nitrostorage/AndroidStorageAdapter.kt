@@ -439,19 +439,6 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         }
     }
 
-    private fun getSecureSafe(prefs: SharedPreferences, key: String): String? {
-        return try {
-            prefs.getString(key, null)
-        } catch (e: Exception) {
-            if (e.hasCause(AEADBadTagException::class.java)) {
-                prefs.edit().remove(key).commit()
-                null
-            } else {
-                throw e
-            }
-        }
-    }
-
     private fun applySecureEditor(
         editor: SharedPreferences.Editor,
         forceSynchronous: Boolean = false,
@@ -486,7 +473,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             BiometricEntrySnapshot(
                 preferences = preferences,
                 present = present,
-                value = if (present) getSecureSafe(preferences, key) else null,
+                value = if (present) preferences.getString(key, null) else null,
             )
         }
     }
@@ -495,7 +482,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         val present = encryptedPreferences.contains(key)
         return PlainEntrySnapshot(
             present = present,
-            value = if (present) getSecureSafe(encryptedPreferences, key) else null,
+            value = if (present) encryptedPreferences.getString(key, null) else null,
         )
     }
 
@@ -765,7 +752,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         fun getSecure(key: String): String? {
             val inst = getInstanceOrThrow()
             return try {
-                inst.getSecureSafe(inst.encryptedPreferences, key)
+                inst.encryptedPreferences.getString(key, null)
             } catch (e: Exception) {
                 throw e.wrapStorageException(
                     "NitroStorage: Failed to read secure storage: ${e.message}",
@@ -778,7 +765,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             val inst = getInstanceOrThrow()
             return try {
                 Array(keys.size) { index ->
-                    inst.getSecureSafe(inst.encryptedPreferences, keys[index])
+                    inst.encryptedPreferences.getString(keys[index], null)
                 }
             } catch (e: Exception) {
                 throw e.wrapStorageException(
@@ -939,7 +926,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             val inst = getInstanceOrThrow()
             return try {
                 inst.firstInExistingBiometricPreferences { preferences ->
-                    inst.getSecureSafe(preferences, key)
+                    preferences.getString(key, null)
                 }
             } catch (e: Exception) {
                 throw e.wrapStorageException(

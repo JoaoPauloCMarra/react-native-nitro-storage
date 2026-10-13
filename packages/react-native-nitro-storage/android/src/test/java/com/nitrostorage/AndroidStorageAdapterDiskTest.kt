@@ -1,10 +1,13 @@
 package com.nitrostorage
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.os.Build
 import java.io.File
 import java.io.RandomAccessFile
 import java.lang.reflect.InvocationTargetException
+import java.lang.reflect.Proxy
+import javax.crypto.AEADBadTagException
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -374,5 +377,33 @@ class AndroidStorageAdapterDiskTest {
         } finally {
             ReflectionHelpers.setStaticField(Build.VERSION::class.java, "SDK_INT", realSdk)
         }
+    }
+
+    @Test
+    fun undecryptableSecureValueIsReportedAsCorruptionAndKeptInTheStore() {
+        AndroidStorageAdapter.init(context)
+        var editorRequests = 0
+        val failure = RuntimeException("decrypt", AEADBadTagException("bad tag"))
+        val stub = Proxy.newProxyInstance(
+            SharedPreferences::class.java.classLoader,
+            arrayOf(SharedPreferences::class.java),
+        ) { _, method, _ ->
+            when (method.name) {
+                "getString" -> throw failure
+                "edit" -> {
+                    editorRequests += 1
+                    throw IllegalStateException("edit must not be requested")
+                }
+                else -> null
+            }
+        } as SharedPreferences
+        val delegate = AndroidStorageAdapter::class.java.getDeclaredField("encryptedPreferences\$delegate")
+        delegate.isAccessible = true
+        delegate.set(currentInstance(), lazyOf(stub))
+
+        val message = failureMessage { AndroidStorageAdapter.getSecure("secret") }
+
+        assertTrue(message!!.startsWith("[nitro-error:storage_corruption] "))
+        assertEquals(0, editorRequests)
     }
 }
