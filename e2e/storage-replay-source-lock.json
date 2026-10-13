@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "runtimeSourceSha256": "a43269ecf9e0af492e17b9871b6eeadd77c67af26069627b5a8529fbcd4c7633",
+  "runtimeSourceSha256": "a154c98a6e7decd713023fc73db2afc774f120ffc27ad213fd9af9bb8055f2dc",
   "runtimeSourceFiles": [
     "apps/example/app.config.js",
     "apps/example/app/_layout.tsx",
@@ -25,6 +25,7 @@
     "apps/example/components/smoke-test.tsx",
     "apps/example/metro.config.js",
     "apps/example/package.json",
+    "apps/example/plugins/with-gradle-build-speed.js",
     "apps/example/tsconfig.json",
     "bun.lock",
     "package.json",

@@ -1144,6 +1144,12 @@ Nitro, secure storage, or packaging files. GitHub CI does not build the Android
 or iOS example. The package release path also validates package contents and
 dry-run publish behavior.
 
+The example app speeds up local builds through its tracked Expo config: iOS
+uses `ccache` when it is installed (`NITRO_EXAMPLE_CCACHE=0` turns it off) and
+Android enables the Gradle build cache and larger daemon heaps. Set
+`NITRO_EXAMPLE_ANDROID_ARCHS=x86_64` before `bun run example:prebuild` for an
+emulator-only Android build; leave it unset for release APKs.
+
 Run `bun run example:replay:check` to check that replay coverage matches package
 and example sources. After reviewing affected assertions, use
 `bun run example:replay:refresh` to update the source lock. Device execution uses
