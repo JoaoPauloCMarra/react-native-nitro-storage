@@ -3465,6 +3465,12 @@ export function createStorageCore(
               return;
             }
             adapter.backend.set(key, raw, StorageScope.Secure);
+            adapter.onWillEmitChanges(
+              StorageScope.Secure,
+              [key],
+              "set",
+              adapter.changeSource,
+            );
             result.migrated.push(key);
           } catch (error) {
             const code = getStorageErrorCode(error);

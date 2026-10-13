@@ -134,6 +134,34 @@ describe("migrateSecureAccessControl", () => {
     expect(mockHybridObject.clear).not.toHaveBeenCalled();
   });
 
+  it("swallows the native echo of each rewritten key", () => {
+    seedSecureKeys({ a: "1", b: "2" });
+    let nativeChange:
+      ((key: string, value: string | undefined) => void) | undefined;
+    mockHybridObject.addOnChange.mockImplementation(((
+      _scope: StorageScope,
+      callback: (key: string, value: string | undefined) => void,
+    ) => {
+      nativeChange = callback;
+      return () => {};
+    }) as never);
+    const events: unknown[] = [];
+    const unsubscribe = storage.subscribe(StorageScope.Secure, (event) => {
+      events.push(event);
+    });
+    mockHybridObject.set.mockImplementation((key: string, value: string) => {
+      setTimeout(() => nativeChange?.(key, value), 0);
+    });
+    jest.useFakeTimers();
+
+    migrateSecureAccessControl(AccessControl.AfterFirstUnlock);
+    jest.runAllTimers();
+    jest.useRealTimers();
+
+    expect(events).toEqual([]);
+    unsubscribe();
+  });
+
   it("makes the level the default for later raw secure writes", () => {
     migrateSecureAccessControl(AccessControl.AfterFirstUnlockThisDeviceOnly);
     mockHybridObject.setSecureAccessControl.mockClear();
