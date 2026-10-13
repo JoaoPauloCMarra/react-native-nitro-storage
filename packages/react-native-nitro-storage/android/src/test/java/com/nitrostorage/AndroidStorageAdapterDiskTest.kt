@@ -406,4 +406,74 @@ class AndroidStorageAdapterDiskTest {
         assertTrue(message!!.startsWith("[nitro-error:storage_corruption] "))
         assertEquals(0, editorRequests)
     }
+
+    private class RecordingPreferences(
+        private val commitResults: (Int) -> Boolean = { true },
+    ) {
+        val operations = mutableListOf<String>()
+        private var commits = 0
+        private val editor: SharedPreferences.Editor = Proxy.newProxyInstance(
+            SharedPreferences.Editor::class.java.classLoader,
+            arrayOf(SharedPreferences.Editor::class.java),
+        ) { proxy, method, args ->
+            when (method.name) {
+                "putString" -> {
+                    operations.add("putString:${args[0]}")
+                    proxy
+                }
+                "remove" -> {
+                    operations.add("remove:${args[0]}")
+                    proxy
+                }
+                "commit" -> {
+                    commits += 1
+                    commitResults(commits)
+                }
+                "apply" -> null
+                else -> proxy
+            }
+        } as SharedPreferences.Editor
+        val preferences: SharedPreferences = Proxy.newProxyInstance(
+            SharedPreferences::class.java.classLoader,
+            arrayOf(SharedPreferences::class.java),
+        ) { _, method, _ ->
+            when (method.name) {
+                "contains" -> true
+                "getString" -> throw RuntimeException("decrypt", AEADBadTagException("bad tag"))
+                "edit" -> editor
+                else -> null
+            }
+        } as SharedPreferences
+    }
+
+    private fun installEncryptedPreferences(preferences: SharedPreferences) {
+        val delegate = AndroidStorageAdapter::class.java.getDeclaredField("encryptedPreferences\$delegate")
+        delegate.isAccessible = true
+        delegate.set(currentInstance(), lazyOf(preferences))
+    }
+
+    @Test
+    fun biometricSetReplacesAnUndecryptablePlainValue() {
+        AndroidStorageAdapter.init(context)
+        val recording = RecordingPreferences()
+        installEncryptedPreferences(recording.preferences)
+
+        AndroidStorageAdapter.setSecureBiometricWithLevel("secret", "fresh", 0)
+
+        assertEquals(listOf("putString:secret"), recording.operations)
+    }
+
+    @Test
+    fun failedBiometricSetRemovesAnUndecryptableValueInsteadOfRestoringIt() {
+        AndroidStorageAdapter.init(context)
+        val recording = RecordingPreferences { commitNumber -> commitNumber > 1 }
+        installEncryptedPreferences(recording.preferences)
+
+        val message = failureMessage {
+            AndroidStorageAdapter.setSecureBiometricWithLevel("secret", "fresh", 0)
+        }
+
+        assertTrue(message != null)
+        assertEquals(listOf("putString:secret", "remove:secret"), recording.operations)
+    }
 }

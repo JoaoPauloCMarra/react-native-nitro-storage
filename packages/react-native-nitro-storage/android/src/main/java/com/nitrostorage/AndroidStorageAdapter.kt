@@ -444,29 +444,49 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         val preferences: SharedPreferences,
         val present: Boolean,
         val value: String?,
+        val unreadable: Boolean = false,
     )
 
     private data class PlainEntrySnapshot(
         val present: Boolean,
         val value: String?,
+        val unreadable: Boolean = false,
     )
+
+    private fun readSnapshotValue(preferences: SharedPreferences, key: String): Pair<String?, Boolean> {
+        return try {
+            Pair(preferences.getString(key, null), false)
+        } catch (e: Exception) {
+            if (e.hasCause(AEADBadTagException::class.java)) {
+                Pair(null, true)
+            } else {
+                throw e
+            }
+        }
+    }
 
     private fun captureBiometricEntrySnapshots(key: String): List<BiometricEntrySnapshot> {
         return existingBiometricPreferences().map { preferences ->
             val present = preferences.contains(key)
+            val (value, unreadable) =
+                if (present) readSnapshotValue(preferences, key) else Pair(null, false)
             BiometricEntrySnapshot(
                 preferences = preferences,
                 present = present,
-                value = if (present) preferences.getString(key, null) else null,
+                value = value,
+                unreadable = unreadable,
             )
         }
     }
 
     private fun capturePlainEntrySnapshot(key: String): PlainEntrySnapshot {
         val present = encryptedPreferences.contains(key)
+        val (value, unreadable) =
+            if (present) readSnapshotValue(encryptedPreferences, key) else Pair(null, false)
         return PlainEntrySnapshot(
             present = present,
-            value = if (present) encryptedPreferences.getString(key, null) else null,
+            value = value,
+            unreadable = unreadable,
         )
     }
 
@@ -494,7 +514,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
                 errors.add(error)
             }
         }
-        snapshots.filter { it.present }.forEach { snapshot ->
+        snapshots.filter { it.present && !it.unreadable }.forEach { snapshot ->
             try {
                 val value = snapshot.value
                     ?: throw IllegalStateException("Biometric snapshot contained a null value")
@@ -514,7 +534,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         snapshot: PlainEntrySnapshot,
     ): List<Throwable> {
         return try {
-            val editor = if (snapshot.present) {
+            val editor = if (snapshot.present && !snapshot.unreadable) {
                 val value = snapshot.value
                     ?: throw IllegalStateException("Plain snapshot contained a null value")
                 encryptedPreferences.edit().putString(key, value)
