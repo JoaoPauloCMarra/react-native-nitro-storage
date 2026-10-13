@@ -91,6 +91,47 @@ const runtimeFileRules = [
   "apps/example/tsconfig.json",
 ];
 
+function validateSuiteEntry(suite, seenIds, seenPaths, root) {
+  if (
+    !suite ||
+    typeof suite.id !== "string" ||
+    !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(suite.id) ||
+    seenIds.has(suite.id) ||
+    typeof suite.path !== "string" ||
+    !suite.path.startsWith("e2e/") ||
+    suite.path.includes("..") ||
+    suite.path.includes("\\") ||
+    !suite.path.endsWith(".ad") ||
+    seenPaths.has(suite.path) ||
+    typeof suite.purpose !== "string" ||
+    suite.purpose.trim() === ""
+  ) {
+    throw new Error(
+      "Storage replay manifest contains an invalid or duplicate flow",
+    );
+  }
+  if (Object.hasOwn(suite, "platforms")) {
+    const { platforms } = suite;
+    if (
+      !Array.isArray(platforms) ||
+      platforms.length === 0 ||
+      new Set(platforms).size !== platforms.length ||
+      platforms.some((platform) => !replayPlatforms.includes(platform))
+    ) {
+      throw new Error(
+        `${suite.id} platforms must be a non-empty subset of ${replayPlatforms.join(", ")} without duplicates`,
+      );
+    }
+  }
+  seenIds.add(suite.id);
+  seenPaths.add(suite.path);
+  const suiteFile = inside(root, suite.path);
+  if (!fs.existsSync(suiteFile) || !fs.lstatSync(suiteFile).isFile()) {
+    throw new Error(`Replay flow is missing: ${suite.path}`);
+  }
+  return suiteFile;
+}
+
 function inside(root, relativePath) {
   const absolute = path.resolve(root, relativePath);
   const relative = path.relative(path.resolve(root), absolute);
@@ -263,43 +304,12 @@ function readCoverageManifest(root, manifestPath = manifestRelativePath) {
   const suitePaths = new Set();
   const suiteFiles = new Map();
   for (const suite of manifest.suites) {
-    if (
-      !suite ||
-      typeof suite.id !== "string" ||
-      !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(suite.id) ||
-      suiteIds.has(suite.id) ||
-      typeof suite.path !== "string" ||
-      !suite.path.startsWith("e2e/") ||
-      suite.path.includes("..") ||
-      suite.path.includes("\\") ||
-      !suite.path.endsWith(".ad") ||
-      suitePaths.has(suite.path) ||
-      typeof suite.purpose !== "string" ||
-      suite.purpose.trim() === ""
-    ) {
-      throw new Error(
-        "Storage replay manifest contains an invalid or duplicate flow",
-      );
-    }
-    if (Object.hasOwn(suite, "platforms")) {
-      const { platforms } = suite;
-      if (
-        !Array.isArray(platforms) ||
-        platforms.length === 0 ||
-        new Set(platforms).size !== platforms.length ||
-        platforms.some((platform) => !replayPlatforms.includes(platform))
-      ) {
-        throw new Error(
-          `${suite.id} platforms must be a non-empty subset of ${replayPlatforms.join(", ")} without duplicates`,
-        );
-      }
-    }
-    suiteIds.add(suite.id);
-    suitePaths.add(suite.path);
-    const suiteFile = inside(absoluteRoot, suite.path);
-    if (!fs.existsSync(suiteFile) || !fs.lstatSync(suiteFile).isFile()) {
-      throw new Error(`Replay flow is missing: ${suite.path}`);
-    }
+    const suiteFile = validateSuiteEntry(
+      suite,
+      suiteIds,
+      suitePaths,
+      absoluteRoot,
+    );
     const source = fs.readFileSync(suiteFile, "utf8");
     const commands = source
       .split(/\r?\n/)
@@ -576,5 +586,6 @@ module.exports = {
   collectRuntimeFiles,
   inside,
   readCoverageManifest,
+  validateSuiteEntry,
   refreshReplayLock,
 };

@@ -64,8 +64,13 @@ import {
   resolveNativeWriteBuffering,
 } from "../capabilities";
 
-beforeEach(() => {
+function resetStorageModes(): void {
   storage.setDiskWritesAsync(false);
+  storage.setSecureWritesAsync(false);
+}
+
+beforeEach(() => {
+  resetStorageModes();
   storage.setEventObserver(undefined);
 });
 

@@ -234,7 +234,7 @@ function signDarwinBinary(binaryPath) {
   }
 
   execFileSync("codesign", ["--force", "--sign", "-", binaryPath], {
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "inherit"],
   });
 }
 
@@ -542,5 +542,11 @@ try {
   console.log("✅ C++ tests passed!");
 } catch (error) {
   console.error("❌ C++ tests failed.");
+  if (error instanceof Error) {
+    console.error(error.message);
+    if (error.stderr) {
+      console.error(String(error.stderr));
+    }
+  }
   process.exit(1);
 }
