@@ -44,4 +44,29 @@ describe("Memory raw writes on a TTL key", () => {
     expect(onExpired).not.toHaveBeenCalled();
     expect(storage.getString("ttl", StorageScope.Memory)).toBe("imported");
   });
+
+  it("clears the old deadline when setBatch rewrites the key through a plain item", () => {
+    const { createStorageItem, setBatch, storage } = createTestCore();
+    const onExpired = jest.fn();
+    const ttlItem = createStorageItem({
+      key: "ttl",
+      scope: StorageScope.Memory,
+      defaultValue: "def",
+      expiration: { ttlMs: 100 },
+      onExpired,
+    });
+    const plainItem = createStorageItem({
+      key: "ttl",
+      scope: StorageScope.Memory,
+      defaultValue: "def",
+    });
+    ttlItem.set("first");
+
+    setBatch([{ item: plainItem, value: "batched" }], StorageScope.Memory);
+    now += 500;
+
+    expect(ttlItem.get()).toBe("batched");
+    expect(onExpired).not.toHaveBeenCalled();
+    expect(storage.getString("ttl", StorageScope.Memory)).toBe("batched");
+  });
 });

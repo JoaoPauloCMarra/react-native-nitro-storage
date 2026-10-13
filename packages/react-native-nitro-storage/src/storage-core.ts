@@ -3110,7 +3110,7 @@ export function createStorageCore(
 
           // Atomic write: update all values in memoryStore, invalidate caches, then batch-notify
           items.forEach(({ item, value }) => {
-            memoryStore.set(item.key, toMemoryStoredValue(value));
+            setMemoryRaw(item.key, toMemoryStoredValue(value));
             asInternal(
               item as StorageItem<unknown>,
             )._invalidateParsedCacheOnly();
