@@ -18,7 +18,7 @@ const mockHybridObject = {
   setSecureBiometricWithLevel: jest.fn(),
   getSecureBiometric: jest.fn(),
   deleteSecureBiometric: jest.fn(),
-  hasSecureBiometric: jest.fn(() => false),
+  hasSecureBiometric: jest.fn((_key: string) => false),
   clearSecureBiometric: jest.fn(),
   getKeysByPrefix: jest.fn(() => []),
   isProtectedDataAvailable: jest.fn(() => true),
@@ -126,8 +126,10 @@ describe("migrateSecureAccessControl", () => {
       StorageScope.Secure,
     );
     const levelOrder =
-      mockHybridObject.setSecureAccessControl.mock.invocationCallOrder[0];
-    const firstWriteOrder = mockHybridObject.set.mock.invocationCallOrder[0];
+      mockHybridObject.setSecureAccessControl.mock.invocationCallOrder[0] ??
+      Number.NaN;
+    const firstWriteOrder =
+      mockHybridObject.set.mock.invocationCallOrder[0] ?? Number.NaN;
     expect(levelOrder).toBeLessThan(firstWriteOrder);
     expect(mockHybridObject.remove).not.toHaveBeenCalled();
     expect(mockHybridObject.removeBatch).not.toHaveBeenCalled();

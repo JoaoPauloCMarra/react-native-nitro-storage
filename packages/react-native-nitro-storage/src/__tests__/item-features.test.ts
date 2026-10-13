@@ -94,7 +94,7 @@ describe("createSetItem", () => {
 
   it("seeds default members and supports reset", () => {
     const { createSetItem } = freshMock();
-    const seen = createSetItem({
+    const seen = createSetItem<string>({
       key: "seen2",
       scope: StorageScope.Memory,
       defaultValue: ["x", "y"],

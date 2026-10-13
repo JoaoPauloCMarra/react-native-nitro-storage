@@ -63,7 +63,7 @@ describe.each([StorageScope.Disk, StorageScope.Secure] as const)(
       expect(item.get()).toBe("old");
 
       backend.failNext("remove", scope);
-      expect(() => storage.remove("rc", scope)).toThrow();
+      expect(() => storage.deleteString("rc", scope)).toThrow();
       expect(item.get()).toBe("old");
       expect(storage.getString("rc", scope)).toBe(stored);
     });

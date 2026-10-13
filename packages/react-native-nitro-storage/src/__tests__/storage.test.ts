@@ -41,6 +41,7 @@ import {
   useStorageSelector,
   type StorageMetricsEvent,
   type StorageBatchChangeEvent,
+  type StorageChangeEvent,
   StorageScope,
   AccessControl,
   BiometricLevel,
@@ -4261,14 +4262,17 @@ describe("storage.clearBiometric", () => {
     storage.clearBiometric();
 
     expect(events).toHaveLength(1);
-    expect(events[0].type).toBe("batch");
-    expect(events[0].operation).toBe("clear");
-    expect(events[0].changes).toHaveLength(1);
-    expect(events[0].changes[0].key).toBe("bio-key");
-    expect(events[0].changes[0].oldValue).toBe(
-      serializeWithPrimitiveFastPath("bio-value"),
+    const [event] = events as [StorageBatchChangeEvent];
+    expect(event.type).toBe("batch");
+    expect(event.operation).toBe("clear");
+    expect(event.changes).toHaveLength(1);
+    expect(event.changes[0]).toEqual(
+      expect.objectContaining({
+        key: "bio-key",
+        oldValue: serializeWithPrimitiveFastPath("bio-value"),
+        newValue: undefined,
+      }),
     );
-    expect(events[0].changes[0].newValue).toBeUndefined();
   });
 
   it("preserves biometric values for an explicitly value-enabled observer", () => {
@@ -4383,9 +4387,9 @@ describe("biometric storage items", () => {
       defaultValue: "",
       biometric: true,
     });
-    const events: StorageBatchChangeEvent[] = [];
+    const events: StorageChangeEvent[] = [];
     storage.subscribeKey(StorageScope.Secure, biometricItem.key, (event) => {
-      events.push(event as StorageBatchChangeEvent);
+      events.push(event);
     });
 
     biometricItem.delete();

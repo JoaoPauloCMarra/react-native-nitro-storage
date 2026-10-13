@@ -67,7 +67,7 @@
     "lint:check": "bunx eslint src --max-warnings=0",
     "format": "bunx prettier --write \"src/**/*.{ts,tsx}\" \"../../README.md\" \"../../CHANGELOG.md\" \"../../SECURITY.md\" \"../../docs/**/*.md\"",
     "format:check": "bunx prettier --check \"src/**/*.{ts,tsx}\" \"../../README.md\" \"../../CHANGELOG.md\" \"../../SECURITY.md\" \"../../docs/**/*.md\"",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test:types": "tsc --noEmit -p tsconfig.types.json",
     "test": "jest",
     "test:coverage": "jest --coverage",

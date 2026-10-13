@@ -123,6 +123,7 @@ function buildCore(backend: FailureBackend) {
     backend,
     changeSource: "native",
     applyAccessControlOnSecureRawWrite: true,
+    supportsSecureAccessControlMigration: () => true,
     ensureScopeSubscription: () => {},
     maybeCleanupScopeSubscription: () => {},
     onWillEmitChanges: () => {},

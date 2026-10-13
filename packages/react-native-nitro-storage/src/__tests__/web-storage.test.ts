@@ -3142,9 +3142,9 @@ describe("web backend switching", () => {
 
     await flushWebStorageBackends();
 
-    expect(oldBackend.flush.mock.invocationCallOrder[0]).toBeLessThan(
-      oldBackend.close.mock.invocationCallOrder[0],
-    );
+    expect(
+      oldBackend.flush.mock.invocationCallOrder[0] ?? Number.NaN,
+    ).toBeLessThan(oldBackend.close.mock.invocationCallOrder[0] ?? Number.NaN);
     expect(oldBackend.close).toHaveBeenCalledTimes(1);
   });
 
@@ -3166,9 +3166,9 @@ describe("web backend switching", () => {
 
     await flushWebStorageBackends();
 
-    expect(oldBackend.flush.mock.invocationCallOrder[0]).toBeLessThan(
-      oldBackend.close.mock.invocationCallOrder[0],
-    );
+    expect(
+      oldBackend.flush.mock.invocationCallOrder[0] ?? Number.NaN,
+    ).toBeLessThan(oldBackend.close.mock.invocationCallOrder[0] ?? Number.NaN);
     expect(oldBackend.close).toHaveBeenCalledTimes(1);
   });
 

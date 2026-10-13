@@ -74,7 +74,7 @@ describe("durability coordinator", () => {
     mockScheduledMicrotasks.length = 0;
   });
 
-  it.each([StorageScope.Disk, StorageScope.Secure])(
+  it.each([StorageScope.Disk, StorageScope.Secure] as const)(
     "reports a scheduled %s flush failure and retains it for retry",
     (scope) => {
       const { backend, setBatch } = createBackend();
@@ -103,7 +103,7 @@ describe("durability coordinator", () => {
     },
   );
 
-  it.each([StorageScope.Disk, StorageScope.Secure])(
+  it.each([StorageScope.Disk, StorageScope.Secure] as const)(
     "rethrows a scheduled %s flush failure when no observer is registered",
     (scope) => {
       const { backend, setBatch } = createBackend();

@@ -108,6 +108,7 @@ function buildCore(backend: RecoveryBackend) {
     backend,
     changeSource: "native",
     applyAccessControlOnSecureRawWrite: true,
+    supportsSecureAccessControlMigration: () => true,
     ensureScopeSubscription: () => {},
     maybeCleanupScopeSubscription: () => {},
     onWillEmitChanges: () => {},
