@@ -1203,6 +1203,41 @@ void testNoSpaceForTheWalIndexKeepsAnExistingStoreReadable() {
     gFault.trackedPrefix.clear();
 }
 
+// On a full APFS volume the WAL index failure surfaces as SQLITE_CANTOPEN
+// whose system errno is already clobbered, so the open fallback must not
+// depend on it. A CANTOPEN on the database file itself still fails.
+void testCantOpenForTheWalIndexKeepsAnExistingStoreReadable() {
+    const std::string path = freshPath("cantopen-shm");
+    gFault.trackedPrefix = path;
+    {
+        SqliteDiskStore store(path);
+        store.set("kept", "value");
+    }
+    std::filesystem::remove(path + "-shm");
+    for (const int systemError : {0, EACCES}) {
+        ArmedShmMapFault shm(SQLITE_CANTOPEN);
+        ArmedSystemError system(systemError);
+        SqliteDiskStore store(path);
+        require(store.get("kept").value() == "value", "existing rows must read when the WAL index cannot be opened");
+        {
+            DeniedGrowth noSpace;
+            requireFull(failureMessage([&] { store.set("next", std::string(8192, 'n')); }), "set");
+        }
+        require(!store.has("next"), "a failed write must not appear");
+    }
+    {
+        gFault.openRc.store(SQLITE_CANTOPEN);
+        ArmedSystemError system(0);
+        const std::string message = failureMessage([&] { SqliteDiskStore store(path); });
+        gFault.openRc.store(SQLITE_OK);
+        require(startsWith(message, kUntaggedPrefix), "CANTOPEN on the database file must still fail untagged: " + message);
+    }
+    SqliteDiskStore recovered(path);
+    recovered.set("next", "value");
+    require(recovered.get("kept").value() == "value" && recovered.get("next").value() == "value", "store must read and write again once the fault clears");
+    gFault.trackedPrefix.clear();
+}
+
 void testRecreateFreesSpaceOnAVolumeThatIsFull() {
     const std::string path = freshPath("full-volume-clear");
     gFault.trackedPrefix = path;
@@ -1519,6 +1554,7 @@ int main(int argc, char** argv) {
     testIoErrorsAreStorageFullOnlyWhenTheSystemReportsNoSpace();
     testNoSpaceWhileCreatingTheDatabaseFileIsTagged();
     testNoSpaceForTheWalIndexKeepsAnExistingStoreReadable();
+    testCantOpenForTheWalIndexKeepsAnExistingStoreReadable();
     testOversizedKeysAndValuesFailAtBindAndRollBack();
     testClearRecreatesACorruptOrUnopenableStore();
     testUtf8ValidationSelectsTheRangeQueryOnlyForWellFormedPrefixes();
