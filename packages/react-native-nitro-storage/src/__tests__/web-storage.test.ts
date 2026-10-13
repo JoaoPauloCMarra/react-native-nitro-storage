@@ -3381,6 +3381,27 @@ describe("web backend switching", () => {
     expect(listener).toHaveBeenCalled();
   });
 
+  it("ignores unprefixed keys in secure backend subscribe events", () => {
+    const backend = createWebBackendMock("secure-foreign-key");
+    setWebSecureStorageBackend(backend);
+    const item = createStorageItem({
+      key: "owned",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+    });
+    item.set("value");
+    const listener = jest.fn();
+    storage.subscribe(StorageScope.Secure, listener);
+
+    backend.emit({ key: "foreign", newValue: "x" });
+
+    expect(storage.has("foreign", StorageScope.Secure)).toBe(false);
+    expect(storage.getAllKeys(StorageScope.Secure)).toEqual(["owned"]);
+    expect(storage.size(StorageScope.Secure)).toBe(1);
+    expect(listener).not.toHaveBeenCalled();
+    setWebSecureStorageBackend(undefined);
+  });
+
   it("applies backend subscribe clear events to secure caches", () => {
     const backend = createWebBackendMock("secure-subscribe");
     setWebSecureStorageBackend(backend);

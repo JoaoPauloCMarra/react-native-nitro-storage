@@ -92,6 +92,12 @@ const BIOMETRIC_PERMISSIONS = [
   "android.permission.USE_FINGERPRINT",
 ];
 
+function resolvePluginOptions(props = {}) {
+  const { addBiometricPermissions = false, configureAndroidBackup = true } =
+    props;
+  return { addBiometricPermissions, configureAndroidBackup };
+}
+
 function applyInfoPlist(infoPlist, props = {}) {
   const { faceIDPermission } = props;
   if (typeof faceIDPermission === "string" && faceIDPermission.trim() !== "") {
@@ -103,8 +109,8 @@ function applyInfoPlist(infoPlist, props = {}) {
 }
 
 function applyAndroidManifest(androidManifest, props = {}) {
-  const { addBiometricPermissions = false, configureAndroidBackup = true } =
-    props;
+  const { addBiometricPermissions, configureAndroidBackup } =
+    resolvePluginOptions(props);
 
   if (configureAndroidBackup) {
     ensureBackupAttributes(androidManifest);
@@ -130,7 +136,7 @@ function applyAndroidManifest(androidManifest, props = {}) {
 }
 
 const withNitroStorage = (config, props = {}) => {
-  const { configureAndroidBackup = true } = props;
+  const { configureAndroidBackup } = resolvePluginOptions(props);
 
   config = withInfoPlist(config, (config) => {
     applyInfoPlist(config.modResults, props);
@@ -164,6 +170,7 @@ module.exports.withNitroStorage = withNitroStorage;
 module.exports._internal = {
   applyInfoPlist,
   applyAndroidManifest,
+  resolvePluginOptions,
   dataExtractionRulesXml,
   fullBackupContentXml,
   ensureBackupAttributes,

@@ -433,6 +433,10 @@ function applyExternalChangeEvent(
     return;
   }
 
+  if (scope === StorageScope.Secure) {
+    return;
+  }
+
   const oldValue = getInternals().readCachedRawValue(scope, key);
   if (newValue === null) {
     ensureWebScopeKeyIndex(scope).delete(key);

@@ -185,4 +185,17 @@ describe("Expo config plugin", () => {
     expect(typeof skipped.mods.android.manifest).toBe("function");
     expect(skipped.mods.android.dangerous).toBeUndefined();
   });
+
+  it("resolves the plugin option defaults in one place", () => {
+    expect(_internal.resolvePluginOptions()).toEqual({
+      addBiometricPermissions: false,
+      configureAndroidBackup: true,
+    });
+    expect(
+      _internal.resolvePluginOptions({
+        addBiometricPermissions: true,
+        configureAndroidBackup: false,
+      }),
+    ).toEqual({ addBiometricPermissions: true, configureAndroidBackup: false });
+  });
 });
