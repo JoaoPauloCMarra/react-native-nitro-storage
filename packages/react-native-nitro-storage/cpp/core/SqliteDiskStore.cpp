@@ -82,14 +82,8 @@ std::string escapeLikePrefix(const std::string& prefix) {
     return escaped;
 }
 
-std::optional<std::string> prefixUpperBound(const std::string& prefix) {
+std::string prefixUpperBound(const std::string& prefix) {
     std::string upper = prefix;
-    while (!upper.empty() && static_cast<unsigned char>(upper.back()) == 0xFF) {
-        upper.pop_back();
-    }
-    if (upper.empty()) {
-        return std::nullopt;
-    }
     upper.back() = static_cast<char>(static_cast<unsigned char>(upper.back()) + 1);
     return upper;
 }
@@ -284,7 +278,6 @@ void SqliteDiskStore::openLocked(bool exclusiveLocking) {
     hasStmt_ = prepareLocked("SELECT 1 FROM kv WHERE key = ?1 LIMIT 1;");
     keysStmt_ = prepareLocked("SELECT key FROM kv;");
     prefixRangeStmt_ = prepareLocked("SELECT key FROM kv WHERE key >= ?1 AND key < ?2;");
-    prefixFromStmt_ = prepareLocked("SELECT key FROM kv WHERE key >= ?1;");
     prefixLikeStmt_ = prepareLocked("SELECT key FROM kv WHERE key LIKE ?1 ESCAPE '\\';");
     sizeStmt_ = prepareLocked("SELECT COUNT(*) FROM kv;");
     clearStmt_ = prepareLocked("DELETE FROM kv;");
@@ -308,7 +301,6 @@ void SqliteDiskStore::closeLocked() {
     finalize(hasStmt_);
     finalize(keysStmt_);
     finalize(prefixRangeStmt_);
-    finalize(prefixFromStmt_);
     finalize(prefixLikeStmt_);
     finalize(sizeStmt_);
     finalize(clearStmt_);
@@ -515,18 +507,18 @@ std::vector<std::string> SqliteDiskStore::getAllKeys() {
 }
 
 std::vector<std::string> SqliteDiskStore::getKeysByPrefix(const std::string& prefix) {
+    if (prefix.empty()) {
+        return getAllKeys();
+    }
     std::lock_guard<std::mutex> lock(mutex_);
     ensureOpenLocked();
     const bool useRange = isValidUtf8(prefix);
-    const auto upperBound = useRange ? prefixUpperBound(prefix) : std::nullopt;
-    sqlite3_stmt* stmt = !useRange
-        ? prefixLikeStmt_
-        : upperBound.has_value() ? prefixRangeStmt_ : prefixFromStmt_;
+    sqlite3_stmt* stmt = useRange ? prefixRangeStmt_ : prefixLikeStmt_;
     sqlite3_reset(stmt);
     sqlite3_clear_bindings(stmt);
     bindText(stmt, 1, useRange ? prefix : escapeLikePrefix(prefix));
-    if (upperBound.has_value()) {
-        bindText(stmt, 2, *upperBound);
+    if (useRange) {
+        bindText(stmt, 2, prefixUpperBound(prefix));
     }
     std::vector<std::string> keys;
     while (true) {

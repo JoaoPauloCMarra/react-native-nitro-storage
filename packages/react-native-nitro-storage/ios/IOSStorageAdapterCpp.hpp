@@ -71,6 +71,7 @@ private:
     std::mutex diskMigrationMutex_;
     std::atomic<bool> diskMigrated_{false};
 
+    std::string currentAccessGroup() const;
     void ensureDiskMigrated();
     void ensureSecureKeyCacheHydrated();
     void markSecureKeySet(const std::string& key);
