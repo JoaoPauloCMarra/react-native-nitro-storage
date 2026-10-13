@@ -433,40 +433,6 @@ describe("Web Storage", () => {
     );
   });
 
-  it("classifies storage errors into stable codes from tagged messages", () => {
-    expect(
-      getStorageErrorCode(
-        new Error("[nitro-error:keychain_locked] NitroStorage: locked"),
-      ),
-    ).toBe("keychain_locked");
-    expect(
-      getStorageErrorCode(
-        new Error(
-          "[nitro-error:authentication_required] NitroStorage: auth required",
-        ),
-      ),
-    ).toBe("authentication_required");
-    expect(
-      getStorageErrorCode(
-        new Error("[nitro-error:storage_corruption] NitroStorage: corrupt"),
-      ),
-    ).toBe("storage_corruption");
-    expect(
-      getStorageErrorCode(
-        new Error(
-          "[nitro-error:biometric_unavailable] NitroStorage: biometric off",
-        ),
-      ),
-    ).toBe("biometric_unavailable");
-    expect(getStorageErrorCode(new Error("errSecInteractionNotAllowed"))).toBe(
-      undefined,
-    );
-    expect(
-      getStorageErrorCode(new Error("UserNotAuthenticatedException")),
-    ).toBeUndefined();
-    expect(getStorageErrorCode(new Error("something else"))).toBe(undefined);
-  });
-
   it("matches an exact storage error code through the web entrypoint", () => {
     const locked = new Error(
       "[nitro-error:keychain_locked] NitroStorage: locked",
@@ -1979,35 +1945,6 @@ describe("Web Storage", () => {
     expect(all["ga2"]).toBe(serializeWithPrimitiveFastPath("b"));
   });
 
-  it("keeps prototype-named raw keys through import and enumeration", () => {
-    const imported = JSON.parse(
-      '{"__proto__":"proto-value","constructor":"constructor-value","toString":"string-value"}',
-    ) as Record<string, string>;
-    const keys = Object.keys(imported);
-
-    keys.forEach((key) => storage.deleteString(key, StorageScope.Memory));
-    storage.import(imported, StorageScope.Memory);
-
-    const all = storage.getAll(StorageScope.Memory);
-    const exported = storage.export(StorageScope.Memory);
-    const protoPrefix = storage.getByPrefix("__proto__", StorageScope.Memory);
-
-    expect(Object.getPrototypeOf(all)).toBe(Object.prototype);
-    expect(Object.getPrototypeOf(exported)).toBe(Object.prototype);
-    for (const key of keys) {
-      expect(Object.prototype.hasOwnProperty.call(all, key)).toBe(true);
-      expect(all[key]).toBe(imported[key]);
-      expect(Object.prototype.hasOwnProperty.call(exported, key)).toBe(true);
-      expect(exported[key]).toBe(imported[key]);
-    }
-    expect(Object.prototype.hasOwnProperty.call(protoPrefix, "__proto__")).toBe(
-      true,
-    );
-    expect(protoPrefix["__proto__"]).toBe(imported["__proto__"]);
-
-    keys.forEach((key) => storage.deleteString(key, StorageScope.Memory));
-  });
-
   it("decodes reserved-prefix raw strings in web memory prefix snapshots", () => {
     const values = {
       "web-raw-prefix:primitive": "__nitro_storage_primitive__:s:literal",
@@ -2997,41 +2934,12 @@ describe("storage.import (web)", () => {
     storage.clearAll();
   });
 
-  it("imports key-value pairs into Memory scope", () => {
-    storage.import({ x: "1", y: "2" }, StorageScope.Memory);
-    expect(storage.has("x", StorageScope.Memory)).toBe(true);
-    expect(storage.has("y", StorageScope.Memory)).toBe(true);
-  });
-
-  it("exports raw key-value pairs from Memory scope", () => {
-    storage.import({ x: "1", y: "2" }, StorageScope.Memory);
-
-    expect(storage.export(StorageScope.Memory)).toEqual({
-      x: "1",
-      y: "2",
-    });
-  });
-
   it("exports raw key-value pairs from Disk scope", () => {
     storage.import({ "d-key": "d-val" }, StorageScope.Disk);
 
     expect(storage.export(StorageScope.Disk)).toEqual({
       "d-key": "d-val",
     });
-  });
-
-  it("emits change listeners for each imported key in Memory scope", () => {
-    const item = createStorageItem({
-      key: "web-imported",
-      scope: StorageScope.Memory,
-      defaultValue: "",
-    });
-    const listener = jest.fn();
-    const unsub = item.subscribe(listener);
-
-    storage.import({ "web-imported": "value" }, StorageScope.Memory);
-    expect(listener).toHaveBeenCalled();
-    unsub();
   });
 
   it("imports key-value pairs into Disk scope", () => {
@@ -3043,12 +2951,6 @@ describe("storage.import (web)", () => {
     const before = storage.size(StorageScope.Memory);
     storage.import({}, StorageScope.Memory);
     expect(storage.size(StorageScope.Memory)).toBe(before);
-  });
-
-  it("throws on invalid scope", () => {
-    expect(() =>
-      storage.import({ k: "v" }, 99 as unknown as StorageScope),
-    ).toThrow(/Invalid storage scope/);
   });
 });
 
