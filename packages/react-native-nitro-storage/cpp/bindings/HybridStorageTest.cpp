@@ -99,6 +99,9 @@ public:
     }
 
     std::vector<std::string> getAllKeysSecure() override {
+        if (failSecureListing_) {
+            throw std::runtime_error("[nitro-error:keychain_locked] NitroStorage: listing locked");
+        }
         std::vector<std::string> keys;
         keys.reserve(secure_.size() + biometric_.size());
         for (const auto& [key, _] : secure_) {
@@ -228,6 +231,7 @@ public:
     int secureWritesAsyncCalls() const { return secureWritesAsyncCalls_; }
     const std::string& keychainGroup() const { return keychainGroup_; }
     int biometricLevel() const { return biometricLevel_; }
+    void setFailSecureListing(bool fail) { failSecureListing_ = fail; }
     void failSecureBatchAt(size_t index) { failSecureBatchAt_ = index; }
 
 private:
@@ -249,6 +253,7 @@ private:
     int secureWritesAsyncCalls_ = 0;
     std::string keychainGroup_;
     int biometricLevel_ = -1;
+    bool failSecureListing_ = false;
     bool protectedDataAvailable_ = true;
     size_t nextProtectedListenerId_ = 0;
     std::map<size_t, std::function<void()>> protectedListeners_;
@@ -724,6 +729,25 @@ void testBiometricMethods() {
     unsubscribe();
 }
 
+void testClearBiometricFallsBackToScopeSignalWhenListingFails() {
+    auto adapter = std::make_shared<MockAdapter>();
+    auto storage = std::make_shared<HybridStorage>(adapter);
+    std::vector<std::string> keys;
+    auto unsubscribe = storage->addOnChange(2.0, [&](const std::string& key, const std::optional<std::string>&) {
+        keys.push_back(key);
+    });
+    storage->setSecureBiometricWithLevel("bio-locked", "value", 0.0);
+    keys.clear();
+    adapter->setFailSecureListing(true);
+
+    storage->clearSecureBiometric();
+
+    assert(!adapter->hasSecureBiometric("bio-locked"));
+    assert(keys.size() == 1);
+    assert(keys[0].empty());
+    unsubscribe();
+}
+
 void testClearNotifiesScope() {
     auto adapter = std::make_shared<MockAdapter>();
     auto storage = std::make_shared<HybridStorage>(adapter);
@@ -1056,6 +1080,7 @@ int main() {
     testGetKeysByPrefix();
     testBiometricLevelPassThrough();
     testBiometricMethods();
+    testClearBiometricFallsBackToScopeSignalWhenListingFails();
     testClearNotifiesScope();
     testInvalidInputsAndMissingAdapter();
     testNativeTaggedErrorsPassThrough();
