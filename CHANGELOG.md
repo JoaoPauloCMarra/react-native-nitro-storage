@@ -18,6 +18,7 @@ None.
 - Items with `readCache` no longer return a value the backend rejected. A synchronous Disk or Secure write or delete that throws (`storage_full`, `keychain_locked`, `storage_corruption`) now leaves `get()`, `has()` and `getString()` on the stored value instead of the value that failed to save. The same ordering is fixed for `storage.setString` and `storage.remove`.
 - Secure items without `readCache` no longer keep their plaintext in the JavaScript raw cache: `getBatch`, `setBatch`, `item.set` and `item.delete` fill the cache only for items that enable `readCache` (or `fallbackToCacheOnReadError` for single-item reads and writes). `getCacheMetrics()` therefore stops counting entries for those items.
 - `storage.clearGroup(group)` now emits the `"clearGroup"` change operation (Memory and backend scopes) instead of `"removeBatch"`, so listeners can tell a group wipe from a batch remove. The `removeBatch` export still emits `"removeBatch"`. Listeners that matched `"removeBatch"` to catch group clears must also match `"clearGroup"`.
+- `storage.import` and `storage.setString` on a Memory key that belongs to a TTL item no longer leave the previous expiry in place, so the written value is not expired (with an `onExpired` call and an `expire` event) at the old deadline. Disk and Secure already behaved this way.
 
 ## [0.15.0] - 2026-10-07
 

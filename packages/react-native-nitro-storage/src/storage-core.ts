@@ -584,6 +584,11 @@ export function createStorageCore(
     memoryExpirationDeadlines.delete(key);
   }
 
+  function setMemoryRaw(key: string, storedValue: unknown): void {
+    memoryStore.set(key, storedValue);
+    memoryExpirationDeadlines.delete(key);
+  }
+
   function eventForGlobalObserver(
     event: StorageChangeEvent,
   ): StorageChangeEvent {
@@ -805,7 +810,7 @@ export function createStorageCore(
     const oldValue =
       scope === StorageScope.Memory ? getEventRawValue(scope, key) : undefined;
     if (scope === StorageScope.Memory) {
-      memoryStore.set(key, storedValue);
+      setMemoryRaw(key, storedValue);
       notifyKeyListeners(memoryListeners, key);
       emitKeyChange(scope, key, oldValue, value, "set", "memory");
       return;
@@ -1281,8 +1286,7 @@ export function createStorageCore(
           }
 
           affectedKeys.forEach((key) => {
-            memoryStore.delete(key);
-            memoryExpirationDeadlines.delete(key);
+            deleteMemoryKey(key);
           });
           affectedKeys.forEach((key) => {
             notifyKeyListeners(memoryListeners, key);
@@ -1663,7 +1667,7 @@ export function createStorageCore(
 
           if (scope === StorageScope.Memory) {
             keys.forEach((key, index) => {
-              memoryStore.set(key, storedValues[index]);
+              setMemoryRaw(key, storedValues[index]);
             });
             keys.forEach((key) => {
               notifyKeyListeners(memoryListeners, key);
@@ -1810,8 +1814,7 @@ export function createStorageCore(
           const expiresAt = memoryExpiration.get(storageKey);
           if (expiresAt !== undefined && expiresAt <= Date.now()) {
             const expiredRaw = memoryStore.get(storageKey);
-            memoryExpiration.delete(storageKey);
-            memoryStore.delete(storageKey);
+            deleteMemoryKey(storageKey);
             notifyKeyListeners(memoryListeners, storageKey);
             emitKeyChange(
               config.scope,
@@ -2808,11 +2811,7 @@ export function createStorageCore(
 
           if (isMemory) {
             const oldValue = getEventRawValue(config.scope, storageKey);
-            if (memoryExpiration) {
-              memoryExpiration.delete(storageKey);
-            }
-            memoryExpirationDeadlines.delete(storageKey);
-            memoryStore.delete(storageKey);
+            deleteMemoryKey(storageKey);
             notifyKeyListeners(memoryListeners, storageKey);
             emitKeyChange(
               config.scope,
@@ -2933,8 +2932,7 @@ export function createStorageCore(
         invalidateParsedCache();
       },
       _deleteMemoryEntry: () => {
-        memoryExpirationDeadlines.delete(storageKey);
-        memoryStore.delete(storageKey);
+        deleteMemoryKey(storageKey);
         invalidateParsedCache();
       },
       _hasValidation: validate !== undefined,
