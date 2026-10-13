@@ -357,51 +357,35 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         return File(context.applicationInfo.dataDir, "shared_prefs/$name.xml").exists()
     }
 
-    private fun existingBiometricPreferences(): List<SharedPreferences> {
-        val stores = mutableListOf<SharedPreferences>()
+    private fun existingBiometricPreferenceSequence(): Sequence<SharedPreferences> = sequence {
         if (
             biometricOrPasscodeInitialized ||
             preferencesFileExists("NitroStorageBiometricOrPasscode")
         ) {
-            stores.add(biometricOrPasscodePreferences)
+            yield(biometricOrPasscodePreferences)
         }
         if (
             legacyBiometricInitialized ||
             preferencesFileExists("NitroStorageBiometric")
         ) {
-            stores.add(legacyBiometricPreferences)
+            yield(legacyBiometricPreferences)
         }
         if (
             biometricOnlyInitialized ||
             preferencesFileExists("NitroStorageBiometricOnly")
         ) {
-            stores.add(biometricOnlyPreferences)
+            yield(biometricOnlyPreferences)
         }
-        return stores
+    }
+
+    private fun existingBiometricPreferences(): List<SharedPreferences> {
+        return existingBiometricPreferenceSequence().toList()
     }
 
     private fun <T : Any> firstInExistingBiometricPreferences(
         lookup: (SharedPreferences) -> T?,
     ): T? {
-        if (
-            biometricOrPasscodeInitialized ||
-            preferencesFileExists("NitroStorageBiometricOrPasscode")
-        ) {
-            lookup(biometricOrPasscodePreferences)?.let { return it }
-        }
-        if (
-            legacyBiometricInitialized ||
-            preferencesFileExists("NitroStorageBiometric")
-        ) {
-            lookup(legacyBiometricPreferences)?.let { return it }
-        }
-        if (
-            biometricOnlyInitialized ||
-            preferencesFileExists("NitroStorageBiometricOnly")
-        ) {
-            lookup(biometricOnlyPreferences)?.let { return it }
-        }
-        return null
+        return existingBiometricPreferenceSequence().firstNotNullOfOrNull(lookup)
     }
 
     private fun biometricPreferencesContain(key: String): Boolean {
@@ -724,27 +708,35 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
 
         // --- Secure (async apply by default, sync commit when requested) ---
 
+        private inline fun withSecureMutation(inst: AndroidStorageAdapter, block: () -> Unit) {
+            synchronized(inst) {
+                try {
+                    block()
+                } finally {
+                    inst.invalidateSecureKeysCache()
+                }
+            }
+        }
+
         @JvmStatic
         fun setSecure(key: String, value: String) {
             val inst = getInstanceOrThrow()
-            synchronized(inst) {
+            withSecureMutation(inst) {
                 val editor = inst.encryptedPreferences.edit().putString(key, value)
                 inst.applySecureEditor(editor)
-                inst.invalidateSecureKeysCache()
             }
         }
 
         @JvmStatic
         fun setSecureBatch(keys: Array<String>, values: Array<String>) {
             val inst = getInstanceOrThrow()
-            synchronized(inst) {
+            withSecureMutation(inst) {
                 val editor = inst.encryptedPreferences.edit()
                 val count = minOf(keys.size, values.size)
                 for (index in 0 until count) {
                     editor.putString(keys[index], values[index])
                 }
                 inst.applySecureEditor(editor)
-                inst.invalidateSecureKeysCache()
             }
         }
 
@@ -777,18 +769,17 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         @JvmStatic
         fun deleteSecure(key: String) {
             val inst = getInstanceOrThrow()
-            synchronized(inst) {
+            withSecureMutation(inst) {
                 val biometricPreferences = inst.existingBiometricPreferences()
                 inst.applySecureEditor(inst.encryptedPreferences.edit().remove(key))
                 inst.removeBiometricKey(key, biometricPreferences)
-                inst.invalidateSecureKeysCache()
             }
         }
 
         @JvmStatic
         fun deleteSecureBatch(keys: Array<String>) {
             val inst = getInstanceOrThrow()
-            synchronized(inst) {
+            withSecureMutation(inst) {
                 val biometricPreferences = inst.existingBiometricPreferences()
                 val editor = inst.encryptedPreferences.edit()
                 for (key in keys) {
@@ -802,7 +793,6 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
                     }
                     inst.applySecureEditor(biometricEditor)
                 }
-                inst.invalidateSecureKeysCache()
             }
         }
 
@@ -834,11 +824,10 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         @JvmStatic
         fun clearSecure() {
             val inst = getInstanceOrThrow()
-            synchronized(inst) {
+            withSecureMutation(inst) {
                 val biometricPreferences = inst.existingBiometricPreferences()
                 inst.applySecureEditor(inst.encryptedPreferences.edit().clear())
                 inst.clearBiometricStores(biometricPreferences)
-                inst.invalidateSecureKeysCache()
             }
         }
 

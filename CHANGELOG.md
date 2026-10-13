@@ -25,6 +25,7 @@ None.
 - Android no longer deletes a Secure value that fails authentication and reports it as missing. Reading it now throws `[nitro-error:storage_corruption]`, as iOS does, and the entry stays in the store so `delete()` or `set()` can replace it. Migration: code that relied on Android returning the default for an undecryptable value must now catch `storage_corruption` (use `getStorageErrorCode`) and call `delete()` or `set()` to recover, as on iOS.
 - `storage.clearBiometric()` on iOS and Android now notifies only the biometric keys it removed. It no longer sends the whole-scope clear signal, so pending coalesced Secure writes are not dropped and unrelated Secure subscribers do not re-run. If the native key listing fails, it falls back to the whole-scope signal.
 - Web: a live event from a custom Secure backend with a key that has no `__secure_` or `__bio_` prefix no longer adds a phantom key to `has`, `size` and `getAllKeys` for the Secure scope.
+- Android: if deleting or clearing Secure values fails part way (for example in a biometric store), the Secure key list is refreshed instead of staying stale until the next successful Secure write.
 
 ### Documentation
 
