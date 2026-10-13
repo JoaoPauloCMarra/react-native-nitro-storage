@@ -6,30 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes are always listed first in each release section.
 
-## [0.15.1] - 2026-10-12
+## [0.16.0] - 2026-10-13
 
 ### Breaking changes
 
-None.
+- **Android reports an undecryptable Secure value as `storage_corruption`.** Android used to delete a Secure or biometric value that failed authentication and return `null` (or the item default). `get`, `getBatch`, `getString` and biometric reads now throw `[nitro-error:storage_corruption]`, as iOS does, and the entry stays in the store. A later `set()` (including a biometric `set()`) or `delete()` replaces or removes it. Migration: catch `storage_corruption` on Secure reads (`getStorageErrorCode(error) === "storage_corruption"`) and call `delete()` or `set()` to recover.
+- **`storage.clearGroup(group)` emits `"clearGroup"`.** It used to emit `"removeBatch"`, so listeners could not tell a group wipe from a batch remove. The `removeBatch` export still emits `"removeBatch"`. Migration: listeners and observers that matched `"removeBatch"` to catch group clears must also match `"clearGroup"`; an exhaustive `switch` on `StorageChangeOperation` needs no new case.
+- **Secure plaintext is cached only for items that opt in.** `getBatch`, `setBatch`, `item.set` and `item.delete` fill the JavaScript raw cache for a Secure item only when it sets `readCache` or `fallbackToCacheOnReadError`. `storage.setString`, `storage.deleteString` and `storage.import` on the Secure scope drop the key's cache entry instead of caching the value, and `getCacheMetrics()` no longer counts entries for items that did not opt in. Migration: set `readCache: true` on a Secure item whose value must be served from the JavaScript cache, and stop relying on `getCacheMetrics()` entry counts for Secure items without it.
 
 ### Fixed
 
 - iOS Disk storage opens and reads on a full device. A cold launch could not create the SQLite WAL index file (`-shm`) when the volume had no space, so `PRAGMA journal_mode=WAL` failed with `[nitro-error:storage_full] NitroStorage: Disk SQLite exec failed: disk I/O error` and every Disk read on that launch failed with it, not only writes. When the normal open fails with `storage_full`, the store now reopens with `PRAGMA locking_mode=EXCLUSIVE`, which keeps the WAL index in memory and needs no new file, so existing rows read from the first call. Writes and deletes keep failing with `storage_full` until space frees. The exclusive lock lasts for that connection; the next launch tries the normal open first. Other IO errors during open still fail as before. Android already retried its open without WAL since 0.13.0.
 - Items with `readCache` no longer return a value the backend rejected. A synchronous Disk or Secure write or delete that throws (`storage_full`, `keychain_locked`, `storage_corruption`) now leaves `get()`, `has()` and `getString()` on the stored value instead of the value that failed to save. The same ordering is fixed for `storage.setString` and `storage.remove`.
-- Secure items without `readCache` no longer keep their plaintext in the JavaScript raw cache: `getBatch`, `setBatch`, `item.set` and `item.delete` fill the cache only for items that enable `readCache` or `fallbackToCacheOnReadError`, and `storage.setString`, `storage.deleteString` and `storage.import` on the Secure scope drop the key's cache entry instead of caching the value. `getCacheMetrics()` therefore stops counting entries for those items. Migration: set `readCache: true` on a Secure item whose value must be served from the JavaScript cache; other Secure reads go to the native store each time.
-- `storage.clearGroup(group)` now emits the `"clearGroup"` change operation (Memory and backend scopes) instead of `"removeBatch"`, so listeners can tell a group wipe from a batch remove. The `removeBatch` export still emits `"removeBatch"`. Listeners that matched `"removeBatch"` to catch group clears must also match `"clearGroup"`.
 - `setBatch` on a Memory key no longer keeps the deadline left by a TTL item that used the same key, matching `item.set`.
 - `storage.import` and `storage.setString` on a Memory key that belongs to a TTL item no longer leave the previous expiry in place, so the written value is not expired (with an `onExpired` call and an `expire` event) at the old deadline. Disk and Secure already behaved this way.
 - `migrateSecureAccessControl` no longer makes iOS subscribers see one spurious `external` change event per migrated key. The native echo of each rewrite is now suppressed like the echo of every other self-originated write. The 0.15.0 entry wrongly said each rewrite emits a change event; it never did.
 - The `react-native-nitro-storage/testing` mock now treats biometric items like the native platforms: `getAllKeys`, `getKeysByPrefix`, `size`, `has`, `getAllSecureMetadata` and `migrateSecureAccessControl` include them, `clear(Secure)` removes them, and `clearBiometric` notifies each biometric key.
-- Android no longer deletes a Secure value that fails authentication and reports it as missing. Reading it now throws `[nitro-error:storage_corruption]`, as iOS does, and the entry stays in the store so `delete()` or `set()` can replace it. Migration: code that relied on Android returning the default for an undecryptable value must now catch `storage_corruption` (use `getStorageErrorCode`) and call `delete()` or `set()` to recover, as on iOS.
 - `storage.clearBiometric()` on iOS and Android now notifies only the biometric keys it removed. It no longer sends the whole-scope clear signal, so pending coalesced Secure writes are not dropped and unrelated Secure subscribers do not re-run. If the native key listing fails, it falls back to the whole-scope signal.
 - Web: a live event from a custom Secure backend with a key that has no `__secure_` or `__bio_` prefix no longer adds a phantom key to `has`, `size` and `getAllKeys` for the Secure scope.
 - Android: if deleting or clearing Secure values fails part way (for example in a biometric store), the Secure key list is refreshed instead of staying stale until the next successful Secure write.
 
 ### Documentation
 
-- The Secure storage guide now covers `migrateSecureAccessControl` and the `onProtectedDataAvailable` recovery path for `keychain_locked`, and the native storage notes describe the 0.15.1 full-device behavior on iOS and the shared C++ store.
+- The Secure storage guide now covers `migrateSecureAccessControl` and the `onProtectedDataAvailable` recovery path for `keychain_locked`, and the native storage notes describe the 0.16.0 full-device behavior on iOS and the shared C++ store.
 
 ## [0.15.0] - 2026-10-07
 

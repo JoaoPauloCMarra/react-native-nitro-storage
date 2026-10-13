@@ -6,8 +6,8 @@ Security fixes are shipped for the latest published `0.x` release line.
 
 | Version  | Supported |
 | -------- | --------- |
-| `0.15.x` | Yes       |
-| `< 0.15` | No        |
+| `0.16.x` | Yes       |
+| `< 0.16` | No        |
 
 ## Reporting a Vulnerability
 
