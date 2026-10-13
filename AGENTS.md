@@ -18,7 +18,7 @@ React Native Nitro Storage — synchronous storage for React Native via JSI.
 - For user-facing behavior changes, update `README.md` and `CHANGELOG.md`.
 - Keep README feature docs exhaustive: each public feature should have at least one concrete TypeScript use-case snippet.
 - In `CHANGELOG.md`, do not keep an `Unreleased` section; always place changes under the current version header at the top.
-- PR body is the current version's CHANGELOG section. The GitHub release description must match it. Do not add Summary, Test plan, or extra sections.
+- PR and GitHub release descriptions follow the workspace `AGENTS.md` section "PR And Release Descriptions": the same short text for both, with the full detail kept in `CHANGELOG.md`.
 - For `apps/example`, prefer extending shared UI primitives/tokens in `apps/example/components/shared.tsx` instead of adding repeated inline styling per screen.
 - `apps/example/ios` and `apps/example/android` are generated (gitignored); CI must run `CI=1 bunx expo prebuild --platform <ios|android>` before Pod/Gradle steps.
 - Do not re-add the removed `./plugins/with-fmt-ios-compat` plugin unless a current SDK 56+ iOS build proves the `fmt` pod patch is required again.
