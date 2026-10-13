@@ -6,6 +6,7 @@ import {
   createStorageItem,
   getStorageErrorCode,
   isStorageError,
+  storage,
 } from "react-native-nitro-storage";
 import { Button, Card, Colors, StatusRow, styles } from "./shared";
 
@@ -36,11 +37,23 @@ export function KeychainLifecycleProbe() {
   const [status, setStatus] = useState("idle");
   const [backgroundResult, setBackgroundResult] = useState("not run");
   const [foregroundResult, setForegroundResult] = useState("not run");
+  const [protectedData, setProtectedData] = useState(() =>
+    storage.isProtectedDataAvailable(),
+  );
+  const [protectedDataCalls, setProtectedDataCalls] = useState(0);
+
+  useEffect(() => {
+    return storage.onProtectedDataAvailable(() => {
+      setProtectedData(storage.isProtectedDataAvailable());
+      setProtectedDataCalls((count) => count + 1);
+    });
+  }, []);
 
   useEffect(() => {
     const subscription = AppState.addEventListener(
       "change",
       (nextState: AppStateStatus) => {
+        setProtectedData(storage.isProtectedDataAvailable());
         if (!armed.current) return;
 
         if (nextState === "inactive" || nextState === "background") {
@@ -124,6 +137,16 @@ export function KeychainLifecycleProbe() {
         testID="keychain-probe-foreground"
         label="Resume transition"
         value={foregroundResult}
+      />
+      <StatusRow
+        testID="keychain-probe-protected-data"
+        label="Protected data"
+        value={`protected-data=${String(protectedData)}`}
+      />
+      <StatusRow
+        testID="keychain-probe-protected-calls"
+        label="Availability listener calls"
+        value={`listener-calls=${String(protectedDataCalls)}`}
       />
     </Card>
   );

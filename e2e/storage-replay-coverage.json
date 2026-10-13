@@ -534,6 +534,20 @@
       "assertion": "value=\"pending:biometric,lock,corruption,hardware-backed-keychain\""
     },
     {
+      "id": "keychain.protected-data-status",
+      "coverage": "replay-asserted",
+      "kind": "public-api",
+      "transport": "The Keychain lab renders storage.isProtectedDataAvailable() on a status row, and the same probe counts onProtectedDataAvailable listener calls on a second row.",
+      "claimLimit": "The default replay never locks the device: it proves the status row and listener wiring on an unlocked install, not a real data protection transition.",
+      "suite": "e2e/qa-keychain.ad",
+      "source": "apps/example/components/keychain-lifecycle-probe.tsx",
+      "statusSource": "apps/example/components/keychain-lifecycle-probe.tsx",
+      "trigger": "screen-load",
+      "statusId": "keychain-probe-protected-data",
+      "expectedText": "protected-data=true",
+      "assertion": "value={`protected-data=${String(protectedData)}`}"
+    },
+    {
       "id": "keychain.required-summary",
       "coverage": "replay-asserted",
       "kind": "coverage-state",
@@ -825,6 +839,19 @@
       "assertion": "`ok:op=set:source=${setEvent.source}`"
     },
     {
+      "id": "e2e.access-control-migration",
+      "coverage": "replay-asserted",
+      "kind": "public-api",
+      "transport": "A reserved Secure key is written, migrateSecureAccessControl(AfterFirstUnlock, { keys }) runs on it, and the screen renders handled when the key is listed once as migrated (iOS) or skipped (Android), nothing is locked or failed, and the exact value still reads back; the default access control is restored afterwards.",
+      "suite": "e2e/qa-api-extended.ad",
+      "source": "apps/example/app/e2e-api-extended.tsx",
+      "statusSource": "apps/example/app/e2e-api-extended.tsx",
+      "trigger": "screen-load",
+      "statusId": "e2e-ext-results",
+      "expectedText": "ok:migrate=handled:value=intact;",
+      "assertion": "\"ok:migrate=handled:value=intact\""
+    },
+    {
       "id": "e2e.hooks",
       "coverage": "replay-asserted",
       "kind": "public-api",
@@ -984,7 +1011,7 @@
     {
       "id": "secure.access-control-migration-on-device",
       "state": "pending-prerequisites",
-      "reason": "The default replay does not seed WhenUnlocked Keychain items under an older class, lock the device, or inspect kSecAttrAccessible. Jest and the iOS fake-Keychain tests prove the rewrite contract, not a real Keychain class change.",
+      "reason": "The default replay asserts the migrateSecureAccessControl result contract on a QA key but does not seed WhenUnlocked Keychain items under an older class, lock the device, or inspect kSecAttrAccessible. Jest and the iOS fake-Keychain tests prove the rewrite contract, not a real Keychain class change.",
       "prerequisites": [
         "A disposable iOS device or simulator app install with RUN_ID-scoped Secure QA keys written under the default WhenUnlocked class",
         "A way to read the stored kSecAttrAccessible of those QA keys, and a user-approved lock/unlock interaction"
@@ -994,10 +1021,9 @@
     {
       "id": "secure.protected-data-availability",
       "state": "pending-prerequisites",
-      "reason": "The default replay never locks the device, so isProtectedDataAvailable and onProtectedDataAvailable are asserted only against injected providers and notification posts, not against a real iOS data protection transition.",
+      "reason": "The default replay never locks the device. The example now renders isProtectedDataAvailable and counts onProtectedDataAvailable calls on status rows, but only an unlocked install is asserted, not a real iOS data protection transition.",
       "prerequisites": [
-        "A dedicated iOS QA device with a passcode and a user-approved lock/unlock interaction",
-        "An installed release app that reports protected-data availability and listener calls on a deterministic status row"
+        "A dedicated iOS QA device with a passcode and a user-approved lock/unlock interaction"
       ],
       "acceptance": "Lock the device and assert isProtectedDataAvailable reports false, unlock it (including inside the grace window before protected data drops, then foreground the app) and assert the listener fires once and the value reports true; on a cold background launch while locked, assert the value is false before and after the first main-thread read; record Android and web as always true with a listener that never fires."
     }

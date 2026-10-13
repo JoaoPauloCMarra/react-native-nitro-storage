@@ -6,6 +6,7 @@ import {
   createSetItem,
   createStorageItem,
   getStorageErrorCode,
+  migrateSecureAccessControl,
   storage,
   StorageScope,
   useSetStorage,
@@ -98,6 +99,7 @@ const authStorage = createSecureAuthStorage(
 const inventoryPrefix = "__e2e_inv_";
 const accessControlKey = "__e2e_ext_access_control";
 const passcodeKey = "__e2e_ext_passcode_acl";
+const migrateKey = "__e2e_ext_migrate";
 const diskEventKey = "__e2e_ext_disk_event";
 const metricsDiskKey = "__e2e_ext_metrics_disk";
 const metricsSecureKey = "__e2e_ext_metrics_secure";
@@ -409,6 +411,37 @@ function checkPasscodeAcl(): string {
   }
 }
 
+function checkAccessControlMigration(): string {
+  try {
+    storage.setString(migrateKey, "migrate-ok", StorageScope.Secure);
+    storage.flushSecureWrites();
+    const result = migrateSecureAccessControl(AccessControl.AfterFirstUnlock, {
+      keys: [migrateKey],
+    });
+    const value = storage.getString(migrateKey, StorageScope.Secure);
+    const handled =
+      result.migrated.length + result.skipped.length === 1 &&
+      result.locked.length === 0 &&
+      result.failed.length === 0 &&
+      !result.enumerationLocked;
+    return handled && value === "migrate-ok"
+      ? "ok:migrate=handled:value=intact"
+      : `fail:migrate:migrated=${result.migrated.length}:skipped=${result.skipped.length}:locked=${result.locked.length}:failed=${result.failed.length}:value=${String(value)}`;
+  } catch (error) {
+    return `migrate=${getStorageErrorCode(error) ?? `error:${error instanceof Error ? error.message : String(error)}`}`;
+  } finally {
+    safely(() => {
+      storage.deleteString(migrateKey, StorageScope.Secure);
+    });
+    safely(() => {
+      storage.flushSecureWrites();
+    });
+    safely(() => {
+      storage.setAccessControl(AccessControl.WhenUnlocked);
+    });
+  }
+}
+
 async function runExtendedSweep(): Promise<ExtCase[]> {
   const cases: ExtCase[] = [
     runSync("item-merge-setordelete", checkMergeAndSetOrDelete),
@@ -433,6 +466,7 @@ async function runExtendedSweep(): Promise<ExtCase[]> {
   }
   cases.push(await runAsync("auth-storage-ttl", checkAuthStorageTtl));
   cases.push(runSync("passcode-acl-probe", checkPasscodeAcl));
+  cases.push(runSync("access-control-migration", checkAccessControlMigration));
   return cases;
 }
 
