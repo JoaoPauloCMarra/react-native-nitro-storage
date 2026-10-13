@@ -802,6 +802,10 @@ export function createStorageCore(
       invalidateRawCache(scope, key);
       throw error;
     }
+    if (scope === StorageScope.Secure) {
+      invalidateRawCache(scope, key);
+      return;
+    }
     cacheRawValue(scope, key, storedValue);
   }
 
@@ -1691,7 +1695,11 @@ export function createStorageCore(
 
           adapter.backend.setBatch(keys, storedValues, scope);
           keys.forEach((key, index) => {
-            cacheRawValue(scope, key, storedValues[index]);
+            if (scope === StorageScope.Secure) {
+              invalidateRawCache(scope, key);
+            } else {
+              cacheRawValue(scope, key, storedValues[index]);
+            }
           });
           emitBatchChange(scope, "import", adapter.changeSource, changes);
         },

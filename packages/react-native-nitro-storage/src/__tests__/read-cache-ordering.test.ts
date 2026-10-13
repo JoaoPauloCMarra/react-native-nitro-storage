@@ -209,3 +209,32 @@ describe("fallbackToCacheOnReadError with batch writes and reads", () => {
     expect(getBatch([item], StorageScope.Secure)).toEqual(["v2"]);
   });
 });
+
+describe("Secure raw writes do not keep plaintext in the cache", () => {
+  it("leaves the cache empty after setString, import and deleteString", () => {
+    const { storage } = createTestCore();
+
+    storage.setString("raw", "a", StorageScope.Secure);
+    storage.import({ imported: "b" }, StorageScope.Secure);
+    storage.deleteString("raw", StorageScope.Secure);
+
+    expect(storage.getCacheMetrics().cacheEntries).toBe(0);
+  });
+
+  it("invalidates a readCache item's entry so the next read hits the backend", () => {
+    const backend = createTestBackend();
+    const { createStorageItem, storage } = createTestCore(backend);
+    const item = createStorageItem({
+      key: "owned",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      readCache: true,
+    });
+    item.set("first");
+    expect(item.get()).toBe("first");
+
+    storage.setString("owned", "second", StorageScope.Secure);
+
+    expect(item.get()).toBe("second");
+  });
+});
