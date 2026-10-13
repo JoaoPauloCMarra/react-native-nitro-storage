@@ -712,9 +712,14 @@ void testBiometricMethods() {
 
     storage->setSecureBiometricWithLevel("bio-clear", "clear-value", 0.0);
     assert(storage->has("bio-clear", 2.0));
+    storage->set("plain-secure", "plain-value", 2.0);
+    events.clear();
     storage->clearSecureBiometric();
     assert(!storage->has("bio-clear", 2.0));
-    assert(!events.empty());
+    assert(events.size() == 1);
+    assert(events[0].first == "bio-clear");
+    assert(!events[0].second.has_value());
+    assert(storage->has("plain-secure", 2.0));
 
     unsubscribe();
 }

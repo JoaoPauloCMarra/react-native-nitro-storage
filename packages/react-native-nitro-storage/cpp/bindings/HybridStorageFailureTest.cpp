@@ -154,6 +154,7 @@ private:
 struct Operation {
     std::string adapterMethod;
     std::function<void(HybridStorage&)> run;
+    int nativeCalls = 1;
 };
 
 std::vector<Operation> adapterOperations() {
@@ -191,7 +192,7 @@ std::vector<Operation> adapterOperations() {
         {"getSecureBiometric", [](HybridStorage& s) { (void)s.getSecureBiometric("k"); }},
         {"deleteSecureBiometric", [](HybridStorage& s) { s.deleteSecureBiometric("k"); }},
         {"hasSecureBiometric", [](HybridStorage& s) { (void)s.hasSecureBiometric("k"); }},
-        {"clearSecureBiometric", [](HybridStorage& s) { s.clearSecureBiometric(); }},
+        {"clearSecureBiometric", [](HybridStorage& s) { s.clearSecureBiometric(); }, 2},
     };
 }
 
@@ -234,7 +235,10 @@ void testEveryAdapterFailureKeepsItsTagAndNotifiesNobody() {
             operation.adapterMethod + " must keep the native message, got: " + outcome.message
         );
         require(notifications == 0, operation.adapterMethod + " failure must not notify listeners");
-        require(adapter->calls == 1, operation.adapterMethod + " must stop at the first native failure");
+        require(
+            adapter->calls == operation.nativeCalls,
+            operation.adapterMethod + " must stop at the first native failure"
+        );
         unsubscribeDisk();
         unsubscribeSecure();
     }

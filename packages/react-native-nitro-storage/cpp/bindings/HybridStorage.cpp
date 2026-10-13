@@ -530,9 +530,26 @@ bool HybridStorage::hasSecureBiometric(const std::string& key) {
 
 void HybridStorage::clearSecureBiometric() {
     ensureAdapter();
+    std::vector<std::string> biometricKeys;
+    bool biometricKeysKnown = true;
+    try {
+        for (const auto& key : nativeAdapter_->getAllKeysSecure()) {
+            if (nativeAdapter_->hasSecureBiometric(key)) {
+                biometricKeys.push_back(key);
+            }
+        }
+    } catch (...) {
+        biometricKeysKnown = false;
+    }
     runAdapterOperation(
         [&] { nativeAdapter_->clearSecureBiometric(); }, "Biometric clear");
-    notifyListeners(static_cast<int>(Scope::Secure), kClearSentinelKey, std::nullopt);
+    if (!biometricKeysKnown) {
+        notifyListeners(static_cast<int>(Scope::Secure), kClearSentinelKey, std::nullopt);
+        return;
+    }
+    for (const auto& key : biometricKeys) {
+        notifyListeners(static_cast<int>(Scope::Secure), key, std::nullopt);
+    }
 }
 
 bool HybridStorage::isProtectedDataAvailable() {

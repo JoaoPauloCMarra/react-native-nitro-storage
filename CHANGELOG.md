@@ -22,6 +22,7 @@ None.
 - `migrateSecureAccessControl` no longer makes iOS subscribers see one spurious `external` change event per migrated key. The native echo of each rewrite is now suppressed like the echo of every other self-originated write.
 - The `react-native-nitro-storage/testing` mock now treats biometric items like the native platforms: `getAllKeys`, `getKeysByPrefix`, `size`, `has`, `getAllSecureMetadata` and `migrateSecureAccessControl` include them, `clear(Secure)` removes them, and `clearBiometric` notifies each biometric key.
 - Android no longer deletes a Secure value that fails authentication and reports it as missing. Reading it now throws `[nitro-error:storage_corruption]`, as iOS does, and the entry stays in the store so `delete()` or `set()` can replace it.
+- `storage.clearBiometric()` on iOS and Android now notifies only the biometric keys it removed. It no longer sends the whole-scope clear signal, so pending coalesced Secure writes are not dropped and unrelated Secure subscribers do not re-run. If the native key listing fails, it falls back to the whole-scope signal.
 
 ## [0.15.0] - 2026-10-07
 
