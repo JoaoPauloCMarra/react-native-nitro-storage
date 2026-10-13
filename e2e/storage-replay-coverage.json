@@ -449,7 +449,7 @@
       "statusSource": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
       "statusId": "e2e-integrity-results",
-      "expectedText": "pass:committed:rollback=true",
+      "expectedText": "pass:secure:committed:rollback=true",
       "assertion": "item.get() === \"committed\""
     },
     {

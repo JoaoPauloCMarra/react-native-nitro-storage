@@ -42,6 +42,8 @@ pagination, conflict resolution, or remote synchronization.
 - [Migrations And Transactions](#migrations-and-transactions)
 - [Web Backends](#web-backends)
 - [Testing](#testing)
+- [API](#api)
+- [Error Contract](#error-contract)
 - [Platform Support](#platform-support)
 - [Documentation](#documentation)
 - [Troubleshooting](#troubleshooting)
@@ -836,9 +838,11 @@ the cache only for items with `readCache` or `fallbackToCacheOnReadError`. The
 cache is unbounded; `resetMetrics()` zeros the hit/miss counters and leaves
 entries in place.
 
-The example app includes hidden integrity, keychain, and Disk/Secure stress
-labs at `nitrostorage://e2e-integrity`, `nitrostorage://e2e-keychain`, and
-`nitrostorage://e2e-stress`.
+The example app includes hidden QA labs at `nitrostorage://e2e`,
+`e2e-api-extended`, `e2e-biometric`, `e2e-clear-all`, `e2e-integrity`,
+`e2e-keychain`, `e2e-persistence`, and `e2e-stress`. The replay flows that use
+them are described in
+[docs/qa/agent-device-replay.md](docs/qa/agent-device-replay.md).
 
 Secure event observer values are redacted by default. Pass
 `{ redactSecureValues: false }` only in trusted debug tooling where raw values

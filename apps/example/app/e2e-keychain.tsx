@@ -21,10 +21,6 @@ type KeychainReport = {
   cases: LabCase[];
 };
 
-declare global {
-  var __keychainReport: KeychainReport | undefined;
-}
-
 function errorDetail(error: unknown): string {
   return (
     getStorageErrorCode(error) ??
@@ -93,7 +89,6 @@ function runKeychainSweep(): KeychainReport {
     pass: cases.filter((item) => item.status === "pass").length,
     cases,
   };
-  globalThis.__keychainReport = report;
   return report;
 }
 

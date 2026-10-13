@@ -14,10 +14,6 @@ type StressReport = {
   detail: string;
 };
 
-declare global {
-  var __stressReport: StressReport | undefined;
-}
-
 function percentile(values: number[], p: number): number {
   if (values.length === 0) {
     return 0;
@@ -79,7 +75,6 @@ function runStressSweep(): StressReport {
       secureP95: percentile(secure, 95),
       detail: "ok",
     };
-    globalThis.__stressReport = report;
     return report;
   } catch (error) {
     const report: StressReport = {
@@ -92,7 +87,6 @@ function runStressSweep(): StressReport {
       secureP95: 0,
       detail: error instanceof Error ? error.message : String(error),
     };
-    globalThis.__stressReport = report;
     return report;
   }
 }

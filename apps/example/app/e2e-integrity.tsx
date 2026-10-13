@@ -27,10 +27,6 @@ type IntegrityReport = {
   cases: LabCase[];
 };
 
-declare global {
-  var __integrityReport: IntegrityReport | undefined;
-}
-
 function runCase(name: string, fn: () => string | void): LabCase {
   try {
     const detail = fn();
@@ -432,7 +428,7 @@ function runIntegritySweep(): IntegrityReport {
         }
         assert(rolledBack, "expected throw");
         assert(item.get() === "committed", `got ${item.get()}`);
-        return "committed:rollback=true";
+        return "secure:committed:rollback=true";
       } finally {
         item.delete();
         storage.flushSecureWrites();
@@ -554,7 +550,6 @@ function runIntegritySweep(): IntegrityReport {
     skip: cases.filter((item) => item.status === "skip").length,
     cases,
   };
-  globalThis.__integrityReport = report;
   return report;
 }
 
