@@ -233,9 +233,16 @@ function signDarwinBinary(binaryPath) {
     return;
   }
 
-  execFileSync("codesign", ["--force", "--sign", "-", binaryPath], {
-    stdio: ["ignore", "ignore", "inherit"],
-  });
+  try {
+    execFileSync("codesign", ["--force", "--sign", "-", binaryPath], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+  } catch (error) {
+    if (error.stderr) {
+      process.stderr.write(String(error.stderr));
+    }
+    throw error;
+  }
 }
 
 function sanitizerRuntimeEnv() {

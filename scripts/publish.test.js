@@ -135,6 +135,15 @@ test("security policy must list the released minor line as supported", () => {
   assert.match(findSecurityPolicyFailure("0.16.0", policy) ?? "", /0\.16\.x/);
   assert.match(findSecurityPolicyFailure("1.0.0", policy) ?? "", /1\.0\.x/);
   assert.match(findSecurityPolicyFailure("0.15.1", "no table") ?? "", /0\.15\.x/);
+  const unsupported = [
+    "| Version  | Supported |",
+    "| `0.15.x` | No        |",
+  ].join("\n");
+  assert.match(findSecurityPolicyFailure("0.15.1", unsupported) ?? "", /0\.15\.x/);
+  assert.match(
+    findSecurityPolicyFailure("0.15.1", "mentions `0.15.x` in prose, Yes") ?? "",
+    /0\.15\.x/,
+  );
 });
 
 test("uses the publish workflow delay ladder", () => {

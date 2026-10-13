@@ -345,7 +345,11 @@ function getFirstChangelogVersion() {
 function findSecurityPolicyFailure(version, securityPolicy) {
   const [major, minor] = version.split(".");
   const supportedLine = `${major}.${minor}.x`;
-  return securityPolicy.includes(`\`${supportedLine}\``)
+  const supportedRow = new RegExp(
+    `^\\|\\s*\`${supportedLine.replace(/\./g, "\\.")}\`\\s*\\|\\s*Yes\\s*\\|`,
+    "m",
+  );
+  return supportedRow.test(securityPolicy)
     ? null
     : `SECURITY.md does not list \`${supportedLine}\` as a supported version`;
 }
