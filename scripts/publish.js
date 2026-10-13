@@ -4,6 +4,7 @@ const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const readline = require("readline");
+const { validateDistTag } = require("./validate-release-tags.js");
 
 const colors = {
   green: (text) => `\x1b[32m${text}\x1b[0m`,
@@ -74,16 +75,10 @@ function shellQuote(value) {
 }
 
 function validateNpmTag(tag) {
-  if (!/^[a-z0-9][a-z0-9._-]*$/i.test(tag)) {
-    log(`Invalid npm dist tag: ${tag}`, "red");
-    process.exit(1);
-  }
-
-  if (/^v?\d+\.\d+\.\d+/.test(tag)) {
-    log(
-      `Invalid npm dist tag "${tag}": use a release channel like latest or next.`,
-      "red",
-    );
+  try {
+    validateDistTag(tag);
+  } catch (error) {
+    log(`Invalid npm dist tag "${tag}": ${error.message}`, "red");
     process.exit(1);
   }
 }
@@ -347,6 +342,14 @@ function getFirstChangelogVersion() {
   return changelog.match(/^##\s+([^\s]+)/m)?.[1]?.replace(/^[[]|]$/g, "") ?? null;
 }
 
+function findSecurityPolicyFailure(version, securityPolicy) {
+  const [major, minor] = version.split(".");
+  const supportedLine = `${major}.${minor}.x`;
+  return securityPolicy.includes(`\`${supportedLine}\``)
+    ? null
+    : `SECURITY.md does not list \`${supportedLine}\` as a supported version`;
+}
+
 function assertReleaseDocs(version) {
   const packageJson = readJson(packageJsonPath);
   const readme = fs.readFileSync(path.join(projectRoot, "README.md"), "utf-8");
@@ -358,6 +361,14 @@ function assertReleaseDocs(version) {
     failures.push(
       `CHANGELOG.md top entry is ${changelogVersion ?? "missing"}, expected ${version}`,
     );
+  }
+
+  const securityFailure = findSecurityPolicyFailure(
+    version,
+    fs.readFileSync(path.join(projectRoot, "SECURITY.md"), "utf-8"),
+  );
+  if (securityFailure !== null) {
+    failures.push(securityFailure);
   }
 
   if (!readme.includes(`react-native-nitro-modules ${nitroPeer}`)) {
@@ -701,7 +712,9 @@ if (require.main === module) {
 
 module.exports = {
   REGISTRY_RETRY_DELAYS_SECONDS,
+  findSecurityPolicyFailure,
   isRegistryNotFound,
   parsePublishArgs,
+  validateNpmTag,
   verifyPublishedPackage,
 };
