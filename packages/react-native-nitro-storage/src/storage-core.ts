@@ -783,6 +783,21 @@ export function createStorageCore(
     return raw === undefined ? undefined : unescapeCollidingRawValue(raw);
   }
 
+  function commitRawBackendWrite(
+    scope: NonMemoryScope,
+    key: string,
+    storedValue: string | undefined,
+    write: () => void,
+  ): void {
+    try {
+      write();
+    } catch (error) {
+      invalidateRawCache(scope, key);
+      throw error;
+    }
+    cacheRawValue(scope, key, storedValue);
+  }
+
   function setRawValue(key: string, value: string, scope: StorageScope): void {
     assertValidScope(scope);
     assertValidStorageKey(key);
@@ -797,8 +812,8 @@ export function createStorageCore(
     }
 
     if (scope === StorageScope.Disk) {
-      cacheRawValue(scope, key, storedValue);
       if (isDiskWritesAsync()) {
+        cacheRawValue(scope, key, storedValue);
         scheduleDiskWrite(key, storedValue);
         emitKeyChange(scope, key, oldValue, value, "set", adapter.changeSource);
         return;
@@ -817,8 +832,9 @@ export function createStorageCore(
       }
     }
 
-    adapter.backend.set(key, storedValue, scope);
-    cacheRawValue(scope, key, storedValue);
+    commitRawBackendWrite(scope, key, storedValue, () => {
+      adapter.backend.set(key, storedValue, scope);
+    });
     emitKeyChange(scope, key, oldValue, value, "set", adapter.changeSource);
   }
 
@@ -834,8 +850,8 @@ export function createStorageCore(
     }
 
     if (scope === StorageScope.Disk) {
-      cacheRawValue(scope, key, undefined);
       if (isDiskWritesAsync()) {
+        cacheRawValue(scope, key, undefined);
         scheduleDiskWrite(key, undefined);
         emitKeyChange(
           scope,
@@ -858,8 +874,9 @@ export function createStorageCore(
       clearPendingSecureWrite(key);
     }
 
-    adapter.backend.remove(key, scope);
-    cacheRawValue(scope, key, undefined);
+    commitRawBackendWrite(scope, key, undefined, () => {
+      adapter.backend.remove(key, scope);
+    });
     emitKeyChange(
       scope,
       key,
@@ -1188,7 +1205,7 @@ export function createStorageCore(
             }
           }
           byScope.forEach((groupItems, scope) => {
-            removeBatch(groupItems, scope);
+            removeBatchWithOperation(groupItems, scope, "clearGroup");
           });
         },
         items.size,
@@ -2325,12 +2342,36 @@ export function createStorageCore(
       }
     }
 
+    const cacheStoredRaw = (rawValue: string | undefined): void => {
+      if (
+        nonMemoryScope === StorageScope.Secure &&
+        !readCache &&
+        !fallbackToCacheOnReadError
+      ) {
+        return;
+      }
+      cacheRawValue(resolveNonMemoryScope(), storageKey, rawValue);
+    };
+
+    const commitBackendWrite = (
+      rawValue: string | undefined,
+      write: () => void,
+    ): void => {
+      try {
+        write();
+      } catch (error) {
+        invalidateRawCache(resolveNonMemoryScope(), storageKey);
+        throw error;
+      }
+      cacheStoredRaw(rawValue);
+    };
+
     const writeStoredRaw = (
       rawValue: string,
       options: StoredRawWriteOptions = {},
     ): PendingDiskWrite | PendingSecureWrite | undefined => {
       const cleanupRenameSources = options.cleanupRenameSources !== false;
-      const oldValue = undefined;
+      let pendingWrite: PendingDiskWrite | PendingSecureWrite | undefined;
       if (isBiometric) {
         invalidateRawCache(StorageScope.Secure, storageKey);
         runSecurePromotion(storageKey, () => {
@@ -2344,87 +2385,54 @@ export function createStorageCore(
             throw normalizeStorageError(error);
           }
         });
-        if (cleanupRenameSources) {
-          scheduleRenameSourceCleanup();
+      } else {
+        if (nonMemoryScope === StorageScope.Secure) {
+          invalidateRawCache(StorageScope.Secure, storageKey);
         }
-        emitKeyChange(
-          config.scope,
-          storageKey,
-          oldValue,
-          rawValue,
-          "set",
-          adapter.changeSource,
-        );
-        return undefined;
-      }
 
-      if (nonMemoryScope === StorageScope.Secure) {
-        invalidateRawCache(StorageScope.Secure, storageKey);
-      }
-      cacheRawValue(resolveNonMemoryScope(), storageKey, rawValue);
-
-      if (nonMemoryScope === StorageScope.Disk) {
-        if (coalesceDiskWrites || isDiskWritesAsync()) {
-          const pendingWrite = scheduleDiskWrite(storageKey, rawValue);
-          if (cleanupRenameSources) {
-            scheduleRenameSourceCleanup();
-          }
-          emitKeyChange(
-            config.scope,
+        if (
+          nonMemoryScope === StorageScope.Disk &&
+          (coalesceDiskWrites || isDiskWritesAsync())
+        ) {
+          cacheStoredRaw(rawValue);
+          pendingWrite = scheduleDiskWrite(storageKey, rawValue);
+        } else if (coalesceSecureWrites) {
+          cacheStoredRaw(rawValue);
+          pendingWrite = scheduleSecureWrite(
             storageKey,
-            oldValue,
             rawValue,
-            "set",
-            adapter.changeSource,
-          );
-          return pendingWrite;
-        }
-
-        clearPendingDiskWrite(storageKey);
-      }
-
-      if (coalesceSecureWrites) {
-        const pendingWrite = scheduleSecureWrite(
-          storageKey,
-          rawValue,
-          secureAccessControl ?? secureDefaultAccessControl,
-        );
-        if (cleanupRenameSources) {
-          scheduleRenameSourceCleanup();
-        }
-        emitKeyChange(
-          config.scope,
-          storageKey,
-          oldValue,
-          rawValue,
-          "set",
-          adapter.changeSource,
-        );
-        return pendingWrite;
-      }
-
-      if (nonMemoryScope === StorageScope.Secure) {
-        clearPendingSecureWrite(storageKey);
-        if (adapter.applyAccessControlOnSecureRawWrite) {
-          adapter.backend.setSecureAccessControl(
             secureAccessControl ?? secureDefaultAccessControl,
           );
+        } else {
+          if (nonMemoryScope === StorageScope.Disk) {
+            clearPendingDiskWrite(storageKey);
+          }
+          if (nonMemoryScope === StorageScope.Secure) {
+            clearPendingSecureWrite(storageKey);
+            if (adapter.applyAccessControlOnSecureRawWrite) {
+              adapter.backend.setSecureAccessControl(
+                secureAccessControl ?? secureDefaultAccessControl,
+              );
+            }
+          }
+          commitBackendWrite(rawValue, () => {
+            adapter.backend.set(storageKey, rawValue, config.scope);
+          });
         }
       }
 
-      adapter.backend.set(storageKey, rawValue, config.scope);
       if (cleanupRenameSources) {
         scheduleRenameSourceCleanup();
       }
       emitKeyChange(
         config.scope,
         storageKey,
-        oldValue,
+        undefined,
         rawValue,
         "set",
         adapter.changeSource,
       );
-      return undefined;
+      return pendingWrite;
     };
 
     const migrateRenamesIfNeeded = (): void => {
@@ -2547,66 +2555,39 @@ export function createStorageCore(
       );
       if (isBiometric) {
         invalidateRawCache(StorageScope.Secure, storageKey);
-        scheduleRenameSourceCleanup();
         adapter.backend.deleteSecureBiometric(storageKey);
-        emitKeyChange(
-          config.scope,
-          storageKey,
-          oldValue,
-          undefined,
-          operation,
-          adapter.changeSource,
-        );
-        return;
-      }
-
-      if (nonMemoryScope === StorageScope.Secure) {
-        invalidateRawCache(StorageScope.Secure, storageKey);
-      }
-      cacheRawValue(resolveNonMemoryScope(), storageKey, undefined);
-
-      if (nonMemoryScope === StorageScope.Disk) {
-        if (coalesceDiskWrites || isDiskWritesAsync()) {
-          scheduleDiskWrite(storageKey, undefined);
-          scheduleRenameSourceCleanup();
-          emitKeyChange(
-            config.scope,
-            storageKey,
-            oldValue,
-            undefined,
-            operation,
-            adapter.changeSource,
-          );
-          return;
+      } else {
+        if (nonMemoryScope === StorageScope.Secure) {
+          invalidateRawCache(StorageScope.Secure, storageKey);
         }
 
-        clearPendingDiskWrite(storageKey);
-      }
-
-      if (coalesceSecureWrites) {
-        scheduleSecureWrite(
-          storageKey,
-          undefined,
-          secureAccessControl ?? secureDefaultAccessControl,
-        );
-        scheduleRenameSourceCleanup();
-        emitKeyChange(
-          config.scope,
-          storageKey,
-          oldValue,
-          undefined,
-          operation,
-          adapter.changeSource,
-        );
-        return;
-      }
-
-      if (nonMemoryScope === StorageScope.Secure) {
-        clearPendingSecureWrite(storageKey);
+        if (
+          nonMemoryScope === StorageScope.Disk &&
+          (coalesceDiskWrites || isDiskWritesAsync())
+        ) {
+          cacheStoredRaw(undefined);
+          scheduleDiskWrite(storageKey, undefined);
+        } else if (coalesceSecureWrites) {
+          cacheStoredRaw(undefined);
+          scheduleSecureWrite(
+            storageKey,
+            undefined,
+            secureAccessControl ?? secureDefaultAccessControl,
+          );
+        } else {
+          if (nonMemoryScope === StorageScope.Disk) {
+            clearPendingDiskWrite(storageKey);
+          }
+          if (nonMemoryScope === StorageScope.Secure) {
+            clearPendingSecureWrite(storageKey);
+          }
+          commitBackendWrite(undefined, () => {
+            adapter.backend.remove(storageKey, config.scope);
+          });
+        }
       }
 
       scheduleRenameSourceCleanup();
-      adapter.backend.remove(storageKey, config.scope);
       emitKeyChange(
         config.scope,
         storageKey,
@@ -3068,7 +3049,9 @@ export function createStorageCore(
               return;
             }
             rawValues[targetIndex] = value;
-            cacheRawValue(scope, key, value);
+            if (items[targetIndex]?._readCacheEnabled === true) {
+              cacheRawValue(scope, key, value);
+            }
           });
         }
 
@@ -3177,9 +3160,13 @@ export function createStorageCore(
             { keys: string[]; values: string[] }
           >();
 
+          const readCacheKeys = new Set<string>();
           secureEntries.forEach(({ item, value, internal }) => {
             const serialized = item.serialize(value);
             serializedValues.push(serialized);
+            if (internal._readCacheEnabled) {
+              readCacheKeys.add(item.key);
+            }
             const accessControl =
               internal._secureAccessControl ?? secureDefaultAccessControl;
             const existingGroup = groupedByAccessControl.get(accessControl);
@@ -3195,7 +3182,9 @@ export function createStorageCore(
             adapter.backend.setSecureAccessControl(accessControl);
             adapter.backend.setBatch(group.keys, group.values, scope);
             group.keys.forEach((key, index) => {
-              cacheRawValue(scope, key, group.values[index]);
+              if (readCacheKeys.has(key)) {
+                cacheRawValue(scope, key, group.values[index]);
+              }
             });
           });
           const willEmitChanges =
@@ -3272,6 +3261,14 @@ export function createStorageCore(
     items: readonly BatchRemoveItem[],
     scope: StorageScope,
   ): void {
+    removeBatchWithOperation(items, scope, "removeBatch");
+  }
+
+  function removeBatchWithOperation(
+    items: readonly BatchRemoveItem[],
+    scope: StorageScope,
+    operation: StorageChangeOperation,
+  ): void {
     measureOperation(
       "batch:remove",
       scope,
@@ -3285,7 +3282,7 @@ export function createStorageCore(
               item.key,
               getEventRawValue(scope, item.key),
               undefined,
-              "removeBatch",
+              operation,
               "memory",
             ),
           );
@@ -3295,7 +3292,7 @@ export function createStorageCore(
           items.forEach((item) => {
             notifyKeyListeners(memoryListeners, item.key);
           });
-          emitBatchChange(scope, "removeBatch", "memory", changes);
+          emitBatchChange(scope, operation, "memory", changes);
           return;
         }
 
@@ -3364,7 +3361,7 @@ export function createStorageCore(
         });
         emitBatchChange(
           scope,
-          "removeBatch",
+          operation,
           adapter.changeSource,
           keys.map((key, index) =>
             createKeyChange(
@@ -3372,7 +3369,7 @@ export function createStorageCore(
               key,
               oldValues[index],
               undefined,
-              "removeBatch",
+              operation,
               adapter.changeSource,
             ),
           ),

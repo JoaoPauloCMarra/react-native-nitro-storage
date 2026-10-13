@@ -15,6 +15,9 @@ None.
 ### Fixed
 
 - iOS Disk storage opens and reads on a full device. A cold launch could not create the SQLite WAL index file (`-shm`) when the volume had no space, so `PRAGMA journal_mode=WAL` failed with `[nitro-error:storage_full] NitroStorage: Disk SQLite exec failed: disk I/O error` and every Disk read on that launch failed with it, not only writes. When the normal open fails with `storage_full`, the store now reopens with `PRAGMA locking_mode=EXCLUSIVE`, which keeps the WAL index in memory and needs no new file, so existing rows read from the first call. Writes and deletes keep failing with `storage_full` until space frees. The exclusive lock lasts for that connection; the next launch tries the normal open first. Other IO errors during open still fail as before. Android already retried its open without WAL since 0.13.0.
+- Items with `readCache` no longer return a value the backend rejected. A synchronous Disk or Secure write or delete that throws (`storage_full`, `keychain_locked`, `storage_corruption`) now leaves `get()`, `has()` and `getString()` on the stored value instead of the value that failed to save. The same ordering is fixed for `storage.setString` and `storage.remove`.
+- Secure items without `readCache` no longer keep their plaintext in the JavaScript raw cache: `getBatch`, `setBatch`, `item.set` and `item.delete` fill the cache only for items that enable `readCache` (or `fallbackToCacheOnReadError` for single-item reads and writes). `getCacheMetrics()` therefore stops counting entries for those items.
+- `storage.clearGroup(group)` now emits the `"clearGroup"` change operation (Memory and backend scopes) instead of `"removeBatch"`, so listeners can tell a group wipe from a batch remove. The `removeBatch` export still emits `"removeBatch"`. Listeners that matched `"removeBatch"` to catch group clears must also match `"clearGroup"`.
 
 ## [0.15.0] - 2026-10-07
 
