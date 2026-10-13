@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { View } from "react-native";
-import {
-  getStorageErrorCode,
-  storage,
-  StorageScope,
-} from "react-native-nitro-storage";
+import { storage, StorageScope } from "react-native-nitro-storage";
 import { KeychainLifecycleProbe } from "../components/keychain-lifecycle-probe";
-import { Card, Page, StatusRow } from "../components/shared";
+import {
+  Card,
+  Page,
+  StatusRow,
+  describeStorageError,
+} from "../components/shared";
 
 type CaseStatus = "pass" | "fail";
 type LabCase = {
@@ -20,13 +21,6 @@ type KeychainReport = {
   pass: number;
   cases: LabCase[];
 };
-
-function errorDetail(error: unknown): string {
-  return (
-    getStorageErrorCode(error) ??
-    (error instanceof Error ? error.message : String(error))
-  );
-}
 
 function runSecureRoundTrip(): LabCase {
   const key = "__e2e_secure_roundtrip__";
@@ -71,12 +65,12 @@ function runSecureRoundTrip(): LabCase {
           detail: failures.join(", "),
         };
   } catch (error) {
-    let detail = errorDetail(error);
+    let detail = describeStorageError(error);
     try {
       storage.deleteString(key, StorageScope.Secure);
       storage.flushSecureWrites();
     } catch (cleanupError) {
-      detail = `${detail}; cleanup=${errorDetail(cleanupError)}`;
+      detail = `${detail}; cleanup=${describeStorageError(cleanupError)}`;
     }
     return { name: "secure-roundtrip", status: "fail", detail };
   }

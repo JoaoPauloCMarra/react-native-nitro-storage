@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { View } from "react-native";
 import {
   AccessControl,
   createSecureAuthStorage,
@@ -16,7 +16,13 @@ import {
   useStorageValue,
   type StorageChangeEvent,
 } from "react-native-nitro-storage";
-import { Card, Page, StatusRow } from "../components/shared";
+import {
+  Card,
+  Page,
+  ResultsProbe,
+  StatusRow,
+  describeStorageError,
+} from "../components/shared";
 
 type ExtCase = {
   name: string;
@@ -110,13 +116,6 @@ function resolveAfter(ms: number): Promise<void> {
   });
 }
 
-function describeError(error: unknown): string {
-  return (
-    getStorageErrorCode(error) ??
-    (error instanceof Error ? error.message : String(error))
-  );
-}
-
 function safely(cleanup: () => void): boolean {
   try {
     cleanup();
@@ -130,7 +129,7 @@ function runSync(name: string, fn: () => string): ExtCase {
   try {
     return { name, token: fn() };
   } catch (error) {
-    return { name, token: `fail:${name}:${describeError(error)}` };
+    return { name, token: `fail:${name}:${describeStorageError(error)}` };
   }
 }
 
@@ -141,7 +140,7 @@ async function runAsync(
   try {
     return { name, token: await fn() };
   } catch (error) {
-    return { name, token: `fail:${name}:${describeError(error)}` };
+    return { name, token: `fail:${name}:${describeStorageError(error)}` };
   }
 }
 
@@ -461,7 +460,7 @@ async function runExtendedSweep(): Promise<ExtCase[]> {
   } catch (error) {
     cases.push({
       name: "native-disk-events",
-      token: `fail:native-disk-events:${describeError(error)}`,
+      token: `fail:native-disk-events:${describeStorageError(error)}`,
     });
   }
   cases.push(await runAsync("auth-storage-ttl", checkAuthStorageTtl));
@@ -552,7 +551,10 @@ export default function ApiExtendedScreen() {
       .catch((error: unknown) => {
         if (mounted) {
           setCases([
-            { name: "sweep", token: `fail:sweep:${describeError(error)}` },
+            {
+              name: "sweep",
+              token: `fail:sweep:${describeStorageError(error)}`,
+            },
           ]);
         }
       });
@@ -577,11 +579,9 @@ export default function ApiExtendedScreen() {
         title="API extended lab"
         subtitle="Deep link nitrostorage://e2e-api-extended"
       >
-        <View
+        <ResultsProbe
           testID="e2e-ext-results"
-          accessible
-          accessibilityLabel={tokens.map((token) => `${token};`).join("")}
-          style={localStyles.resultsProbe}
+          label={tokens.map((token) => `${token};`).join("")}
         />
         <StatusRow
           testID="e2e-ext-finished"
@@ -599,9 +599,3 @@ export default function ApiExtendedScreen() {
     </View>
   );
 }
-
-const localStyles = StyleSheet.create({
-  resultsProbe: {
-    height: 1,
-  },
-});

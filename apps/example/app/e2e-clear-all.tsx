@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { View } from "react-native";
+import { storage, StorageScope } from "react-native-nitro-storage";
 import {
-  getStorageErrorCode,
-  storage,
-  StorageScope,
-} from "react-native-nitro-storage";
-import { Page, StatusRow } from "../components/shared";
+  Page,
+  ResultsProbe,
+  StatusRow,
+  describeStorageError,
+} from "../components/shared";
 
 const clearAllKey = "__e2e_clearall_seed";
 
@@ -32,7 +33,7 @@ function runClearAll(): string {
     storage.clearAll();
     return `clearall:memory=${presence(StorageScope.Memory)}:disk=${presence(StorageScope.Disk)}:secure=${presence(StorageScope.Secure)};`;
   } catch (error) {
-    return `clearall:fail=${getStorageErrorCode(error) ?? (error instanceof Error ? error.message : String(error))};`;
+    return `clearall:fail=${describeStorageError(error)};`;
   }
 }
 
@@ -53,12 +54,7 @@ export default function ClearAllScreen() {
         title="Clear all lab"
         subtitle="Deep link nitrostorage://e2e-clear-all"
       >
-        <View
-          testID="e2e-clear-all-results"
-          accessible
-          accessibilityLabel={result ?? ""}
-          style={localStyles.resultsProbe}
-        />
+        <ResultsProbe testID="e2e-clear-all-results" label={result ?? ""} />
         <StatusRow
           testID="e2e-clear-all-finished"
           label="run"
@@ -69,9 +65,3 @@ export default function ClearAllScreen() {
     </View>
   );
 }
-
-const localStyles = StyleSheet.create({
-  resultsProbe: {
-    height: 1,
-  },
-});

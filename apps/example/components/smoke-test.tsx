@@ -35,7 +35,7 @@ import {
   getStorageErrorCode as getTestingStorageErrorCode,
   isStorageError as isTestingStorageError,
 } from "react-native-nitro-storage/testing";
-import { Button, Colors } from "./shared";
+import { Button, Colors, ResultsProbe } from "./shared";
 
 type LogEntry = {
   id?: string;
@@ -1196,13 +1196,11 @@ export function SmokeTestRunner() {
                 {` · ${failCount} failed`}
                 {skippedCount > 0 ? ` · ${skippedCount} skipped` : ""}
               </Text>
-              <View
+              <ResultsProbe
                 testID="smoke-results"
-                accessible
-                accessibilityLabel={logs
+                label={logs
                   .map((entry) => `${entry.status}:${entry.detail ?? ""}`)
                   .join(" ")}
-                style={s.resultsProbe}
               />
             </>
           ) : (
@@ -1303,9 +1301,6 @@ const s = StyleSheet.create({
     fontWeight: "800",
     color: Colors.text,
     letterSpacing: 0,
-  },
-  resultsProbe: {
-    height: 1,
   },
   summary: {
     fontSize: 12,
