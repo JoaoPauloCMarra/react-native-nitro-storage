@@ -65,6 +65,26 @@ function createStorageMock(): Storage {
   };
 }
 
+function installWebGlobals(): void {
+  Object.defineProperty(globalThis, "localStorage", {
+    value: createStorageMock(),
+    configurable: true,
+    writable: true,
+  });
+  if (
+    typeof globalThis.window === "undefined" ||
+    typeof globalThis.window.addEventListener !== "function" ||
+    typeof (globalThis.window as unknown as { dispatchEvent?: unknown })
+      .dispatchEvent !== "function"
+  ) {
+    Object.defineProperty(globalThis, "window", {
+      value: createWindowMock() as unknown as Window & typeof globalThis,
+      configurable: true,
+      writable: true,
+    });
+  }
+}
+
 function createWebBackendMock(name = "mock-backend") {
   const secureStore = new Map<string, string>();
   const subscribers = new Set<(event: WebStorageChangeEvent) => void>();
@@ -184,23 +204,7 @@ describe("Web Storage", () => {
   beforeEach(() => {
     jest.spyOn(console, "warn").mockImplementation(() => {});
 
-    Object.defineProperty(globalThis, "localStorage", {
-      value: createStorageMock(),
-      configurable: true,
-      writable: true,
-    });
-    if (
-      typeof globalThis.window === "undefined" ||
-      typeof globalThis.window.addEventListener !== "function" ||
-      typeof (globalThis.window as unknown as { dispatchEvent?: unknown })
-        .dispatchEvent !== "function"
-    ) {
-      Object.defineProperty(globalThis, "window", {
-        value: createWindowMock() as unknown as Window & typeof globalThis,
-        configurable: true,
-        writable: true,
-      });
-    }
+    installWebGlobals();
 
     setWebSecureStorageBackend(undefined);
     storage.clearAll();
@@ -3087,23 +3091,7 @@ describe("TTL expiry subscriber notification (web)", () => {
 
 describe("web backend switching", () => {
   beforeEach(() => {
-    Object.defineProperty(globalThis, "localStorage", {
-      value: createStorageMock(),
-      configurable: true,
-      writable: true,
-    });
-    if (
-      typeof globalThis.window === "undefined" ||
-      typeof globalThis.window.addEventListener !== "function" ||
-      typeof (globalThis.window as unknown as { dispatchEvent?: unknown })
-        .dispatchEvent !== "function"
-    ) {
-      Object.defineProperty(globalThis, "window", {
-        value: createWindowMock() as unknown as Window & typeof globalThis,
-        configurable: true,
-        writable: true,
-      });
-    }
+    installWebGlobals();
     setWebDiskStorageBackend(undefined);
     setWebSecureStorageBackend(undefined);
     storage.clearAll();
@@ -3523,23 +3511,7 @@ describe("web backend switching", () => {
 
 describe("cross-tab StorageEvent handling", () => {
   beforeEach(() => {
-    Object.defineProperty(globalThis, "localStorage", {
-      value: createStorageMock(),
-      configurable: true,
-      writable: true,
-    });
-    if (
-      typeof globalThis.window === "undefined" ||
-      typeof globalThis.window.addEventListener !== "function" ||
-      typeof (globalThis.window as unknown as { dispatchEvent?: unknown })
-        .dispatchEvent !== "function"
-    ) {
-      Object.defineProperty(globalThis, "window", {
-        value: createWindowMock() as unknown as Window & typeof globalThis,
-        configurable: true,
-        writable: true,
-      });
-    }
+    installWebGlobals();
     setWebSecureStorageBackend(undefined);
     storage.clearAll();
   });
@@ -3640,23 +3612,7 @@ describe("cross-tab StorageEvent handling", () => {
 describe("biometric web storage", () => {
   beforeEach(() => {
     jest.spyOn(console, "warn").mockImplementation(() => {});
-    Object.defineProperty(globalThis, "localStorage", {
-      value: createStorageMock(),
-      configurable: true,
-      writable: true,
-    });
-    if (
-      typeof globalThis.window === "undefined" ||
-      typeof globalThis.window.addEventListener !== "function" ||
-      typeof (globalThis.window as unknown as { dispatchEvent?: unknown })
-        .dispatchEvent !== "function"
-    ) {
-      Object.defineProperty(globalThis, "window", {
-        value: createWindowMock() as unknown as Window & typeof globalThis,
-        configurable: true,
-        writable: true,
-      });
-    }
+    installWebGlobals();
     setWebSecureStorageBackend(undefined);
     storage.clearAll();
   });
@@ -3888,23 +3844,7 @@ describe("biometric web storage", () => {
 
 describe("web transaction edge cases", () => {
   beforeEach(() => {
-    Object.defineProperty(globalThis, "localStorage", {
-      value: createStorageMock(),
-      configurable: true,
-      writable: true,
-    });
-    if (
-      typeof globalThis.window === "undefined" ||
-      typeof globalThis.window.addEventListener !== "function" ||
-      typeof (globalThis.window as unknown as { dispatchEvent?: unknown })
-        .dispatchEvent !== "function"
-    ) {
-      Object.defineProperty(globalThis, "window", {
-        value: createWindowMock() as unknown as Window & typeof globalThis,
-        configurable: true,
-        writable: true,
-      });
-    }
+    installWebGlobals();
     setWebSecureStorageBackend(undefined);
     storage.clearAll();
   });

@@ -42,6 +42,66 @@ import {
   resolveNativeWriteBuffering,
 } from "../capabilities";
 
+type MapBackedFailures = {
+  setKey?: string | undefined;
+  setFailure?: Error | undefined;
+  removeKey?: string | undefined;
+  removeFailure?: Error | undefined;
+  removeBeforeFailure?: boolean;
+};
+
+function installMapBackedHybridMock(
+  store: Map<string, string>,
+  failures: () => MapBackedFailures = () => ({}),
+): void {
+  mockHybridObject.get.mockImplementation((key: string) => store.get(key));
+  mockHybridObject.has.mockImplementation((key: string) => store.has(key));
+  mockHybridObject.set.mockImplementation((key: string, value: string) => {
+    const { setKey, setFailure } = failures();
+    if (key === setKey && setFailure) {
+      throw setFailure;
+    }
+    store.set(key, value);
+  });
+  mockHybridObject.remove.mockImplementation((key: string) => {
+    const { removeKey, removeFailure, removeBeforeFailure } = failures();
+    if (key === removeKey && removeFailure) {
+      if (removeBeforeFailure) {
+        store.delete(key);
+      }
+      throw removeFailure;
+    }
+    store.delete(key);
+  });
+  mockHybridObject.setBatch.mockImplementation(
+    (keys: string[], values: string[]) => {
+      const { setKey, setFailure } = failures();
+      if (keys.some((key) => key === setKey) && setFailure) {
+        throw setFailure;
+      }
+      keys.forEach((key, index) => {
+        const value = values[index];
+        if (value !== undefined) {
+          store.set(key, value);
+        }
+      });
+    },
+  );
+  mockHybridObject.removeBatch.mockImplementation((keys: string[]) => {
+    const { removeKey, removeFailure, removeBeforeFailure } = failures();
+    if (keys.some((key) => key === removeKey) && removeFailure) {
+      if (removeBeforeFailure) {
+        keys.forEach((key) => store.delete(key));
+      }
+      throw removeFailure;
+    }
+    keys.forEach((key) => store.delete(key));
+  });
+  mockHybridObject.clear.mockImplementation(() => {
+    store.clear();
+  });
+}
+
 function resetStorageModes(): void {
   storage.setDiskWritesAsync(false);
   storage.setSecureWritesAsync(false);
@@ -1828,31 +1888,7 @@ describe("v0.2 features", () => {
     diskStore.clear();
     storage.clearAll();
 
-    mockHybridObject.get.mockImplementation((key: string) =>
-      diskStore.get(key),
-    );
-    mockHybridObject.set.mockImplementation((key: string, value: string) => {
-      diskStore.set(key, value);
-    });
-    mockHybridObject.remove.mockImplementation((key: string) => {
-      diskStore.delete(key);
-    });
-    mockHybridObject.setBatch.mockImplementation(
-      (keys: string[], values: string[]) => {
-        keys.forEach((key, index) => {
-          const value = values[index];
-          if (value === undefined) {
-            return;
-          }
-          diskStore.set(key, value);
-        });
-      },
-    );
-    mockHybridObject.removeBatch.mockImplementation((keys: string[]) => {
-      keys.forEach((key) => {
-        diskStore.delete(key);
-      });
-    });
+    installMapBackedHybridMock(diskStore);
   });
 
   it("supports schema validation and fallback handling", () => {
@@ -1990,15 +2026,7 @@ describe("v0.2 edge cases", () => {
     diskStore.clear();
     storage.clearAll();
 
-    mockHybridObject.get.mockImplementation((key: string) =>
-      diskStore.get(key),
-    );
-    mockHybridObject.set.mockImplementation((key: string, value: string) => {
-      diskStore.set(key, value);
-    });
-    mockHybridObject.remove.mockImplementation((key: string) => {
-      diskStore.delete(key);
-    });
+    installMapBackedHybridMock(diskStore);
   });
 
   it("throws on non-positive ttl", () => {
@@ -3041,53 +3069,14 @@ describe("rename migration and pending writes", () => {
     removeFailure = undefined;
     removeBeforeFailure = false;
     jest.clearAllMocks();
-    mockHybridObject.get.mockImplementation((key: string) =>
-      backendValues.get(key),
-    );
     mockHybridObject.getSecureBiometric.mockReturnValue(undefined);
-    mockHybridObject.has.mockImplementation((key: string) =>
-      backendValues.has(key),
-    );
-    mockHybridObject.set.mockImplementation((key: string, value: string) => {
-      if (key === failingSetKey && setFailure) {
-        throw setFailure;
-      }
-      backendValues.set(key, value);
-    });
-    mockHybridObject.remove.mockImplementation((key: string) => {
-      if (key === failingRemoveKey && removeFailure) {
-        if (removeBeforeFailure) {
-          backendValues.delete(key);
-        }
-        throw removeFailure;
-      }
-      backendValues.delete(key);
-    });
-    mockHybridObject.setBatch.mockImplementation(
-      (keys: string[], values: string[]) => {
-        if (keys.some((key) => key === failingSetKey) && setFailure) {
-          throw setFailure;
-        }
-        keys.forEach((key, index) => {
-          const value = values[index];
-          if (value !== undefined) {
-            backendValues.set(key, value);
-          }
-        });
-      },
-    );
-    mockHybridObject.removeBatch.mockImplementation((keys: string[]) => {
-      if (keys.some((key) => key === failingRemoveKey) && removeFailure) {
-        if (removeBeforeFailure) {
-          keys.forEach((key) => backendValues.delete(key));
-        }
-        throw removeFailure;
-      }
-      keys.forEach((key) => backendValues.delete(key));
-    });
-    mockHybridObject.clear.mockImplementation(() => {
-      backendValues.clear();
-    });
+    installMapBackedHybridMock(backendValues, () => ({
+      setKey: failingSetKey,
+      setFailure,
+      removeKey: failingRemoveKey,
+      removeFailure,
+      removeBeforeFailure,
+    }));
     storage.clearAll();
     backendValues.clear();
   });
