@@ -69,6 +69,7 @@ private:
     std::unordered_set<std::string> secureKeysCache_;
     std::unordered_set<std::string> biometricKeysCache_;
     bool secureKeyCacheHydrated_{false};
+    uint64_t secureKeysGeneration_{0};
     std::mutex diskMigrationMutex_;
     std::atomic<bool> diskMigrated_{false};
 

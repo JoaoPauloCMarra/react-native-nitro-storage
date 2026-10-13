@@ -1242,6 +1242,7 @@ void IOSStorageAdapterCpp::setKeychainAccessGroup(const std::string& group) {
     std::lock_guard<std::mutex> lock1(accessGroupMutex_);
     std::lock_guard<std::mutex> lock2(secureKeysMutex_);
     keychainAccessGroup_ = group;
+    ++secureKeysGeneration_;
     secureKeysCache_.clear();
     biometricKeysCache_.clear();
     secureKeyCacheHydrated_ = false;
@@ -1444,6 +1445,7 @@ void IOSStorageAdapterCpp::clearSecureBiometric() {
     }
     {
         std::lock_guard<std::mutex> lock(secureKeysMutex_);
+        ++secureKeysGeneration_;
         biometricKeysCache_.clear();
     }
 }
@@ -1455,29 +1457,36 @@ std::vector<std::string> IOSStorageAdapterCpp::getBiometricKeysSecure() {
 }
 
 void IOSStorageAdapterCpp::ensureSecureKeyCacheHydrated() {
-    {
+    for (;;) {
+        uint64_t generation;
+        {
+            std::lock_guard<std::mutex> lock(secureKeysMutex_);
+            if (secureKeyCacheHydrated_) return;
+            generation = secureKeysGeneration_;
+        }
+
+        NSString* nsGroup = nsStringOrNil(currentAccessGroup());
+
+        // These can throw errSecInteractionNotAllowed — let the exception propagate
+        // so the cache is NOT marked hydrated (will be retried on next access)
+        const std::vector<std::string> secureKeys = keychainAccountsForService(kKeychainService, nsGroup);
+        const std::vector<std::string> biometricKeys = keychainAccountsForService(kBiometricKeychainService, nsGroup);
+
         std::lock_guard<std::mutex> lock(secureKeysMutex_);
         if (secureKeyCacheHydrated_) return;
+        if (generation != secureKeysGeneration_) continue;
+        secureKeysCache_.clear();
+        biometricKeysCache_.clear();
+        secureKeysCache_.insert(secureKeys.begin(), secureKeys.end());
+        biometricKeysCache_.insert(biometricKeys.begin(), biometricKeys.end());
+        secureKeyCacheHydrated_ = true;
+        return;
     }
-
-    NSString* nsGroup = nsStringOrNil(currentAccessGroup());
-
-    // These can throw errSecInteractionNotAllowed — let the exception propagate
-    // so the cache is NOT marked hydrated (will be retried on next access)
-    const std::vector<std::string> secureKeys = keychainAccountsForService(kKeychainService, nsGroup);
-    const std::vector<std::string> biometricKeys = keychainAccountsForService(kBiometricKeychainService, nsGroup);
-
-    std::lock_guard<std::mutex> lock(secureKeysMutex_);
-    if (secureKeyCacheHydrated_) return;
-    secureKeysCache_.clear();
-    biometricKeysCache_.clear();
-    secureKeysCache_.insert(secureKeys.begin(), secureKeys.end());
-    biometricKeysCache_.insert(biometricKeys.begin(), biometricKeys.end());
-    secureKeyCacheHydrated_ = true;
 }
 
 void IOSStorageAdapterCpp::markSecureKeySet(const std::string& key) {
     std::lock_guard<std::mutex> lock(secureKeysMutex_);
+    ++secureKeysGeneration_;
     if (!secureKeyCacheHydrated_) {
         return;
     }
@@ -1486,6 +1495,7 @@ void IOSStorageAdapterCpp::markSecureKeySet(const std::string& key) {
 
 void IOSStorageAdapterCpp::markSecureKeyRemoved(const std::string& key) {
     std::lock_guard<std::mutex> lock(secureKeysMutex_);
+    ++secureKeysGeneration_;
     if (!secureKeyCacheHydrated_) {
         return;
     }
@@ -1494,6 +1504,7 @@ void IOSStorageAdapterCpp::markSecureKeyRemoved(const std::string& key) {
 
 void IOSStorageAdapterCpp::markBiometricKeySet(const std::string& key) {
     std::lock_guard<std::mutex> lock(secureKeysMutex_);
+    ++secureKeysGeneration_;
     if (!secureKeyCacheHydrated_) {
         return;
     }
@@ -1502,6 +1513,7 @@ void IOSStorageAdapterCpp::markBiometricKeySet(const std::string& key) {
 
 void IOSStorageAdapterCpp::markBiometricKeyRemoved(const std::string& key) {
     std::lock_guard<std::mutex> lock(secureKeysMutex_);
+    ++secureKeysGeneration_;
     if (!secureKeyCacheHydrated_) {
         return;
     }
@@ -1510,6 +1522,7 @@ void IOSStorageAdapterCpp::markBiometricKeyRemoved(const std::string& key) {
 
 void IOSStorageAdapterCpp::clearSecureKeyCache() {
     std::lock_guard<std::mutex> lock(secureKeysMutex_);
+    ++secureKeysGeneration_;
     secureKeysCache_.clear();
     biometricKeysCache_.clear();
     secureKeyCacheHydrated_ = false;

@@ -31,6 +31,7 @@ struct FakeKeychain {
     NSDictionary* lastUpdateAttributes = nil;
     NSDictionary* lastQuery = nil;
     bool returnNullResult = false;
+    std::function<void()> afterEnumeration;
 };
 
 FakeKeychain& keychain() {
@@ -64,6 +65,7 @@ void resetKeychain() {
     fake.lastUpdateAttributes = nil;
     fake.lastQuery = nil;
     fake.returnNullResult = false;
+    fake.afterEnumeration = nullptr;
 }
 
 void require(bool condition, const std::string& message) {
@@ -125,7 +127,7 @@ extern "C" {
 
 OSStatus SecItemCopyMatching(CFDictionaryRef query, CFTypeRef* result) {
     FakeKeychain& fake = keychain();
-    std::lock_guard<std::mutex> lock(fake.mutex);
+    std::unique_lock<std::mutex> lock(fake.mutex);
     NSDictionary* nsQuery = (__bridge NSDictionary*)query;
     fake.calls.push_back("copy");
     fake.lastQuery = [nsQuery copy];
@@ -150,6 +152,12 @@ OSStatus SecItemCopyMatching(CFDictionaryRef query, CFTypeRef* result) {
         }
         if (result != NULL) {
             *result = CFBridgingRetain(matches.count == 1 ? matches[0] : matches);
+        }
+        std::function<void()> hook = std::move(fake.afterEnumeration);
+        fake.afterEnumeration = nullptr;
+        lock.unlock();
+        if (hook) {
+            hook();
         }
         return errSecSuccess;
     }
@@ -734,6 +742,30 @@ void testConcurrentSecureAccess() {
     require(failures.load() == 0, "concurrent secure access must not fail");
 }
 
+void testWritesDuringFirstEnumerationAreNotLostFromTheCache() {
+    resetKeychain();
+    seed(kPlainService, "early", [@"1" dataUsingEncoding:NSUTF8StringEncoding], nil);
+    IOSStorageAdapterCpp adapter;
+    {
+        FakeKeychain& fake = keychain();
+        std::lock_guard<std::mutex> lock(fake.mutex);
+        fake.afterEnumeration = [&adapter] { adapter.setSecure("late", "2"); };
+    }
+    const auto keys = adapter.getAllKeysSecure();
+    require(contains(keys, "early") && contains(keys, "late"), "a write racing the first enumeration stays listed");
+    require(adapter.sizeSecure() == 2, "size counts the write that raced the first enumeration");
+
+    resetKeychain();
+    seed(kPlainService, "gone", [@"1" dataUsingEncoding:NSUTF8StringEncoding], nil);
+    IOSStorageAdapterCpp deleting;
+    {
+        FakeKeychain& fake = keychain();
+        std::lock_guard<std::mutex> lock(fake.mutex);
+        fake.afterEnumeration = [&deleting] { deleting.deleteSecure("gone"); };
+    }
+    require(deleting.getAllKeysSecure().empty(), "a delete racing the first enumeration stays removed");
+}
+
 } // namespace
 
 int main() {
@@ -748,6 +780,7 @@ int main() {
         testLockedRewriteKeepsTheExistingItemUntouched();
         testBiometricPromotionCompensatesOnFailure();
         testConcurrentSecureAccess();
+        testWritesDuringFirstEnumerationAreNotLostFromTheCache();
         std::cout << "IOSStorageAdapterCpp keychain tests passed." << std::endl;
     }
     return 0;

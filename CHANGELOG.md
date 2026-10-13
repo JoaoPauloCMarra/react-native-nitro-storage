@@ -25,10 +25,12 @@ Breaking changes are always listed first in each release section.
 - `storage.clearBiometric()` on iOS and Android now notifies only the biometric keys it removed. It no longer sends the whole-scope clear signal, so pending coalesced Secure writes are not dropped and unrelated Secure subscribers do not re-run. If the native key listing fails, it falls back to the whole-scope signal.
 - Web: a live event from a custom Secure backend with a key that has no `__secure_` or `__bio_` prefix no longer adds a phantom key to `has`, `size` and `getAllKeys` for the Secure scope.
 - Android: if deleting or clearing Secure values fails part way (for example in a biometric store), the Secure key list is refreshed instead of staying stale until the next successful Secure write.
+- iOS: a Secure write, delete, clear or access-group change that ran while the first Secure key listing was being read from the Keychain could leave the cached key list stale, so `getAllKeys`, `getKeysByPrefix` and `size` missed a new key or listed a deleted one until the next access-group change. The listing is now read again when the cache changed during the read.
 
 ### Documentation
 
 - The Secure storage guide now covers `migrateSecureAccessControl` and the `onProtectedDataAvailable` recovery path for `keychain_locked`, and the native storage notes describe the 0.16.0 full-device behavior on iOS and the shared C++ store.
+- The Secure storage guide states that Android Secure storage still uses `androidx.security:security-crypto` 1.1.0, whose APIs Google deprecated in favour of direct Android Keystore use, and that moving off it needs a data migration planned for a later release.
 
 ## [0.15.0] - 2026-10-07
 
