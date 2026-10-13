@@ -87,3 +87,90 @@ describe("testing entry listeners", () => {
     unsubscribe();
   });
 });
+
+describe("testing entry biometric parity", () => {
+  function seedSecure() {
+    const plain = createStorageItem({
+      key: "plain-token",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+    });
+    const biometric = createStorageItem({
+      key: "bio-token",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+    plain.set("p");
+    biometric.set("b");
+    return { plain, biometric };
+  }
+
+  it("enumerates and counts biometric keys in the Secure scope", () => {
+    seedSecure();
+
+    expect(storage.getAllKeys(StorageScope.Secure).sort()).toEqual([
+      "bio-token",
+      "plain-token",
+    ]);
+    expect(storage.getKeysByPrefix("bio", StorageScope.Secure)).toEqual([
+      "bio-token",
+    ]);
+    expect(storage.size(StorageScope.Secure)).toBe(2);
+    expect(storage.has("bio-token", StorageScope.Secure)).toBe(true);
+    expect(
+      storage
+        .getAllSecureMetadata()
+        .map((entry) => entry.key)
+        .sort(),
+    ).toEqual(["bio-token", "plain-token"]);
+  });
+
+  it("clears biometric values with clear(Secure)", () => {
+    const { biometric } = seedSecure();
+
+    storage.clear(StorageScope.Secure);
+
+    expect(biometric.has()).toBe(false);
+    expect(storage.getAllKeys(StorageScope.Secure)).toEqual([]);
+  });
+
+  it("removes biometric values with clearNamespace", () => {
+    const biometric = createStorageItem({
+      key: "ns:bio-token",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+    biometric.set("b");
+
+    storage.clearNamespace("ns", StorageScope.Secure);
+
+    expect(biometric.has()).toBe(false);
+  });
+
+  it("reports biometric keys as skipped by migrateSecureAccessControl", () => {
+    seedSecure();
+
+    const result = TestingEntry.migrateSecureAccessControl(
+      TestingEntry.AccessControl.AfterFirstUnlock,
+    );
+
+    expect(result.skipped).toEqual(["bio-token"]);
+    expect(result.migrated).toEqual(["plain-token"]);
+  });
+
+  it("emits key events for biometric keys on clearBiometric", () => {
+    seedSecure();
+    const keys: string[] = [];
+    storage.subscribe(StorageScope.Secure, (event) => {
+      if (event.type === "batch") {
+        event.changes.forEach((change) => keys.push(change.key));
+      }
+    });
+
+    storage.clearBiometric();
+
+    expect(keys).toEqual(["bio-token"]);
+  });
+});
