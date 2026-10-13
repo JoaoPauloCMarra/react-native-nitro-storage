@@ -143,8 +143,15 @@ OSStatus SecItemCopyMatching(CFDictionaryRef query, CFTypeRef* result) {
     if (account == nil) {
         NSMutableArray* matches = [NSMutableArray array];
         NSString* prefix = [service stringByAppendingString:@"\n"];
+        id enumerationContext = nsQuery[(__bridge id)kSecUseAuthenticationContext];
+        const bool enumerationNoUI = fake.enforceAclInteraction &&
+            [enumerationContext isKindOfClass:[LAContext class]] &&
+            ((LAContext*)enumerationContext).interactionNotAllowed;
         for (NSString* key in fake.items) {
             if ([key hasPrefix:prefix]) {
+                if (enumerationNoUI && fake.items[key][(__bridge id)kSecAttrAccessControl] != nil) {
+                    return errSecInteractionNotAllowed;
+                }
                 [matches addObject:@{
                     (__bridge id)kSecAttrAccount: fake.items[key][(__bridge id)kSecAttrAccount]
                 }];
@@ -769,6 +776,12 @@ void testBiometricMetadataAndOverwriteNeedNoUserInterface() {
     adapter.setSecureBiometricWithLevel("vault", "three", 1);
     require(stored(kBiometricService, "vault"), "overwriting a protected item keeps one biometric item");
     require(contains(adapter.getAllKeysSecure(), "vault"), "overwritten key stays listed");
+
+    require(contains(adapter.getKeysByPrefixSecure("va"), "vault") && adapter.sizeSecure() == 1, "prefix and size list the protected item");
+
+    IOSStorageAdapterCpp fresh;
+    require(contains(fresh.getAllKeysSecure(), "vault"), "first enumeration lists a protected item without UI");
+    require(fresh.sizeSecure() == 1, "first size counts a protected item without UI");
 
     resetKeychain();
     keychain().enforceAclInteraction = true;

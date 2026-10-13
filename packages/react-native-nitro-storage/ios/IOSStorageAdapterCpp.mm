@@ -1047,9 +1047,15 @@ static void restoreBiometricValue(
     }
 }
 
-static std::vector<std::string> keychainAccountsForService(NSString* service, NSString* accessGroup) {
+static std::vector<std::string> keychainAccountsForService(
+    NSString* service,
+    NSString* accessGroup,
+    bool interactionDisabled
+) {
     NSMutableDictionary* query = allAccountsQuery(service, accessGroup);
-    disableKeychainInteraction(query);
+    if (interactionDisabled) {
+        disableKeychainInteraction(query);
+    }
     CFTypeRef result = NULL;
     std::vector<std::string> keys;
     OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
@@ -1492,8 +1498,8 @@ void IOSStorageAdapterCpp::ensureSecureKeyCacheHydrated() {
 
         // These can throw errSecInteractionNotAllowed — let the exception propagate
         // so the cache is NOT marked hydrated (will be retried on next access)
-        const std::vector<std::string> secureKeys = keychainAccountsForService(kKeychainService, nsGroup);
-        const std::vector<std::string> biometricKeys = keychainAccountsForService(kBiometricKeychainService, nsGroup);
+        const std::vector<std::string> secureKeys = keychainAccountsForService(kKeychainService, nsGroup, true);
+        const std::vector<std::string> biometricKeys = keychainAccountsForService(kBiometricKeychainService, nsGroup, false);
 
         std::lock_guard<std::mutex> lock(secureKeysMutex_);
         if (secureKeyCacheHydrated_) return;

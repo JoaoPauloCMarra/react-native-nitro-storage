@@ -95,6 +95,16 @@ export default function BiometricReplayScreen() {
       append(`bio:meta=${describeStorageError(error)};`);
     }
 
+    try {
+      const listed =
+        storage.getKeysByPrefix(key, StorageScope.Secure).includes(key) &&
+        storage.getAllKeys(StorageScope.Secure).includes(key) &&
+        storage.size(StorageScope.Secure) >= 1;
+      append(listed ? "bio:keys=listed;" : "bio:keys=missing;");
+    } catch (error) {
+      append(`bio:keys=${describeStorageError(error)};`);
+    }
+
     append("bio:read=prompting;");
     const seededItem = item;
     setTimeout(() => {

@@ -919,6 +919,20 @@
       "assertion": "protected=${String(metadata.biometricProtected)}:exposed=${String(metadata.valueExposed)};"
     },
     {
+      "id": "biometric.ios-keys-listed",
+      "coverage": "replay-asserted",
+      "kind": "public-api",
+      "transport": "After the biometric seed, getKeysByPrefix, getAllKeys and size on the Secure scope list the biometric key without a prompt.",
+      "claimLimit": "iOS simulator only. The listing comes from the Keychain attribute query; it does not prove behavior on a locked device.",
+      "suite": "e2e/qa-biometric-ios.ad",
+      "source": "apps/example/app/e2e-biometric.tsx",
+      "statusSource": "apps/example/app/e2e-biometric.tsx",
+      "trigger": "screen-load",
+      "statusId": "e2e-biometric-results",
+      "expectedText": "bio:keys=listed;",
+      "assertion": "storage.getAllKeys(StorageScope.Secure).includes(key)"
+    },
+    {
       "id": "biometric.ios-prompt-match",
       "coverage": "replay-asserted",
       "kind": "public-api",
