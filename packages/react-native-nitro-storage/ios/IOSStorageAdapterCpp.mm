@@ -1448,6 +1448,12 @@ void IOSStorageAdapterCpp::clearSecureBiometric() {
     }
 }
 
+std::vector<std::string> IOSStorageAdapterCpp::getBiometricKeysSecure() {
+    ensureSecureKeyCacheHydrated();
+    std::lock_guard<std::mutex> lock(secureKeysMutex_);
+    return std::vector<std::string>(biometricKeysCache_.begin(), biometricKeysCache_.end());
+}
+
 void IOSStorageAdapterCpp::ensureSecureKeyCacheHydrated() {
     {
         std::lock_guard<std::mutex> lock(secureKeysMutex_);

@@ -53,6 +53,7 @@ public:
     void deleteSecureBiometric(const std::string& key) override;
     bool hasSecureBiometric(const std::string& key) override;
     void clearSecureBiometric() override;
+    std::vector<std::string> getBiometricKeysSecure() override;
 
     bool isProtectedDataAvailable() override;
     std::function<void()> addProtectedDataAvailableListener(std::function<void()> listener) override;

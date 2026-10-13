@@ -99,6 +99,7 @@ public:
     }
 
     std::vector<std::string> getAllKeysSecure() override {
+        secureListCalls_ += 1;
         if (failSecureListing_) {
             throw std::runtime_error("[nitro-error:keychain_locked] NitroStorage: listing locked");
         }
@@ -204,6 +205,18 @@ public:
         biometric_.clear();
     }
 
+    std::vector<std::string> getBiometricKeysSecure() override {
+        biometricKeyListCalls_ += 1;
+        if (failSecureListing_) {
+            throw std::runtime_error("[nitro-error:keychain_locked] NitroStorage: listing locked");
+        }
+        std::vector<std::string> keys;
+        for (const auto& [key, _] : biometric_) {
+            keys.push_back(key);
+        }
+        return keys;
+    }
+
     bool isProtectedDataAvailable() override {
         return protectedDataAvailable_;
     }
@@ -232,6 +245,8 @@ public:
     const std::string& keychainGroup() const { return keychainGroup_; }
     int biometricLevel() const { return biometricLevel_; }
     void setFailSecureListing(bool fail) { failSecureListing_ = fail; }
+    int biometricKeyListCalls() const { return biometricKeyListCalls_; }
+    int secureListCalls() const { return secureListCalls_; }
     void failSecureBatchAt(size_t index) { failSecureBatchAt_ = index; }
 
 private:
@@ -254,6 +269,8 @@ private:
     std::string keychainGroup_;
     int biometricLevel_ = -1;
     bool failSecureListing_ = false;
+    int biometricKeyListCalls_ = 0;
+    int secureListCalls_ = 0;
     bool protectedDataAvailable_ = true;
     size_t nextProtectedListenerId_ = 0;
     std::map<size_t, std::function<void()>> protectedListeners_;
@@ -719,12 +736,15 @@ void testBiometricMethods() {
     assert(storage->has("bio-clear", 2.0));
     storage->set("plain-secure", "plain-value", 2.0);
     events.clear();
+    const int secureListsBefore = adapter->secureListCalls();
     storage->clearSecureBiometric();
+    assert(adapter->secureListCalls() == secureListsBefore);
     assert(!storage->has("bio-clear", 2.0));
     assert(events.size() == 1);
     assert(events[0].first == "bio-clear");
     assert(!events[0].second.has_value());
     assert(storage->has("plain-secure", 2.0));
+    assert(adapter->biometricKeyListCalls() == 1);
 
     unsubscribe();
 }

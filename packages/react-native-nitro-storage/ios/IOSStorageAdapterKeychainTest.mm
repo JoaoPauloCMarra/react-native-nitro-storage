@@ -440,6 +440,19 @@ void testSecureRoundTripAgainstFakeKeychain() {
     require(keychain().calls.size() == callsBefore, "invalid UTF-8 must not reach the keychain");
 }
 
+void testBiometricKeysComeFromTheCache() {
+    resetKeychain();
+    IOSStorageAdapterCpp adapter;
+    adapter.setSecure("plain", "p");
+    adapter.setSecureBiometricWithLevel("bio", "b", 2);
+    require(adapter.getBiometricKeysSecure() == std::vector<std::string>{"bio"}, "biometric keys exclude plain keys");
+    const size_t callsBefore = keychain().calls.size();
+    require(adapter.getBiometricKeysSecure() == std::vector<std::string>{"bio"}, "repeat listing");
+    require(keychain().calls.size() == callsBefore, "listing biometric keys reuses the cache");
+    adapter.clearSecureBiometric();
+    require(adapter.getBiometricKeysSecure().empty(), "clear empties the biometric keys");
+}
+
 void testUndecodableKeychainDataIsReportedAsCorruption() {
     resetKeychain();
     const unsigned char bytes[] = {0xff, 0xfe, 0xfd};
@@ -726,6 +739,7 @@ void testConcurrentSecureAccess() {
 int main() {
     @autoreleasepool {
         testSecureRoundTripAgainstFakeKeychain();
+        testBiometricKeysComeFromTheCache();
         testKeychainStatusMappingForEveryOperation();
         testUndecodableKeychainDataIsReportedAsCorruption();
         testLockedEnumerationIsRetriedAndPartialBatchesReportProgress();

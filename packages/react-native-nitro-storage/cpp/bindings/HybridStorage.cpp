@@ -533,11 +533,7 @@ void HybridStorage::clearSecureBiometric() {
     std::vector<std::string> biometricKeys;
     bool biometricKeysKnown = true;
     try {
-        for (const auto& key : nativeAdapter_->getAllKeysSecure()) {
-            if (nativeAdapter_->hasSecureBiometric(key)) {
-                biometricKeys.push_back(key);
-            }
-        }
+        biometricKeys = nativeAdapter_->getBiometricKeysSecure();
     } catch (...) {
         biometricKeysKnown = false;
     }
