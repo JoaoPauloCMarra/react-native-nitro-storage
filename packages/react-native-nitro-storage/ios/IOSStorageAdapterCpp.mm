@@ -287,6 +287,7 @@ static void disableKeychainInteraction(NSMutableDictionary* query) {
 
 struct BiometricKeychainSnapshot {
     bool present{false};
+    bool valueReadable{true};
     std::string value;
     SecAccessControlRef accessControl{nullptr};
 
@@ -295,6 +296,7 @@ struct BiometricKeychainSnapshot {
     BiometricKeychainSnapshot& operator=(const BiometricKeychainSnapshot&) = delete;
     BiometricKeychainSnapshot(BiometricKeychainSnapshot&& other) noexcept
         : present(other.present),
+          valueReadable(other.valueReadable),
           value(std::move(other.value)),
           accessControl(other.accessControl) {
         other.accessControl = nullptr;
@@ -303,6 +305,7 @@ struct BiometricKeychainSnapshot {
         if (this == &other) return *this;
         if (accessControl) CFRelease(accessControl);
         present = other.present;
+        valueReadable = other.valueReadable;
         value = std::move(other.value);
         accessControl = other.accessControl;
         other.accessControl = nullptr;
@@ -807,52 +810,82 @@ static void throwIfLookupFailed(OSStatus status, const std::string& operation) {
     throw keychainStatusError(status, operation);
 }
 
+static bool biometricItemExists(NSString* nsKey, NSString* group, const std::string& operation) {
+    NSMutableDictionary* query = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
+    query[(__bridge id)kSecReturnAttributes] = @YES;
+    query[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
+    CFTypeRef result = NULL;
+    const OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
+    if (result) CFRelease(result);
+    if (status == errSecSuccess || status == errSecInteractionNotAllowed) {
+        return true;
+    }
+    if (status == errSecItemNotFound) {
+        return false;
+    }
+    throw keychainStatusError(status, operation);
+}
+
 static BiometricKeychainSnapshot captureBiometricValue(
     NSString* nsKey,
     NSString* group
 ) {
     BiometricKeychainSnapshot snapshot;
-    NSMutableDictionary* query = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
-    query[(__bridge id)kSecReturnAttributes] = @YES;
-    query[(__bridge id)kSecReturnData] = @YES;
-    query[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
-    disableKeychainInteraction(query);
-
-    CFTypeRef result = NULL;
-    const OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
-    if (status == errSecItemNotFound) {
+    NSMutableDictionary* attributeQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
+    attributeQuery[(__bridge id)kSecReturnAttributes] = @YES;
+    attributeQuery[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
+    CFTypeRef attributeResult = NULL;
+    const OSStatus attributeStatus =
+        SecItemCopyMatching((__bridge CFDictionaryRef)attributeQuery, &attributeResult);
+    if (attributeStatus == errSecItemNotFound) {
         return snapshot;
     }
-    if (status == errSecInteractionNotAllowed) {
+    if (attributeStatus == errSecInteractionNotAllowed) {
         throw taggedStorageError(
             "keychain_locked",
             "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
             "The biometric item is not accessible until the device is unlocked."
         );
     }
-    if (status != errSecSuccess || !result) {
-        if (result) CFRelease(result);
-        throw keychainStatusError(status, "Biometric snapshot");
+    if (attributeStatus != errSecSuccess || !attributeResult) {
+        if (attributeResult) CFRelease(attributeResult);
+        throw keychainStatusError(attributeStatus, "Biometric snapshot");
     }
-
-    NSDictionary* attributes = (__bridge NSDictionary*)result;
-    NSData* data = attributes[(__bridge id)kSecValueData];
+    NSDictionary* attributes = (__bridge_transfer NSDictionary*)attributeResult;
     id accessControl = attributes[(__bridge id)kSecAttrAccessControl];
-    if (!data || !accessControl) {
-        CFRelease(result);
+    if (!accessControl) {
         throw std::runtime_error(
-            "NitroStorage: Biometric snapshot did not include value data and access control"
+            "NitroStorage: Biometric snapshot did not include access control"
         );
     }
+    snapshot.present = true;
+    snapshot.accessControl = (SecAccessControlRef)CFRetain((__bridge CFTypeRef)accessControl);
+
+    NSMutableDictionary* dataQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
+    dataQuery[(__bridge id)kSecReturnData] = @YES;
+    dataQuery[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
+    disableKeychainInteraction(dataQuery);
+    CFTypeRef dataResult = NULL;
+    const OSStatus dataStatus = SecItemCopyMatching((__bridge CFDictionaryRef)dataQuery, &dataResult);
+    if (dataStatus == errSecInteractionNotAllowed) {
+        if (dataResult) CFRelease(dataResult);
+        snapshot.valueReadable = false;
+        return snapshot;
+    }
+    if (dataStatus == errSecItemNotFound) {
+        snapshot.present = false;
+        return snapshot;
+    }
+    if (dataStatus != errSecSuccess || !dataResult) {
+        if (dataResult) CFRelease(dataResult);
+        throw keychainStatusError(dataStatus, "Biometric snapshot");
+    }
+    NSData* data = (__bridge_transfer NSData*)dataResult;
     NSString* stringValue = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     if (!stringValue) {
-        CFRelease(result);
         throw std::runtime_error("NitroStorage: Biometric snapshot value is not UTF-8");
     }
-    snapshot.present = true;
     snapshot.value = stdStringFromNSString(stringValue);
-    snapshot.accessControl = (SecAccessControlRef)CFRetain((__bridge CFTypeRef)accessControl);
-    CFRelease(result);
     return snapshot;
 }
 
@@ -982,6 +1015,14 @@ static void restoreBiometricValue(
     NSString* group,
     const BiometricKeychainSnapshot& snapshot
 ) {
+    if (snapshot.present && !snapshot.valueReadable) {
+        if (biometricItemExists(nsKey, group, "Biometric restore")) {
+            return;
+        }
+        throw std::runtime_error(
+            "NitroStorage: Previous biometric value could not be read without authentication and cannot be restored"
+        );
+    }
     deleteBiometricValue(nsKey, group);
     if (!snapshot.present) {
         return;
@@ -1092,14 +1133,7 @@ bool IOSStorageAdapterCpp::hasSecure(const std::string& key) {
         return true;
     }
     throwIfLookupFailed(secureStatus, "Secure has");
-    NSMutableDictionary* biometricQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
-    disableKeychainInteraction(biometricQuery);
-    const OSStatus biometricStatus = SecItemCopyMatching((__bridge CFDictionaryRef)biometricQuery, NULL);
-    if (biometricStatus == errSecSuccess || biometricStatus == errSecInteractionNotAllowed) {
-        return true;
-    }
-    throwIfLookupFailed(biometricStatus, "Secure has");
-    return false;
+    return biometricItemExists(nsKey, group, "Secure has");
 }
 
 std::vector<std::string> IOSStorageAdapterCpp::getAllKeysSecure() {
@@ -1410,18 +1444,7 @@ void IOSStorageAdapterCpp::deleteSecureBiometric(const std::string& key) {
 bool IOSStorageAdapterCpp::hasSecureBiometric(const std::string& key) {
     NSString* nsKey = nsStringFromStdString(key);
     NSString* group = nsStringOrNil(currentAccessGroup());
-    NSMutableDictionary* query = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
-    disableKeychainInteraction(query);
-    const OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, NULL);
-    if (status == errSecSuccess) return true;
-    if (status == errSecItemNotFound) return false;
-    if (status == errSecInteractionNotAllowed) {
-        throw taggedStorageError(
-            "keychain_locked",
-            "NitroStorage: Keychain is locked (errSecInteractionNotAllowed) while inspecting biometric storage"
-        );
-    }
-    throw keychainStatusError(status, "Biometric has");
+    return biometricItemExists(nsKey, group, "Biometric has");
 }
 
 void IOSStorageAdapterCpp::clearSecureBiometric() {

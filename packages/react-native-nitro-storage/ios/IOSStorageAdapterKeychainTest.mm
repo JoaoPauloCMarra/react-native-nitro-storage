@@ -1,6 +1,7 @@
 #import "IOSStorageAdapterCpp.hpp"
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
+#import <LocalAuthentication/LocalAuthentication.h>
 
 #include <algorithm>
 #include <atomic>
@@ -32,6 +33,7 @@ struct FakeKeychain {
     NSDictionary* lastQuery = nil;
     bool returnNullResult = false;
     std::function<void()> afterEnumeration;
+    bool enforceAclInteraction = false;
 };
 
 FakeKeychain& keychain() {
@@ -66,6 +68,7 @@ void resetKeychain() {
     fake.lastQuery = nil;
     fake.returnNullResult = false;
     fake.afterEnumeration = nullptr;
+    fake.enforceAclInteraction = false;
 }
 
 void require(bool condition, const std::string& message) {
@@ -164,6 +167,13 @@ OSStatus SecItemCopyMatching(CFDictionaryRef query, CFTypeRef* result) {
     NSDictionary* item = fake.items[itemKey(service, account)];
     if (item == nil) {
         return errSecItemNotFound;
+    }
+    id queryContext = nsQuery[(__bridge id)kSecUseAuthenticationContext];
+    if (fake.enforceAclInteraction &&
+        item[(__bridge id)kSecAttrAccessControl] != nil &&
+        [queryContext isKindOfClass:[LAContext class]] &&
+        ((LAContext*)queryContext).interactionNotAllowed) {
+        return errSecInteractionNotAllowed;
     }
     if (result == NULL) {
         return errSecSuccess;
@@ -308,7 +318,11 @@ std::vector<KeychainOperation> keychainOperations() {
         {"getSecureBiometric", "Biometric get", &fake.copyScript, 0,
             [](IOSStorageAdapterCpp& a) { (void)a.getSecureBiometric("k"); }, false},
         {"hasSecureBiometric", "Biometric has", &fake.copyScript, 0,
-            [](IOSStorageAdapterCpp& a) { (void)a.hasSecureBiometric("k"); }, false},
+            [](IOSStorageAdapterCpp& a) {
+                if (!a.hasSecureBiometric("k")) {
+                    throw std::runtime_error("unexpected absent");
+                }
+            }, true},
         {"deleteSecureBiometric", "Biometric delete", &fake.deleteScript, 0,
             [](IOSStorageAdapterCpp& a) { a.deleteSecureBiometric("k"); }, false},
         {"clearSecureBiometric", "clearSecureBiometric", &fake.deleteScript, 0,
@@ -742,6 +756,29 @@ void testConcurrentSecureAccess() {
     require(failures.load() == 0, "concurrent secure access must not fail");
 }
 
+void testBiometricMetadataAndOverwriteNeedNoUserInterface() {
+    resetKeychain();
+    keychain().enforceAclInteraction = true;
+    IOSStorageAdapterCpp adapter;
+    adapter.setSecureBiometricWithLevel("vault", "one", 2);
+    require(adapter.hasSecureBiometric("vault"), "an ACL-protected item is reported present without UI");
+    require(adapter.hasSecure("vault"), "hasSecure sees the ACL-protected item without UI");
+    require(!adapter.hasSecureBiometric("missing"), "an absent biometric item is still absent");
+
+    adapter.setSecureBiometricWithLevel("vault", "two", 2);
+    adapter.setSecureBiometricWithLevel("vault", "three", 1);
+    require(stored(kBiometricService, "vault"), "overwriting a protected item keeps one biometric item");
+    require(contains(adapter.getAllKeysSecure(), "vault"), "overwritten key stays listed");
+
+    resetKeychain();
+    keychain().enforceAclInteraction = true;
+    IOSStorageAdapterCpp failing;
+    failing.setSecureBiometricWithLevel("vault", "one", 2);
+    script(keychain().addScript, {errSecParam});
+    const std::string message = failureMessage([&] { failing.setSecureBiometricWithLevel("vault", "two", 2); });
+    require(startsWith(message, "[nitro-error:storage_compensation_failed]"), "an unreadable previous value cannot be restored: " + message);
+}
+
 void testWritesDuringFirstEnumerationAreNotLostFromTheCache() {
     resetKeychain();
     seed(kPlainService, "early", [@"1" dataUsingEncoding:NSUTF8StringEncoding], nil);
@@ -781,6 +818,7 @@ int main() {
         testBiometricPromotionCompensatesOnFailure();
         testConcurrentSecureAccess();
         testWritesDuringFirstEnumerationAreNotLostFromTheCache();
+        testBiometricMetadataAndOverwriteNeedNoUserInterface();
         std::cout << "IOSStorageAdapterCpp keychain tests passed." << std::endl;
     }
     return 0;
