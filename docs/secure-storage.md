@@ -70,6 +70,20 @@ On Android 11 and newer, the two levels use separate Android Keystore keys with 
 
 On iOS the level applies on every write, including updates of an item that already exists, so changing `accessControl` or `storage.setAccessControl()` moves existing items to the new level on their next write. On iOS, `item.has()` and `storage.has(key, StorageScope.Secure)` throw `keychain_locked` while the keychain is locked, and a Keychain status error for any other unexpected status, instead of returning `false`. A biometric item that the Keychain reports as needing authentication counts as present, so `has()` on a biometric item returns `true` without a prompt; while the device is locked the same status also returns `true`. Listing, counting, and prefix queries on Secure keys throw a Keychain status error for unexpected statuses instead of returning an empty result.
 
+### Change the access class of existing items
+
+`storage.setAccessControl()` applies on the next write of each item. To move
+every existing Secure item to a new iOS accessibility class in one pass, call
+`migrateSecureAccessControl(level, options?)`. It sets the default level, reads
+each stored string, and writes it back unchanged; it never deletes a value.
+Biometric items are listed in `skipped` and are not read. A key whose read or
+write fails with `keychain_locked` stays untouched and is listed in `locked`,
+and `enumerationLocked: true` means nothing changed because the listing or the
+pending-write flush was locked. In both cases retry after protected data is
+available (see below). On Android and web the call records the level and lists
+every key in `skipped`. See the README for the full result shape and for the
+app-extension race note.
+
 ## Secure Auth Item Map
 
 `createSecureAuthStorage()` creates a namespaced map of secure string items.
@@ -175,9 +189,16 @@ Recovery depends on the exact stable code:
 
 | Code                      | Meaning                                   | Consumer action                                     |
 | ------------------------- | ----------------------------------------- | --------------------------------------------------- |
-| `keychain_locked`         | Protected data is temporarily unavailable | Retry after the device unlocks and the app resumes. |
+| `keychain_locked`         | Protected data is temporarily unavailable | Defer with `storage.onProtectedDataAvailable()`.    |
 | `authentication_required` | The secure item requires user interaction | Start the application's authentication flow.        |
 | `key_invalidated`         | The platform key can no longer decrypt it | Remove and recreate the affected credential safely. |
+
+To defer work for `keychain_locked`, check `storage.isProtectedDataAvailable()`
+and register `storage.onProtectedDataAvailable(listener)`, which fires each time
+protected data becomes available again. The README section "Handling
+keychain_locked" has a ready helper. Treat the success of the actual read as the
+source of truth in background-only code, because a cold background launch inside
+the lock grace window can report `true` early.
 
 `isKeychainLockedError()` remains available for compatibility but is
 deprecated. It groups all three codes and must not be used to select retry

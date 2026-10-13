@@ -24,6 +24,10 @@ None.
 - Android no longer deletes a Secure value that fails authentication and reports it as missing. Reading it now throws `[nitro-error:storage_corruption]`, as iOS does, and the entry stays in the store so `delete()` or `set()` can replace it.
 - `storage.clearBiometric()` on iOS and Android now notifies only the biometric keys it removed. It no longer sends the whole-scope clear signal, so pending coalesced Secure writes are not dropped and unrelated Secure subscribers do not re-run. If the native key listing fails, it falls back to the whole-scope signal.
 
+### Documentation
+
+- The Secure storage guide now covers `migrateSecureAccessControl` and the `onProtectedDataAvailable` recovery path for `keychain_locked`, and the native storage notes describe the 0.15.1 full-device behavior on iOS and the shared C++ store.
+
 ## [0.15.0] - 2026-10-07
 
 ### Breaking changes
