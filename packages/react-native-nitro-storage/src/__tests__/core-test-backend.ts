@@ -12,6 +12,7 @@ export type TestBackend = StorageCoreBackend & {
   stores: Record<StorageScope.Disk | StorageScope.Secure, Map<string, string>>;
   biometric: Map<string, string>;
   failNext(operation: FailureOperation, scope: StorageScope): void;
+  lockReads: boolean;
 };
 
 export function createTestBackend(): TestBackend {
@@ -29,13 +30,19 @@ export function createTestBackend(): TestBackend {
       throw new Error("[nitro-error:storage_full] NitroStorage: injected");
     }
   };
-  return {
+  const backend: TestBackend = {
+    lockReads: false,
     stores,
     biometric,
     failNext: (operation, scope) => {
       failures.add(`${operation}:${scope}`);
     },
-    get: (key, scope) => storeFor(scope).get(key),
+    get: (key, scope) => {
+      if (backend.lockReads) {
+        throw new Error("[nitro-error:keychain_locked] NitroStorage: locked");
+      }
+      return storeFor(scope).get(key);
+    },
     set: (key, value, scope) => {
       guard("set", scope);
       storeFor(scope).set(key, value);
@@ -82,6 +89,7 @@ export function createTestBackend(): TestBackend {
     hasSecureBiometric: (key) => biometric.has(key),
     clearSecureBiometric: () => biometric.clear(),
   };
+  return backend;
 }
 
 export function createTestCore(

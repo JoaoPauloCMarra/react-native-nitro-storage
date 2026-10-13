@@ -166,6 +166,7 @@ type StorageItemInternal<T> = StorageItem<T> & {
   _getRenameMigrationState: () => boolean;
   _setRenameMigrationState: (migrated: boolean) => void;
   _readCacheEnabled: boolean;
+  _fillsRawCache: boolean;
   _isBiometric: boolean;
   _biometricLevel: BiometricLevel;
   _defaultValue: T;
@@ -181,6 +182,7 @@ export type BatchReadItem<T> = Pick<
   _hasExpiration?: boolean;
   _hasRenameFrom?: boolean;
   _readCacheEnabled?: boolean;
+  _fillsRawCache?: boolean;
   _isBiometric?: boolean;
   _defaultValue?: unknown;
   _secureAccessControl?: AccessControl;
@@ -2944,6 +2946,7 @@ export function createStorageCore(
         renamesMigrated = migrated;
       },
       _readCacheEnabled: readCache,
+      _fillsRawCache: readCache || fallbackToCacheOnReadError,
       _isBiometric: isBiometric,
       _biometricLevel: resolvedBiometricLevel,
       _defaultValue: defaultValue,
@@ -3047,7 +3050,7 @@ export function createStorageCore(
               return;
             }
             rawValues[targetIndex] = value;
-            if (items[targetIndex]?._readCacheEnabled === true) {
+            if (items[targetIndex]?._fillsRawCache === true) {
               cacheRawValue(scope, key, value);
             }
           });
@@ -3162,7 +3165,7 @@ export function createStorageCore(
           secureEntries.forEach(({ item, value, internal }) => {
             const serialized = item.serialize(value);
             serializedValues.push(serialized);
-            if (internal._readCacheEnabled) {
+            if (internal._fillsRawCache) {
               readCacheKeys.add(item.key);
             }
             const accessControl =

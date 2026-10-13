@@ -4,10 +4,16 @@ import { createTestBackend, createTestCore } from "./core-test-backend";
 describe.each([StorageScope.Disk, StorageScope.Secure] as const)(
   "readCache item after a failed synchronous backend call (%s)",
   (scope) => {
-    it("keeps get, has and getString on the stored value when set throws", () => {
+    it("keeps cached reads on the stored value when set throws", () => {
       const backend = createTestBackend();
-      const { createStorageItem, storage } = createTestCore(backend);
+      const { createStorageItem } = createTestCore(backend);
       const item = createStorageItem({
+        key: "rc",
+        scope,
+        defaultValue: "default",
+        readCache: true,
+      });
+      const sibling = createStorageItem({
         key: "rc",
         scope,
         defaultValue: "default",
@@ -22,13 +28,19 @@ describe.each([StorageScope.Disk, StorageScope.Secure] as const)(
       expect(backend.stores[scope].get("rc")).toBe(stored);
       expect(item.get()).toBe("old");
       expect(item.has()).toBe(true);
-      expect(storage.getString("rc", scope)).toBe(stored);
+      expect(sibling.get()).toBe("old");
     });
 
-    it("keeps get, has and getString on the stored value when delete throws", () => {
+    it("keeps cached reads on the stored value when delete throws", () => {
       const backend = createTestBackend();
-      const { createStorageItem, storage } = createTestCore(backend);
+      const { createStorageItem } = createTestCore(backend);
       const item = createStorageItem({
+        key: "rc",
+        scope,
+        defaultValue: "default",
+        readCache: true,
+      });
+      const sibling = createStorageItem({
         key: "rc",
         scope,
         defaultValue: "default",
@@ -43,7 +55,7 @@ describe.each([StorageScope.Disk, StorageScope.Secure] as const)(
       expect(backend.stores[scope].get("rc")).toBe(stored);
       expect(item.get()).toBe("old");
       expect(item.has()).toBe(true);
-      expect(storage.getString("rc", scope)).toBe(stored);
+      expect(sibling.get()).toBe("old");
     });
 
     it("keeps raw setString and remove on the stored value when the backend throws", () => {
@@ -65,7 +77,7 @@ describe.each([StorageScope.Disk, StorageScope.Secure] as const)(
       backend.failNext("remove", scope);
       expect(() => storage.deleteString("rc", scope)).toThrow();
       expect(item.get()).toBe("old");
-      expect(storage.getString("rc", scope)).toBe(stored);
+      expect(backend.stores[scope].get("rc")).toBe(stored);
     });
   },
 );
@@ -143,5 +155,57 @@ describe("Secure plaintext cache follows readCache", () => {
     );
 
     expect(storage.getCacheMetrics().cacheEntries).toBe(1);
+  });
+});
+
+describe("fallbackToCacheOnReadError with batch writes and reads", () => {
+  function setup() {
+    const backend = createTestBackend();
+    const core = createTestCore(backend);
+    const item = core.createStorageItem({
+      key: "fallback",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+      fallbackToCacheOnReadError: true,
+    });
+    return { backend, item, ...core };
+  }
+
+  it("serves the batch-written value while the keychain is locked", () => {
+    const { backend, item, setBatch } = setup();
+    item.set("v1");
+    expect(item.get()).toBe("v1");
+
+    setBatch([{ item, value: "v2" }], StorageScope.Secure);
+    backend.lockReads = true;
+
+    expect(item.get()).toBe("v2");
+  });
+
+  it("serves the batch-read value while the keychain is locked", () => {
+    const { backend, item, getBatch } = setup();
+    item.set("v1");
+    expect(item.get()).toBe("v1");
+    backend.stores[StorageScope.Secure].set(
+      "fallback",
+      "__nitro_storage_primitive__:s:v2",
+    );
+
+    expect(getBatch([item], StorageScope.Secure)).toEqual(["v2"]);
+    backend.lockReads = true;
+
+    expect(item.get()).toBe("v2");
+  });
+
+  it("does not serve batch reads from the fallback cache", () => {
+    const { backend, item, getBatch } = setup();
+    item.set("v1");
+    expect(item.get()).toBe("v1");
+    backend.stores[StorageScope.Secure].set(
+      "fallback",
+      "__nitro_storage_primitive__:s:v2",
+    );
+
+    expect(getBatch([item], StorageScope.Secure)).toEqual(["v2"]);
   });
 });
