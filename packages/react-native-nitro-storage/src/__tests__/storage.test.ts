@@ -1,29 +1,7 @@
 import { renderHook, act } from "@testing-library/react-native";
 
-const mockHybridObject = {
-  set: jest.fn(),
-  get: jest.fn(),
-  remove: jest.fn(),
-  clear: jest.fn(),
-  has: jest.fn(),
-  getAllKeys: jest.fn(),
-  size: jest.fn(),
-  setBatch: jest.fn(),
-  getBatch: jest.fn(),
-  removeBatch: jest.fn(),
-  removeByPrefix: jest.fn(),
-  addOnChange: jest.fn(),
-  setSecureAccessControl: jest.fn(),
-  setSecureWritesAsync: jest.fn(),
-  setKeychainAccessGroup: jest.fn(),
-  setSecureBiometric: jest.fn(),
-  setSecureBiometricWithLevel: jest.fn(),
-  getSecureBiometric: jest.fn(),
-  deleteSecureBiometric: jest.fn(),
-  hasSecureBiometric: jest.fn(),
-  clearSecureBiometric: jest.fn(),
-  getKeysByPrefix: jest.fn(),
-};
+import { createMockHybridObject } from "./helpers/mock-hybrid-object";
+const mockHybridObject = createMockHybridObject();
 
 jest.mock("react-native-nitro-modules", () => ({
   NitroModules: {

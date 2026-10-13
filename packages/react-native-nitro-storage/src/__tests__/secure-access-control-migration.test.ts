@@ -1,29 +1,13 @@
-const mockHybridObject = {
-  set: jest.fn(),
-  get: jest.fn(),
-  remove: jest.fn(),
-  clear: jest.fn(),
-  has: jest.fn(),
+import { createMockHybridObject } from "./helpers/mock-hybrid-object";
+
+const mockHybridObject = createMockHybridObject({
   getAllKeys: jest.fn(() => [] as string[]),
-  size: jest.fn(() => 0),
-  setBatch: jest.fn(),
-  getBatch: jest.fn(() => []),
-  removeBatch: jest.fn(),
-  removeByPrefix: jest.fn(),
-  addOnChange: jest.fn(() => () => {}),
-  setSecureAccessControl: jest.fn(),
-  setSecureWritesAsync: jest.fn(),
-  setKeychainAccessGroup: jest.fn(),
-  setSecureBiometric: jest.fn(),
-  setSecureBiometricWithLevel: jest.fn(),
-  getSecureBiometric: jest.fn(),
-  deleteSecureBiometric: jest.fn(),
-  hasSecureBiometric: jest.fn((_key: string) => false),
-  clearSecureBiometric: jest.fn(),
   getKeysByPrefix: jest.fn(() => []),
-  isProtectedDataAvailable: jest.fn(() => true),
-  onProtectedDataAvailable: jest.fn(() => () => {}),
-};
+  size: jest.fn(() => 0),
+  getBatch: jest.fn(() => []),
+  addOnChange: jest.fn(() => () => {}),
+  hasSecureBiometric: jest.fn((_key: string) => false),
+});
 
 jest.mock("react-native-nitro-modules", () => ({
   NitroModules: {

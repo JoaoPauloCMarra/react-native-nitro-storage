@@ -10,28 +10,17 @@ import {
 // Mock NitroModules to prevent native module resolution errors
 jest.mock("react-native-nitro-modules", () => ({
   NitroModules: {
-    createHybridObject: jest.fn(() => ({
-      clear: jest.fn(),
-      clearSecureBiometric: jest.fn(),
-      set: jest.fn(),
-      get: jest.fn(),
-      remove: jest.fn(),
-      has: jest.fn(),
-      getAllKeys: jest.fn(() => []),
-      size: jest.fn(() => 0),
-      setBatch: jest.fn(),
-      getBatch: jest.fn(),
-      removeBatch: jest.fn(),
-      removeByPrefix: jest.fn(),
-      addOnChange: jest.fn(() => () => {}),
-      setSecureAccessControl: jest.fn(),
-      setSecureWritesAsync: jest.fn(),
-      setKeychainAccessGroup: jest.fn(),
-      setSecureBiometric: jest.fn(),
-      getSecureBiometric: jest.fn(),
-      deleteSecureBiometric: jest.fn(),
-      hasSecureBiometric: jest.fn(),
-    })),
+    createHybridObject: jest.fn(() =>
+      jest
+        .requireActual<typeof import("./helpers/mock-hybrid-object")>(
+          "./helpers/mock-hybrid-object",
+        )
+        .createMockHybridObject({
+          getAllKeys: jest.fn(() => []),
+          size: jest.fn(() => 0),
+          addOnChange: jest.fn(() => () => {}),
+        }),
+    ),
   },
 }));
 
