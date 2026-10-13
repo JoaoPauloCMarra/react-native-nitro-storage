@@ -121,6 +121,20 @@ function createInMemoryBackend(notify: ChangeNotifier): InMemoryBackend {
     return store;
   };
 
+  const keysFor = (scope: StorageScope): string[] => {
+    const keys = Array.from(storeFor(scope).keys());
+    if (scope !== StorageScope.Secure) {
+      return keys;
+    }
+    const known = new Set(keys);
+    biometricStore.forEach((_value, key) => {
+      if (!known.has(key)) {
+        keys.push(key);
+      }
+    });
+    return keys;
+  };
+
   return {
     get: (key, scope) => storeFor(scope).get(key),
     set: (key, value, scope) => {
@@ -136,15 +150,18 @@ function createInMemoryBackend(notify: ChangeNotifier): InMemoryBackend {
     },
     clear: (scope) => {
       storeFor(scope).clear();
+      if (scope === StorageScope.Secure) {
+        biometricStore.clear();
+      }
       notify(scope as NonMemoryScope, null);
     },
-    has: (key, scope) => storeFor(scope).has(key),
-    getAllKeys: (scope) => Array.from(storeFor(scope).keys()),
+    has: (key, scope) =>
+      storeFor(scope).has(key) ||
+      (scope === StorageScope.Secure && biometricStore.has(key)),
+    getAllKeys: (scope) => keysFor(scope),
     getKeysByPrefix: (prefix, scope) =>
-      Array.from(storeFor(scope).keys()).filter((key) =>
-        key.startsWith(prefix),
-      ),
-    size: (scope) => storeFor(scope).size,
+      keysFor(scope).filter((key) => key.startsWith(prefix)),
+    size: (scope) => keysFor(scope).length,
     setBatch: (keys, values, scope) => {
       const store = storeFor(scope);
       keys.forEach((key, index) => {
@@ -173,9 +190,12 @@ function createInMemoryBackend(notify: ChangeNotifier): InMemoryBackend {
     },
     removeByPrefix: (prefix, scope) => {
       const store = storeFor(scope);
-      for (const key of Array.from(store.keys())) {
+      for (const key of keysFor(scope)) {
         if (key.startsWith(prefix)) {
           store.delete(key);
+          if (scope === StorageScope.Secure) {
+            biometricStore.delete(key);
+          }
           notify(scope as NonMemoryScope, key);
         }
       }
@@ -193,8 +213,11 @@ function createInMemoryBackend(notify: ChangeNotifier): InMemoryBackend {
     },
     hasSecureBiometric: (key) => biometricStore.has(key),
     clearSecureBiometric: () => {
+      const keys = Array.from(biometricStore.keys());
       biometricStore.clear();
-      notify(StorageScope.Secure, null);
+      keys.forEach((key) => {
+        notify(StorageScope.Secure, key);
+      });
     },
     resetState: () => {
       stores.forEach((store) => {

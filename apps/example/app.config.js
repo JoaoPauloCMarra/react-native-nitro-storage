@@ -1,3 +1,15 @@
+const { spawnSync } = require("node:child_process");
+
+const hasCcache =
+  process.env.NITRO_EXAMPLE_CCACHE !== "0" &&
+  spawnSync("ccache", ["--version"], { stdio: "ignore" }).status === 0;
+
+const androidArchs = process.env.NITRO_EXAMPLE_ANDROID_ARCHS
+  ? process.env.NITRO_EXAMPLE_ANDROID_ARCHS.split(",")
+      .map((arch) => arch.trim())
+      .filter(Boolean)
+  : undefined;
+
 module.exports = {
   "expo": {
     "name": "Nitro Storage",
@@ -24,13 +36,16 @@ module.exports = {
         "expo-build-properties",
         {
           "ios": {
-            "enableSceneSupport": true
+            "enableSceneSupport": true,
+            "ccacheEnabled": hasCcache
           },
           "android": {
-            "usePrecompiledHeaders": true
+            "usePrecompiledHeaders": true,
+            ...(androidArchs ? { "buildArchs": androidArchs } : {})
           }
         }
       ],
+      "./plugins/with-gradle-build-speed",
       "react-native-nitro-storage",
       "expo-font",
       "expo-asset",

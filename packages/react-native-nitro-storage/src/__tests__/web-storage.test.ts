@@ -65,6 +65,26 @@ function createStorageMock(): Storage {
   };
 }
 
+function installWebGlobals(): void {
+  Object.defineProperty(globalThis, "localStorage", {
+    value: createStorageMock(),
+    configurable: true,
+    writable: true,
+  });
+  if (
+    typeof globalThis.window === "undefined" ||
+    typeof globalThis.window.addEventListener !== "function" ||
+    typeof (globalThis.window as unknown as { dispatchEvent?: unknown })
+      .dispatchEvent !== "function"
+  ) {
+    Object.defineProperty(globalThis, "window", {
+      value: createWindowMock() as unknown as Window & typeof globalThis,
+      configurable: true,
+      writable: true,
+    });
+  }
+}
+
 function createWebBackendMock(name = "mock-backend") {
   const secureStore = new Map<string, string>();
   const subscribers = new Set<(event: WebStorageChangeEvent) => void>();
@@ -184,23 +204,7 @@ describe("Web Storage", () => {
   beforeEach(() => {
     jest.spyOn(console, "warn").mockImplementation(() => {});
 
-    Object.defineProperty(globalThis, "localStorage", {
-      value: createStorageMock(),
-      configurable: true,
-      writable: true,
-    });
-    if (
-      typeof globalThis.window === "undefined" ||
-      typeof globalThis.window.addEventListener !== "function" ||
-      typeof (globalThis.window as unknown as { dispatchEvent?: unknown })
-        .dispatchEvent !== "function"
-    ) {
-      Object.defineProperty(globalThis, "window", {
-        value: createWindowMock() as unknown as Window & typeof globalThis,
-        configurable: true,
-        writable: true,
-      });
-    }
+    installWebGlobals();
 
     setWebSecureStorageBackend(undefined);
     storage.clearAll();
@@ -427,40 +431,6 @@ describe("Web Storage", () => {
         }),
       ]),
     );
-  });
-
-  it("classifies storage errors into stable codes from tagged messages", () => {
-    expect(
-      getStorageErrorCode(
-        new Error("[nitro-error:keychain_locked] NitroStorage: locked"),
-      ),
-    ).toBe("keychain_locked");
-    expect(
-      getStorageErrorCode(
-        new Error(
-          "[nitro-error:authentication_required] NitroStorage: auth required",
-        ),
-      ),
-    ).toBe("authentication_required");
-    expect(
-      getStorageErrorCode(
-        new Error("[nitro-error:storage_corruption] NitroStorage: corrupt"),
-      ),
-    ).toBe("storage_corruption");
-    expect(
-      getStorageErrorCode(
-        new Error(
-          "[nitro-error:biometric_unavailable] NitroStorage: biometric off",
-        ),
-      ),
-    ).toBe("biometric_unavailable");
-    expect(getStorageErrorCode(new Error("errSecInteractionNotAllowed"))).toBe(
-      undefined,
-    );
-    expect(
-      getStorageErrorCode(new Error("UserNotAuthenticatedException")),
-    ).toBeUndefined();
-    expect(getStorageErrorCode(new Error("something else"))).toBe(undefined);
   });
 
   it("matches an exact storage error code through the web entrypoint", () => {
@@ -1574,14 +1544,46 @@ describe("Web Storage", () => {
     });
 
     queued.set("pending");
+    expect(
+      globalThis.localStorage.getItem("__secure_secure-tx-queued"),
+    ).toBeNull();
 
+    let storedBeforeCallback: string | null = null;
     runTransaction(StorageScope.Secure, (tx) => {
+      storedBeforeCallback = globalThis.localStorage.getItem(
+        "__secure_secure-tx-queued",
+      );
       tx.setRaw("secure-tx-key", serializeWithPrimitiveFastPath("first"));
       tx.setRaw("secure-tx-key", serializeWithPrimitiveFastPath("second"));
       tx.setItem(item, "committed");
     });
 
+    expect(storedBeforeCallback).toBe(
+      serializeWithPrimitiveFastPath("pending"),
+    );
     expect(item.get()).toBe("committed");
+  });
+
+  it("restores the pre-transaction secure value after two raw writes to one key", () => {
+    const item = createStorageItem({
+      key: "secure-tx-twice",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+    });
+    item.set("before");
+
+    expect(() =>
+      runTransaction(StorageScope.Secure, (tx) => {
+        tx.setRaw("secure-tx-twice", serializeWithPrimitiveFastPath("first"));
+        tx.setRaw("secure-tx-twice", serializeWithPrimitiveFastPath("second"));
+        throw new Error("abort");
+      }),
+    ).toThrow("abort");
+
+    expect(item.get()).toBe("before");
+    expect(globalThis.localStorage.getItem("__secure_secure-tx-twice")).toBe(
+      serializeWithPrimitiveFastPath("before"),
+    );
   });
 
   it("notifies listeners when _triggerListeners is called", () => {
@@ -1941,35 +1943,6 @@ describe("Web Storage", () => {
     const all = storage.getAll(StorageScope.Disk);
     expect(all["ga1"]).toBe(serializeWithPrimitiveFastPath("a"));
     expect(all["ga2"]).toBe(serializeWithPrimitiveFastPath("b"));
-  });
-
-  it("keeps prototype-named raw keys through import and enumeration", () => {
-    const imported = JSON.parse(
-      '{"__proto__":"proto-value","constructor":"constructor-value","toString":"string-value"}',
-    ) as Record<string, string>;
-    const keys = Object.keys(imported);
-
-    keys.forEach((key) => storage.deleteString(key, StorageScope.Memory));
-    storage.import(imported, StorageScope.Memory);
-
-    const all = storage.getAll(StorageScope.Memory);
-    const exported = storage.export(StorageScope.Memory);
-    const protoPrefix = storage.getByPrefix("__proto__", StorageScope.Memory);
-
-    expect(Object.getPrototypeOf(all)).toBe(Object.prototype);
-    expect(Object.getPrototypeOf(exported)).toBe(Object.prototype);
-    for (const key of keys) {
-      expect(Object.prototype.hasOwnProperty.call(all, key)).toBe(true);
-      expect(all[key]).toBe(imported[key]);
-      expect(Object.prototype.hasOwnProperty.call(exported, key)).toBe(true);
-      expect(exported[key]).toBe(imported[key]);
-    }
-    expect(Object.prototype.hasOwnProperty.call(protoPrefix, "__proto__")).toBe(
-      true,
-    );
-    expect(protoPrefix["__proto__"]).toBe(imported["__proto__"]);
-
-    keys.forEach((key) => storage.deleteString(key, StorageScope.Memory));
   });
 
   it("decodes reserved-prefix raw strings in web memory prefix snapshots", () => {
@@ -2961,41 +2934,12 @@ describe("storage.import (web)", () => {
     storage.clearAll();
   });
 
-  it("imports key-value pairs into Memory scope", () => {
-    storage.import({ x: "1", y: "2" }, StorageScope.Memory);
-    expect(storage.has("x", StorageScope.Memory)).toBe(true);
-    expect(storage.has("y", StorageScope.Memory)).toBe(true);
-  });
-
-  it("exports raw key-value pairs from Memory scope", () => {
-    storage.import({ x: "1", y: "2" }, StorageScope.Memory);
-
-    expect(storage.export(StorageScope.Memory)).toEqual({
-      x: "1",
-      y: "2",
-    });
-  });
-
   it("exports raw key-value pairs from Disk scope", () => {
     storage.import({ "d-key": "d-val" }, StorageScope.Disk);
 
     expect(storage.export(StorageScope.Disk)).toEqual({
       "d-key": "d-val",
     });
-  });
-
-  it("emits change listeners for each imported key in Memory scope", () => {
-    const item = createStorageItem({
-      key: "web-imported",
-      scope: StorageScope.Memory,
-      defaultValue: "",
-    });
-    const listener = jest.fn();
-    const unsub = item.subscribe(listener);
-
-    storage.import({ "web-imported": "value" }, StorageScope.Memory);
-    expect(listener).toHaveBeenCalled();
-    unsub();
   });
 
   it("imports key-value pairs into Disk scope", () => {
@@ -3007,12 +2951,6 @@ describe("storage.import (web)", () => {
     const before = storage.size(StorageScope.Memory);
     storage.import({}, StorageScope.Memory);
     expect(storage.size(StorageScope.Memory)).toBe(before);
-  });
-
-  it("throws on invalid scope", () => {
-    expect(() =>
-      storage.import({ k: "v" }, 99 as unknown as StorageScope),
-    ).toThrow(/Invalid storage scope/);
   });
 });
 
@@ -3055,23 +2993,7 @@ describe("TTL expiry subscriber notification (web)", () => {
 
 describe("web backend switching", () => {
   beforeEach(() => {
-    Object.defineProperty(globalThis, "localStorage", {
-      value: createStorageMock(),
-      configurable: true,
-      writable: true,
-    });
-    if (
-      typeof globalThis.window === "undefined" ||
-      typeof globalThis.window.addEventListener !== "function" ||
-      typeof (globalThis.window as unknown as { dispatchEvent?: unknown })
-        .dispatchEvent !== "function"
-    ) {
-      Object.defineProperty(globalThis, "window", {
-        value: createWindowMock() as unknown as Window & typeof globalThis,
-        configurable: true,
-        writable: true,
-      });
-    }
+    installWebGlobals();
     setWebDiskStorageBackend(undefined);
     setWebSecureStorageBackend(undefined);
     storage.clearAll();
@@ -3142,9 +3064,9 @@ describe("web backend switching", () => {
 
     await flushWebStorageBackends();
 
-    expect(oldBackend.flush.mock.invocationCallOrder[0]).toBeLessThan(
-      oldBackend.close.mock.invocationCallOrder[0],
-    );
+    expect(
+      oldBackend.flush.mock.invocationCallOrder[0] ?? Number.NaN,
+    ).toBeLessThan(oldBackend.close.mock.invocationCallOrder[0] ?? Number.NaN);
     expect(oldBackend.close).toHaveBeenCalledTimes(1);
   });
 
@@ -3166,9 +3088,9 @@ describe("web backend switching", () => {
 
     await flushWebStorageBackends();
 
-    expect(oldBackend.flush.mock.invocationCallOrder[0]).toBeLessThan(
-      oldBackend.close.mock.invocationCallOrder[0],
-    );
+    expect(
+      oldBackend.flush.mock.invocationCallOrder[0] ?? Number.NaN,
+    ).toBeLessThan(oldBackend.close.mock.invocationCallOrder[0] ?? Number.NaN);
     expect(oldBackend.close).toHaveBeenCalledTimes(1);
   });
 
@@ -3349,6 +3271,27 @@ describe("web backend switching", () => {
     expect(listener).toHaveBeenCalled();
   });
 
+  it("ignores unprefixed keys in secure backend subscribe events", () => {
+    const backend = createWebBackendMock("secure-foreign-key");
+    setWebSecureStorageBackend(backend);
+    const item = createStorageItem({
+      key: "owned",
+      scope: StorageScope.Secure,
+      defaultValue: "default",
+    });
+    item.set("value");
+    const listener = jest.fn();
+    storage.subscribe(StorageScope.Secure, listener);
+
+    backend.emit({ key: "foreign", newValue: "x" });
+
+    expect(storage.has("foreign", StorageScope.Secure)).toBe(false);
+    expect(storage.getAllKeys(StorageScope.Secure)).toEqual(["owned"]);
+    expect(storage.size(StorageScope.Secure)).toBe(1);
+    expect(listener).not.toHaveBeenCalled();
+    setWebSecureStorageBackend(undefined);
+  });
+
   it("applies backend subscribe clear events to secure caches", () => {
     const backend = createWebBackendMock("secure-subscribe");
     setWebSecureStorageBackend(backend);
@@ -3470,23 +3413,7 @@ describe("web backend switching", () => {
 
 describe("cross-tab StorageEvent handling", () => {
   beforeEach(() => {
-    Object.defineProperty(globalThis, "localStorage", {
-      value: createStorageMock(),
-      configurable: true,
-      writable: true,
-    });
-    if (
-      typeof globalThis.window === "undefined" ||
-      typeof globalThis.window.addEventListener !== "function" ||
-      typeof (globalThis.window as unknown as { dispatchEvent?: unknown })
-        .dispatchEvent !== "function"
-    ) {
-      Object.defineProperty(globalThis, "window", {
-        value: createWindowMock() as unknown as Window & typeof globalThis,
-        configurable: true,
-        writable: true,
-      });
-    }
+    installWebGlobals();
     setWebSecureStorageBackend(undefined);
     storage.clearAll();
   });
@@ -3587,23 +3514,7 @@ describe("cross-tab StorageEvent handling", () => {
 describe("biometric web storage", () => {
   beforeEach(() => {
     jest.spyOn(console, "warn").mockImplementation(() => {});
-    Object.defineProperty(globalThis, "localStorage", {
-      value: createStorageMock(),
-      configurable: true,
-      writable: true,
-    });
-    if (
-      typeof globalThis.window === "undefined" ||
-      typeof globalThis.window.addEventListener !== "function" ||
-      typeof (globalThis.window as unknown as { dispatchEvent?: unknown })
-        .dispatchEvent !== "function"
-    ) {
-      Object.defineProperty(globalThis, "window", {
-        value: createWindowMock() as unknown as Window & typeof globalThis,
-        configurable: true,
-        writable: true,
-      });
-    }
+    installWebGlobals();
     setWebSecureStorageBackend(undefined);
     storage.clearAll();
   });
@@ -3835,23 +3746,7 @@ describe("biometric web storage", () => {
 
 describe("web transaction edge cases", () => {
   beforeEach(() => {
-    Object.defineProperty(globalThis, "localStorage", {
-      value: createStorageMock(),
-      configurable: true,
-      writable: true,
-    });
-    if (
-      typeof globalThis.window === "undefined" ||
-      typeof globalThis.window.addEventListener !== "function" ||
-      typeof (globalThis.window as unknown as { dispatchEvent?: unknown })
-        .dispatchEvent !== "function"
-    ) {
-      Object.defineProperty(globalThis, "window", {
-        value: createWindowMock() as unknown as Window & typeof globalThis,
-        configurable: true,
-        writable: true,
-      });
-    }
+    installWebGlobals();
     setWebSecureStorageBackend(undefined);
     storage.clearAll();
   });

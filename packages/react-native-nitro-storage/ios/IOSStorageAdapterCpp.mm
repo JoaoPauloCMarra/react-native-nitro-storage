@@ -287,6 +287,7 @@ static void disableKeychainInteraction(NSMutableDictionary* query) {
 
 struct BiometricKeychainSnapshot {
     bool present{false};
+    bool valueReadable{true};
     std::string value;
     SecAccessControlRef accessControl{nullptr};
 
@@ -295,6 +296,7 @@ struct BiometricKeychainSnapshot {
     BiometricKeychainSnapshot& operator=(const BiometricKeychainSnapshot&) = delete;
     BiometricKeychainSnapshot(BiometricKeychainSnapshot&& other) noexcept
         : present(other.present),
+          valueReadable(other.valueReadable),
           value(std::move(other.value)),
           accessControl(other.accessControl) {
         other.accessControl = nullptr;
@@ -303,6 +305,7 @@ struct BiometricKeychainSnapshot {
         if (this == &other) return *this;
         if (accessControl) CFRelease(accessControl);
         present = other.present;
+        valueReadable = other.valueReadable;
         value = std::move(other.value);
         accessControl = other.accessControl;
         other.accessControl = nullptr;
@@ -598,34 +601,6 @@ bool IOSStorageAdapterCpp::hasDisk(const std::string& key) {
     return false;
 }
 
-std::vector<std::string> IOSStorageAdapterCpp::getAllKeysDisk() {
-    ensureDiskMigrated();
-    std::unordered_set<std::string> combined;
-    for (const auto& key : NitroSqliteDiskStore().getAllKeys()) {
-        combined.insert(key);
-    }
-    NSUserDefaults* defaults = NitroDiskDefaults();
-    NSDictionary<NSString*, id>* entries = [defaults persistentDomainForName:kDiskSuiteName] ?: @{};
-    NSUserDefaults* standard = [NSUserDefaults standardUserDefaults];
-    for (NSString* key in entries) {
-        if (!isInternalDiskKey(key)) {
-            combined.insert(stdStringFromNSString(key));
-        }
-    }
-    for (NSString* key in [registeredLegacyDiskKeys() allObjects]) {
-        if ([entries objectForKey:key] == nil &&
-            [standard stringForKey:key] != nil) {
-            combined.insert(stdStringFromNSString(key));
-        }
-    }
-    std::vector<std::string> keys;
-    keys.reserve(combined.size());
-    for (const auto& key : combined) {
-        keys.push_back(key);
-    }
-    return keys;
-}
-
 static std::vector<std::string> legacyDefaultsDiskKeys() {
     std::vector<std::string> keys;
     NSUserDefaults* defaults = NitroDiskDefaults();
@@ -643,6 +618,18 @@ static std::vector<std::string> legacyDefaultsDiskKeys() {
         }
     }
     return keys;
+}
+
+std::vector<std::string> IOSStorageAdapterCpp::getAllKeysDisk() {
+    ensureDiskMigrated();
+    std::unordered_set<std::string> combined;
+    for (const auto& key : NitroSqliteDiskStore().getAllKeys()) {
+        combined.insert(key);
+    }
+    for (const auto& key : legacyDefaultsDiskKeys()) {
+        combined.insert(key);
+    }
+    return std::vector<std::string>(combined.begin(), combined.end());
 }
 
 std::vector<std::string> IOSStorageAdapterCpp::getKeysByPrefixDisk(const std::string& prefix) {
@@ -823,52 +810,82 @@ static void throwIfLookupFailed(OSStatus status, const std::string& operation) {
     throw keychainStatusError(status, operation);
 }
 
+static bool biometricItemExists(NSString* nsKey, NSString* group, const std::string& operation) {
+    NSMutableDictionary* query = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
+    query[(__bridge id)kSecReturnAttributes] = @YES;
+    query[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
+    CFTypeRef result = NULL;
+    const OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
+    if (result) CFRelease(result);
+    if (status == errSecSuccess || status == errSecInteractionNotAllowed) {
+        return true;
+    }
+    if (status == errSecItemNotFound) {
+        return false;
+    }
+    throw keychainStatusError(status, operation);
+}
+
 static BiometricKeychainSnapshot captureBiometricValue(
     NSString* nsKey,
     NSString* group
 ) {
     BiometricKeychainSnapshot snapshot;
-    NSMutableDictionary* query = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
-    query[(__bridge id)kSecReturnAttributes] = @YES;
-    query[(__bridge id)kSecReturnData] = @YES;
-    query[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
-    disableKeychainInteraction(query);
-
-    CFTypeRef result = NULL;
-    const OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
-    if (status == errSecItemNotFound) {
+    NSMutableDictionary* attributeQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
+    attributeQuery[(__bridge id)kSecReturnAttributes] = @YES;
+    attributeQuery[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
+    CFTypeRef attributeResult = NULL;
+    const OSStatus attributeStatus =
+        SecItemCopyMatching((__bridge CFDictionaryRef)attributeQuery, &attributeResult);
+    if (attributeStatus == errSecItemNotFound) {
         return snapshot;
     }
-    if (status == errSecInteractionNotAllowed) {
+    if (attributeStatus == errSecInteractionNotAllowed) {
         throw taggedStorageError(
             "keychain_locked",
             "NitroStorage: Keychain is locked (errSecInteractionNotAllowed). "
             "The biometric item is not accessible until the device is unlocked."
         );
     }
-    if (status != errSecSuccess || !result) {
-        if (result) CFRelease(result);
-        throw keychainStatusError(status, "Biometric snapshot");
+    if (attributeStatus != errSecSuccess || !attributeResult) {
+        if (attributeResult) CFRelease(attributeResult);
+        throw keychainStatusError(attributeStatus, "Biometric snapshot");
     }
-
-    NSDictionary* attributes = (__bridge NSDictionary*)result;
-    NSData* data = attributes[(__bridge id)kSecValueData];
+    NSDictionary* attributes = (__bridge_transfer NSDictionary*)attributeResult;
     id accessControl = attributes[(__bridge id)kSecAttrAccessControl];
-    if (!data || !accessControl) {
-        CFRelease(result);
+    if (!accessControl) {
         throw std::runtime_error(
-            "NitroStorage: Biometric snapshot did not include value data and access control"
+            "NitroStorage: Biometric snapshot did not include access control"
         );
     }
+    snapshot.present = true;
+    snapshot.accessControl = (SecAccessControlRef)CFRetain((__bridge CFTypeRef)accessControl);
+
+    NSMutableDictionary* dataQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
+    dataQuery[(__bridge id)kSecReturnData] = @YES;
+    dataQuery[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
+    disableKeychainInteraction(dataQuery);
+    CFTypeRef dataResult = NULL;
+    const OSStatus dataStatus = SecItemCopyMatching((__bridge CFDictionaryRef)dataQuery, &dataResult);
+    if (dataStatus == errSecInteractionNotAllowed) {
+        if (dataResult) CFRelease(dataResult);
+        snapshot.valueReadable = false;
+        return snapshot;
+    }
+    if (dataStatus == errSecItemNotFound) {
+        snapshot.present = false;
+        return snapshot;
+    }
+    if (dataStatus != errSecSuccess || !dataResult) {
+        if (dataResult) CFRelease(dataResult);
+        throw keychainStatusError(dataStatus, "Biometric snapshot");
+    }
+    NSData* data = (__bridge_transfer NSData*)dataResult;
     NSString* stringValue = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     if (!stringValue) {
-        CFRelease(result);
         throw std::runtime_error("NitroStorage: Biometric snapshot value is not UTF-8");
     }
-    snapshot.present = true;
     snapshot.value = stdStringFromNSString(stringValue);
-    snapshot.accessControl = (SecAccessControlRef)CFRetain((__bridge CFTypeRef)accessControl);
-    CFRelease(result);
     return snapshot;
 }
 
@@ -998,6 +1015,14 @@ static void restoreBiometricValue(
     NSString* group,
     const BiometricKeychainSnapshot& snapshot
 ) {
+    if (snapshot.present && !snapshot.valueReadable) {
+        if (biometricItemExists(nsKey, group, "Biometric restore")) {
+            return;
+        }
+        throw std::runtime_error(
+            "NitroStorage: Previous biometric value could not be read without authentication and cannot be restored"
+        );
+    }
     deleteBiometricValue(nsKey, group);
     if (!snapshot.present) {
         return;
@@ -1022,9 +1047,15 @@ static void restoreBiometricValue(
     }
 }
 
-static std::vector<std::string> keychainAccountsForService(NSString* service, NSString* accessGroup) {
+static std::vector<std::string> keychainAccountsForService(
+    NSString* service,
+    NSString* accessGroup,
+    bool interactionDisabled
+) {
     NSMutableDictionary* query = allAccountsQuery(service, accessGroup);
-    disableKeychainInteraction(query);
+    if (interactionDisabled) {
+        disableKeychainInteraction(query);
+    }
     CFTypeRef result = NULL;
     std::vector<std::string> keys;
     OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
@@ -1060,6 +1091,15 @@ static std::vector<std::string> keychainAccountsForService(NSString* service, NS
     return keys;
 }
 
+std::string IOSStorageAdapterCpp::currentAccessGroup() const {
+    std::lock_guard<std::mutex> lock(accessGroupMutex_);
+    return keychainAccessGroup_;
+}
+
+static NSString* nsStringOrNil(const std::string& value) {
+    return value.empty() ? nil : nsStringFromStdString(value);
+}
+
 void IOSStorageAdapterCpp::setSecure(const std::string& key, const std::string& value) {
     NSString* nsKey = nsStringFromStdString(key);
     NSData* data = nsDataFromStdString(value);
@@ -1077,23 +1117,13 @@ void IOSStorageAdapterCpp::setSecure(const std::string& key, const std::string& 
 
 std::optional<std::string> IOSStorageAdapterCpp::getSecure(const std::string& key) {
     NSString* nsKey = nsStringFromStdString(key);
-    std::string groupStr;
-    {
-        std::lock_guard<std::mutex> lock(accessGroupMutex_);
-        groupStr = keychainAccessGroup_;
-    }
-    NSString* group = groupStr.empty() ? nil : nsStringFromStdString(groupStr);
+    NSString* group = nsStringOrNil(currentAccessGroup());
     return getSecureValue(nsKey, group);
 }
 
 void IOSStorageAdapterCpp::deleteSecure(const std::string& key) {
     NSString* nsKey = nsStringFromStdString(key);
-    std::string groupStr;
-    {
-        std::lock_guard<std::mutex> lock(accessGroupMutex_);
-        groupStr = keychainAccessGroup_;
-    }
-    NSString* group = groupStr.empty() ? nil : nsStringFromStdString(groupStr);
+    NSString* group = nsStringOrNil(currentAccessGroup());
     deleteSecureValue(nsKey, group);
     markSecureKeyRemoved(key);
     markBiometricKeyRemoved(key);
@@ -1101,12 +1131,7 @@ void IOSStorageAdapterCpp::deleteSecure(const std::string& key) {
 
 bool IOSStorageAdapterCpp::hasSecure(const std::string& key) {
     NSString* nsKey = nsStringFromStdString(key);
-    std::string groupStr;
-    {
-        std::lock_guard<std::mutex> lock(accessGroupMutex_);
-        groupStr = keychainAccessGroup_;
-    }
-    NSString* group = groupStr.empty() ? nil : nsStringFromStdString(groupStr);
+    NSString* group = nsStringOrNil(currentAccessGroup());
     NSMutableDictionary* secureQuery = baseKeychainQuery(nsKey, kKeychainService, group);
     disableKeychainInteraction(secureQuery);
     const OSStatus secureStatus = SecItemCopyMatching((__bridge CFDictionaryRef)secureQuery, NULL);
@@ -1114,14 +1139,7 @@ bool IOSStorageAdapterCpp::hasSecure(const std::string& key) {
         return true;
     }
     throwIfLookupFailed(secureStatus, "Secure has");
-    NSMutableDictionary* biometricQuery = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
-    disableKeychainInteraction(biometricQuery);
-    const OSStatus biometricStatus = SecItemCopyMatching((__bridge CFDictionaryRef)biometricQuery, NULL);
-    if (biometricStatus == errSecSuccess || biometricStatus == errSecInteractionNotAllowed) {
-        return true;
-    }
-    throwIfLookupFailed(biometricStatus, "Secure has");
-    return false;
+    return biometricItemExists(nsKey, group, "Secure has");
 }
 
 std::vector<std::string> IOSStorageAdapterCpp::getAllKeysSecure() {
@@ -1187,12 +1205,7 @@ void IOSStorageAdapterCpp::setSecureBatch(
 std::vector<std::optional<std::string>> IOSStorageAdapterCpp::getSecureBatch(
     const std::vector<std::string>& keys
 ) {
-    std::string groupStr;
-    {
-        std::lock_guard<std::mutex> lock(accessGroupMutex_);
-        groupStr = keychainAccessGroup_;
-    }
-    NSString* group = groupStr.empty() ? nil : nsStringFromStdString(groupStr);
+    NSString* group = nsStringOrNil(currentAccessGroup());
     std::vector<std::optional<std::string>> results;
     results.reserve(keys.size());
     for (const auto& key : keys) {
@@ -1202,12 +1215,7 @@ std::vector<std::optional<std::string>> IOSStorageAdapterCpp::getSecureBatch(
 }
 
 void IOSStorageAdapterCpp::deleteSecureBatch(const std::vector<std::string>& keys) {
-    std::string groupStr;
-    {
-        std::lock_guard<std::mutex> lock(accessGroupMutex_);
-        groupStr = keychainAccessGroup_;
-    }
-    NSString* group = groupStr.empty() ? nil : nsStringFromStdString(groupStr);
+    NSString* group = nsStringOrNil(currentAccessGroup());
     for (size_t i = 0; i < keys.size(); ++i) {
         try {
             deleteSecureValue(nsStringFromStdString(keys[i]), group);
@@ -1220,12 +1228,7 @@ void IOSStorageAdapterCpp::deleteSecureBatch(const std::vector<std::string>& key
 }
 
 void IOSStorageAdapterCpp::clearSecure() {
-    std::string groupStr;
-    {
-        std::lock_guard<std::mutex> lock(accessGroupMutex_);
-        groupStr = keychainAccessGroup_;
-    }
-    NSString* group = groupStr.empty() ? nil : nsStringFromStdString(groupStr);
+    NSString* group = nsStringOrNil(currentAccessGroup());
     NSMutableDictionary* secureQuery = [@{
         (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
         (__bridge id)kSecAttrService: kKeychainService
@@ -1279,6 +1282,7 @@ void IOSStorageAdapterCpp::setKeychainAccessGroup(const std::string& group) {
     std::lock_guard<std::mutex> lock1(accessGroupMutex_);
     std::lock_guard<std::mutex> lock2(secureKeysMutex_);
     keychainAccessGroup_ = group;
+    ++secureKeysGeneration_;
     secureKeysCache_.clear();
     biometricKeysCache_.clear();
     secureKeyCacheHydrated_ = false;
@@ -1405,12 +1409,7 @@ void IOSStorageAdapterCpp::setSecureBiometricWithLevel(const std::string& key, c
 
 std::optional<std::string> IOSStorageAdapterCpp::getSecureBiometric(const std::string& key) {
     NSString* nsKey = nsStringFromStdString(key);
-    std::string groupStr;
-    {
-        std::lock_guard<std::mutex> lock(accessGroupMutex_);
-        groupStr = keychainAccessGroup_;
-    }
-    NSString* group = groupStr.empty() ? nil : nsStringFromStdString(groupStr);
+    NSString* group = nsStringOrNil(currentAccessGroup());
     NSMutableDictionary* query = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
     query[(__bridge id)kSecReturnData] = @YES;
     query[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
@@ -1441,12 +1440,7 @@ std::optional<std::string> IOSStorageAdapterCpp::getSecureBiometric(const std::s
 
 void IOSStorageAdapterCpp::deleteSecureBiometric(const std::string& key) {
     NSString* nsKey = nsStringFromStdString(key);
-    std::string groupStr;
-    {
-        std::lock_guard<std::mutex> lock(accessGroupMutex_);
-        groupStr = keychainAccessGroup_;
-    }
-    NSString* group = groupStr.empty() ? nil : nsStringFromStdString(groupStr);
+    NSString* group = nsStringOrNil(currentAccessGroup());
     NSMutableDictionary* query = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
     const OSStatus status = SecItemDelete((__bridge CFDictionaryRef)query);
     throwIfDeleteFailed(status, "Biometric delete");
@@ -1455,33 +1449,12 @@ void IOSStorageAdapterCpp::deleteSecureBiometric(const std::string& key) {
 
 bool IOSStorageAdapterCpp::hasSecureBiometric(const std::string& key) {
     NSString* nsKey = nsStringFromStdString(key);
-    std::string groupStr;
-    {
-        std::lock_guard<std::mutex> lock(accessGroupMutex_);
-        groupStr = keychainAccessGroup_;
-    }
-    NSString* group = groupStr.empty() ? nil : nsStringFromStdString(groupStr);
-    NSMutableDictionary* query = baseKeychainQuery(nsKey, kBiometricKeychainService, group);
-    disableKeychainInteraction(query);
-    const OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, NULL);
-    if (status == errSecSuccess) return true;
-    if (status == errSecItemNotFound) return false;
-    if (status == errSecInteractionNotAllowed) {
-        throw taggedStorageError(
-            "keychain_locked",
-            "NitroStorage: Keychain is locked (errSecInteractionNotAllowed) while inspecting biometric storage"
-        );
-    }
-    throw keychainStatusError(status, "Biometric has");
+    NSString* group = nsStringOrNil(currentAccessGroup());
+    return biometricItemExists(nsKey, group, "Biometric has");
 }
 
 void IOSStorageAdapterCpp::clearSecureBiometric() {
-    std::string groupStr;
-    {
-        std::lock_guard<std::mutex> lock(accessGroupMutex_);
-        groupStr = keychainAccessGroup_;
-    }
-    NSString* group = groupStr.empty() ? nil : nsStringFromStdString(groupStr);
+    NSString* group = nsStringOrNil(currentAccessGroup());
     NSMutableDictionary* query = [@{
         (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
         (__bridge id)kSecAttrService: kBiometricKeychainService
@@ -1501,39 +1474,48 @@ void IOSStorageAdapterCpp::clearSecureBiometric() {
     }
     {
         std::lock_guard<std::mutex> lock(secureKeysMutex_);
+        ++secureKeysGeneration_;
         biometricKeysCache_.clear();
     }
 }
 
+std::vector<std::string> IOSStorageAdapterCpp::getBiometricKeysSecure() {
+    ensureSecureKeyCacheHydrated();
+    std::lock_guard<std::mutex> lock(secureKeysMutex_);
+    return std::vector<std::string>(biometricKeysCache_.begin(), biometricKeysCache_.end());
+}
+
 void IOSStorageAdapterCpp::ensureSecureKeyCacheHydrated() {
-    {
+    for (;;) {
+        uint64_t generation;
+        {
+            std::lock_guard<std::mutex> lock(secureKeysMutex_);
+            if (secureKeyCacheHydrated_) return;
+            generation = secureKeysGeneration_;
+        }
+
+        NSString* nsGroup = nsStringOrNil(currentAccessGroup());
+
+        // These can throw errSecInteractionNotAllowed — let the exception propagate
+        // so the cache is NOT marked hydrated (will be retried on next access)
+        const std::vector<std::string> secureKeys = keychainAccountsForService(kKeychainService, nsGroup, true);
+        const std::vector<std::string> biometricKeys = keychainAccountsForService(kBiometricKeychainService, nsGroup, false);
+
         std::lock_guard<std::mutex> lock(secureKeysMutex_);
         if (secureKeyCacheHydrated_) return;
+        if (generation != secureKeysGeneration_) continue;
+        secureKeysCache_.clear();
+        biometricKeysCache_.clear();
+        secureKeysCache_.insert(secureKeys.begin(), secureKeys.end());
+        biometricKeysCache_.insert(biometricKeys.begin(), biometricKeys.end());
+        secureKeyCacheHydrated_ = true;
+        return;
     }
-
-    std::string groupStr;
-    {
-        std::lock_guard<std::mutex> lock(accessGroupMutex_);
-        groupStr = keychainAccessGroup_;
-    }
-    NSString* nsGroup = groupStr.empty() ? nil : nsStringFromStdString(groupStr);
-
-    // These can throw errSecInteractionNotAllowed — let the exception propagate
-    // so the cache is NOT marked hydrated (will be retried on next access)
-    const std::vector<std::string> secureKeys = keychainAccountsForService(kKeychainService, nsGroup);
-    const std::vector<std::string> biometricKeys = keychainAccountsForService(kBiometricKeychainService, nsGroup);
-
-    std::lock_guard<std::mutex> lock(secureKeysMutex_);
-    if (secureKeyCacheHydrated_) return;
-    secureKeysCache_.clear();
-    biometricKeysCache_.clear();
-    secureKeysCache_.insert(secureKeys.begin(), secureKeys.end());
-    biometricKeysCache_.insert(biometricKeys.begin(), biometricKeys.end());
-    secureKeyCacheHydrated_ = true;
 }
 
 void IOSStorageAdapterCpp::markSecureKeySet(const std::string& key) {
     std::lock_guard<std::mutex> lock(secureKeysMutex_);
+    ++secureKeysGeneration_;
     if (!secureKeyCacheHydrated_) {
         return;
     }
@@ -1542,6 +1524,7 @@ void IOSStorageAdapterCpp::markSecureKeySet(const std::string& key) {
 
 void IOSStorageAdapterCpp::markSecureKeyRemoved(const std::string& key) {
     std::lock_guard<std::mutex> lock(secureKeysMutex_);
+    ++secureKeysGeneration_;
     if (!secureKeyCacheHydrated_) {
         return;
     }
@@ -1550,6 +1533,7 @@ void IOSStorageAdapterCpp::markSecureKeyRemoved(const std::string& key) {
 
 void IOSStorageAdapterCpp::markBiometricKeySet(const std::string& key) {
     std::lock_guard<std::mutex> lock(secureKeysMutex_);
+    ++secureKeysGeneration_;
     if (!secureKeyCacheHydrated_) {
         return;
     }
@@ -1558,6 +1542,7 @@ void IOSStorageAdapterCpp::markBiometricKeySet(const std::string& key) {
 
 void IOSStorageAdapterCpp::markBiometricKeyRemoved(const std::string& key) {
     std::lock_guard<std::mutex> lock(secureKeysMutex_);
+    ++secureKeysGeneration_;
     if (!secureKeyCacheHydrated_) {
         return;
     }
@@ -1566,6 +1551,7 @@ void IOSStorageAdapterCpp::markBiometricKeyRemoved(const std::string& key) {
 
 void IOSStorageAdapterCpp::clearSecureKeyCache() {
     std::lock_guard<std::mutex> lock(secureKeysMutex_);
+    ++secureKeysGeneration_;
     secureKeysCache_.clear();
     biometricKeysCache_.clear();
     secureKeyCacheHydrated_ = false;

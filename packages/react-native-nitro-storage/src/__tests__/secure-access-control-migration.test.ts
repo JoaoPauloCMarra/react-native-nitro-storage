@@ -1,29 +1,13 @@
-const mockHybridObject = {
-  set: jest.fn(),
-  get: jest.fn(),
-  remove: jest.fn(),
-  clear: jest.fn(),
-  has: jest.fn(),
+import { createMockHybridObject } from "./helpers/mock-hybrid-object";
+
+const mockHybridObject = createMockHybridObject({
   getAllKeys: jest.fn(() => [] as string[]),
-  size: jest.fn(() => 0),
-  setBatch: jest.fn(),
-  getBatch: jest.fn(() => []),
-  removeBatch: jest.fn(),
-  removeByPrefix: jest.fn(),
-  addOnChange: jest.fn(() => () => {}),
-  setSecureAccessControl: jest.fn(),
-  setSecureWritesAsync: jest.fn(),
-  setKeychainAccessGroup: jest.fn(),
-  setSecureBiometric: jest.fn(),
-  setSecureBiometricWithLevel: jest.fn(),
-  getSecureBiometric: jest.fn(),
-  deleteSecureBiometric: jest.fn(),
-  hasSecureBiometric: jest.fn(() => false),
-  clearSecureBiometric: jest.fn(),
   getKeysByPrefix: jest.fn(() => []),
-  isProtectedDataAvailable: jest.fn(() => true),
-  onProtectedDataAvailable: jest.fn(() => () => {}),
-};
+  size: jest.fn(() => 0),
+  getBatch: jest.fn(() => []),
+  addOnChange: jest.fn(() => () => {}),
+  hasSecureBiometric: jest.fn((_key: string) => false),
+});
 
 jest.mock("react-native-nitro-modules", () => ({
   NitroModules: {
@@ -126,12 +110,42 @@ describe("migrateSecureAccessControl", () => {
       StorageScope.Secure,
     );
     const levelOrder =
-      mockHybridObject.setSecureAccessControl.mock.invocationCallOrder[0];
-    const firstWriteOrder = mockHybridObject.set.mock.invocationCallOrder[0];
+      mockHybridObject.setSecureAccessControl.mock.invocationCallOrder[0] ??
+      Number.NaN;
+    const firstWriteOrder =
+      mockHybridObject.set.mock.invocationCallOrder[0] ?? Number.NaN;
     expect(levelOrder).toBeLessThan(firstWriteOrder);
     expect(mockHybridObject.remove).not.toHaveBeenCalled();
     expect(mockHybridObject.removeBatch).not.toHaveBeenCalled();
     expect(mockHybridObject.clear).not.toHaveBeenCalled();
+  });
+
+  it("swallows the native echo of each rewritten key", () => {
+    seedSecureKeys({ a: "1", b: "2" });
+    let nativeChange:
+      ((key: string, value: string | undefined) => void) | undefined;
+    mockHybridObject.addOnChange.mockImplementation(((
+      _scope: StorageScope,
+      callback: (key: string, value: string | undefined) => void,
+    ) => {
+      nativeChange = callback;
+      return () => {};
+    }) as never);
+    const events: unknown[] = [];
+    const unsubscribe = storage.subscribe(StorageScope.Secure, (event) => {
+      events.push(event);
+    });
+    mockHybridObject.set.mockImplementation((key: string, value: string) => {
+      setTimeout(() => nativeChange?.(key, value), 0);
+    });
+    jest.useFakeTimers();
+
+    migrateSecureAccessControl(AccessControl.AfterFirstUnlock);
+    jest.runAllTimers();
+    jest.useRealTimers();
+
+    expect(events).toEqual([]);
+    unsubscribe();
   });
 
   it("makes the level the default for later raw secure writes", () => {

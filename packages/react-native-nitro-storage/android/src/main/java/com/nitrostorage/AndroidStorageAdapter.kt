@@ -357,51 +357,35 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         return File(context.applicationInfo.dataDir, "shared_prefs/$name.xml").exists()
     }
 
-    private fun existingBiometricPreferences(): List<SharedPreferences> {
-        val stores = mutableListOf<SharedPreferences>()
+    private fun existingBiometricPreferenceSequence(): Sequence<SharedPreferences> = sequence {
         if (
             biometricOrPasscodeInitialized ||
             preferencesFileExists("NitroStorageBiometricOrPasscode")
         ) {
-            stores.add(biometricOrPasscodePreferences)
+            yield(biometricOrPasscodePreferences)
         }
         if (
             legacyBiometricInitialized ||
             preferencesFileExists("NitroStorageBiometric")
         ) {
-            stores.add(legacyBiometricPreferences)
+            yield(legacyBiometricPreferences)
         }
         if (
             biometricOnlyInitialized ||
             preferencesFileExists("NitroStorageBiometricOnly")
         ) {
-            stores.add(biometricOnlyPreferences)
+            yield(biometricOnlyPreferences)
         }
-        return stores
+    }
+
+    private fun existingBiometricPreferences(): List<SharedPreferences> {
+        return existingBiometricPreferenceSequence().toList()
     }
 
     private fun <T : Any> firstInExistingBiometricPreferences(
         lookup: (SharedPreferences) -> T?,
     ): T? {
-        if (
-            biometricOrPasscodeInitialized ||
-            preferencesFileExists("NitroStorageBiometricOrPasscode")
-        ) {
-            lookup(biometricOrPasscodePreferences)?.let { return it }
-        }
-        if (
-            legacyBiometricInitialized ||
-            preferencesFileExists("NitroStorageBiometric")
-        ) {
-            lookup(legacyBiometricPreferences)?.let { return it }
-        }
-        if (
-            biometricOnlyInitialized ||
-            preferencesFileExists("NitroStorageBiometricOnly")
-        ) {
-            lookup(biometricOnlyPreferences)?.let { return it }
-        }
-        return null
+        return existingBiometricPreferenceSequence().firstNotNullOfOrNull(lookup)
     }
 
     private fun biometricPreferencesContain(key: String): Boolean {
@@ -439,19 +423,6 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         }
     }
 
-    private fun getSecureSafe(prefs: SharedPreferences, key: String): String? {
-        return try {
-            prefs.getString(key, null)
-        } catch (e: Exception) {
-            if (e.hasCause(AEADBadTagException::class.java)) {
-                prefs.edit().remove(key).commit()
-                null
-            } else {
-                throw e
-            }
-        }
-    }
-
     private fun applySecureEditor(
         editor: SharedPreferences.Editor,
         forceSynchronous: Boolean = false,
@@ -473,29 +444,49 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         val preferences: SharedPreferences,
         val present: Boolean,
         val value: String?,
+        val unreadable: Boolean = false,
     )
 
     private data class PlainEntrySnapshot(
         val present: Boolean,
         val value: String?,
+        val unreadable: Boolean = false,
     )
+
+    private fun readSnapshotValue(preferences: SharedPreferences, key: String): Pair<String?, Boolean> {
+        return try {
+            Pair(preferences.getString(key, null), false)
+        } catch (e: Exception) {
+            if (e.hasCause(AEADBadTagException::class.java)) {
+                Pair(null, true)
+            } else {
+                throw e
+            }
+        }
+    }
 
     private fun captureBiometricEntrySnapshots(key: String): List<BiometricEntrySnapshot> {
         return existingBiometricPreferences().map { preferences ->
             val present = preferences.contains(key)
+            val (value, unreadable) =
+                if (present) readSnapshotValue(preferences, key) else Pair(null, false)
             BiometricEntrySnapshot(
                 preferences = preferences,
                 present = present,
-                value = if (present) getSecureSafe(preferences, key) else null,
+                value = value,
+                unreadable = unreadable,
             )
         }
     }
 
     private fun capturePlainEntrySnapshot(key: String): PlainEntrySnapshot {
         val present = encryptedPreferences.contains(key)
+        val (value, unreadable) =
+            if (present) readSnapshotValue(encryptedPreferences, key) else Pair(null, false)
         return PlainEntrySnapshot(
             present = present,
-            value = if (present) getSecureSafe(encryptedPreferences, key) else null,
+            value = value,
+            unreadable = unreadable,
         )
     }
 
@@ -523,7 +514,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
                 errors.add(error)
             }
         }
-        snapshots.filter { it.present }.forEach { snapshot ->
+        snapshots.filter { it.present && !it.unreadable }.forEach { snapshot ->
             try {
                 val value = snapshot.value
                     ?: throw IllegalStateException("Biometric snapshot contained a null value")
@@ -543,7 +534,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         snapshot: PlainEntrySnapshot,
     ): List<Throwable> {
         return try {
-            val editor = if (snapshot.present) {
+            val editor = if (snapshot.present && !snapshot.unreadable) {
                 val value = snapshot.value
                     ?: throw IllegalStateException("Plain snapshot contained a null value")
                 encryptedPreferences.edit().putString(key, value)
@@ -737,27 +728,35 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
 
         // --- Secure (async apply by default, sync commit when requested) ---
 
+        private inline fun withSecureMutation(inst: AndroidStorageAdapter, block: () -> Unit) {
+            synchronized(inst) {
+                try {
+                    block()
+                } finally {
+                    inst.invalidateSecureKeysCache()
+                }
+            }
+        }
+
         @JvmStatic
         fun setSecure(key: String, value: String) {
             val inst = getInstanceOrThrow()
-            synchronized(inst) {
+            withSecureMutation(inst) {
                 val editor = inst.encryptedPreferences.edit().putString(key, value)
                 inst.applySecureEditor(editor)
-                inst.invalidateSecureKeysCache()
             }
         }
 
         @JvmStatic
         fun setSecureBatch(keys: Array<String>, values: Array<String>) {
             val inst = getInstanceOrThrow()
-            synchronized(inst) {
+            withSecureMutation(inst) {
                 val editor = inst.encryptedPreferences.edit()
                 val count = minOf(keys.size, values.size)
                 for (index in 0 until count) {
                     editor.putString(keys[index], values[index])
                 }
                 inst.applySecureEditor(editor)
-                inst.invalidateSecureKeysCache()
             }
         }
 
@@ -765,7 +764,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         fun getSecure(key: String): String? {
             val inst = getInstanceOrThrow()
             return try {
-                inst.getSecureSafe(inst.encryptedPreferences, key)
+                inst.encryptedPreferences.getString(key, null)
             } catch (e: Exception) {
                 throw e.wrapStorageException(
                     "NitroStorage: Failed to read secure storage: ${e.message}",
@@ -778,7 +777,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             val inst = getInstanceOrThrow()
             return try {
                 Array(keys.size) { index ->
-                    inst.getSecureSafe(inst.encryptedPreferences, keys[index])
+                    inst.encryptedPreferences.getString(keys[index], null)
                 }
             } catch (e: Exception) {
                 throw e.wrapStorageException(
@@ -790,18 +789,17 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         @JvmStatic
         fun deleteSecure(key: String) {
             val inst = getInstanceOrThrow()
-            synchronized(inst) {
+            withSecureMutation(inst) {
                 val biometricPreferences = inst.existingBiometricPreferences()
                 inst.applySecureEditor(inst.encryptedPreferences.edit().remove(key))
                 inst.removeBiometricKey(key, biometricPreferences)
-                inst.invalidateSecureKeysCache()
             }
         }
 
         @JvmStatic
         fun deleteSecureBatch(keys: Array<String>) {
             val inst = getInstanceOrThrow()
-            synchronized(inst) {
+            withSecureMutation(inst) {
                 val biometricPreferences = inst.existingBiometricPreferences()
                 val editor = inst.encryptedPreferences.edit()
                 for (key in keys) {
@@ -815,7 +813,6 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
                     }
                     inst.applySecureEditor(biometricEditor)
                 }
-                inst.invalidateSecureKeysCache()
             }
         }
 
@@ -847,11 +844,10 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         @JvmStatic
         fun clearSecure() {
             val inst = getInstanceOrThrow()
-            synchronized(inst) {
+            withSecureMutation(inst) {
                 val biometricPreferences = inst.existingBiometricPreferences()
                 inst.applySecureEditor(inst.encryptedPreferences.edit().clear())
                 inst.clearBiometricStores(biometricPreferences)
-                inst.invalidateSecureKeysCache()
             }
         }
 
@@ -939,7 +935,7 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             val inst = getInstanceOrThrow()
             return try {
                 inst.firstInExistingBiometricPreferences { preferences ->
-                    inst.getSecureSafe(preferences, key)
+                    preferences.getString(key, null)
                 }
             } catch (e: Exception) {
                 throw e.wrapStorageException(

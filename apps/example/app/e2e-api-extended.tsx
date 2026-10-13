@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { View } from "react-native";
 import {
   AccessControl,
   createSecureAuthStorage,
   createSetItem,
   createStorageItem,
   getStorageErrorCode,
+  migrateSecureAccessControl,
   storage,
   StorageScope,
   useSetStorage,
@@ -15,7 +16,13 @@ import {
   useStorageValue,
   type StorageChangeEvent,
 } from "react-native-nitro-storage";
-import { Card, Page, StatusRow } from "../components/shared";
+import {
+  Card,
+  Page,
+  ResultsProbe,
+  StatusRow,
+  describeStorageError,
+} from "../components/shared";
 
 type ExtCase = {
   name: string;
@@ -98,6 +105,7 @@ const authStorage = createSecureAuthStorage(
 const inventoryPrefix = "__e2e_inv_";
 const accessControlKey = "__e2e_ext_access_control";
 const passcodeKey = "__e2e_ext_passcode_acl";
+const migrateKey = "__e2e_ext_migrate";
 const diskEventKey = "__e2e_ext_disk_event";
 const metricsDiskKey = "__e2e_ext_metrics_disk";
 const metricsSecureKey = "__e2e_ext_metrics_secure";
@@ -106,13 +114,6 @@ function resolveAfter(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
-}
-
-function describeError(error: unknown): string {
-  return (
-    getStorageErrorCode(error) ??
-    (error instanceof Error ? error.message : String(error))
-  );
 }
 
 function safely(cleanup: () => void): boolean {
@@ -128,7 +129,7 @@ function runSync(name: string, fn: () => string): ExtCase {
   try {
     return { name, token: fn() };
   } catch (error) {
-    return { name, token: `fail:${name}:${describeError(error)}` };
+    return { name, token: `fail:${name}:${describeStorageError(error)}` };
   }
 }
 
@@ -139,7 +140,7 @@ async function runAsync(
   try {
     return { name, token: await fn() };
   } catch (error) {
-    return { name, token: `fail:${name}:${describeError(error)}` };
+    return { name, token: `fail:${name}:${describeStorageError(error)}` };
   }
 }
 
@@ -409,6 +410,37 @@ function checkPasscodeAcl(): string {
   }
 }
 
+function checkAccessControlMigration(): string {
+  try {
+    storage.setString(migrateKey, "migrate-ok", StorageScope.Secure);
+    storage.flushSecureWrites();
+    const result = migrateSecureAccessControl(AccessControl.AfterFirstUnlock, {
+      keys: [migrateKey],
+    });
+    const value = storage.getString(migrateKey, StorageScope.Secure);
+    const handled =
+      result.migrated.length + result.skipped.length === 1 &&
+      result.locked.length === 0 &&
+      result.failed.length === 0 &&
+      !result.enumerationLocked;
+    return handled && value === "migrate-ok"
+      ? "ok:migrate=handled:value=intact"
+      : `fail:migrate:migrated=${result.migrated.length}:skipped=${result.skipped.length}:locked=${result.locked.length}:failed=${result.failed.length}:value=${String(value)}`;
+  } catch (error) {
+    return `migrate=${getStorageErrorCode(error) ?? `error:${error instanceof Error ? error.message : String(error)}`}`;
+  } finally {
+    safely(() => {
+      storage.deleteString(migrateKey, StorageScope.Secure);
+    });
+    safely(() => {
+      storage.flushSecureWrites();
+    });
+    safely(() => {
+      storage.setAccessControl(AccessControl.WhenUnlocked);
+    });
+  }
+}
+
 async function runExtendedSweep(): Promise<ExtCase[]> {
   const cases: ExtCase[] = [
     runSync("item-merge-setordelete", checkMergeAndSetOrDelete),
@@ -428,11 +460,12 @@ async function runExtendedSweep(): Promise<ExtCase[]> {
   } catch (error) {
     cases.push({
       name: "native-disk-events",
-      token: `fail:native-disk-events:${describeError(error)}`,
+      token: `fail:native-disk-events:${describeStorageError(error)}`,
     });
   }
   cases.push(await runAsync("auth-storage-ttl", checkAuthStorageTtl));
   cases.push(runSync("passcode-acl-probe", checkPasscodeAcl));
+  cases.push(runSync("access-control-migration", checkAccessControlMigration));
   return cases;
 }
 
@@ -518,7 +551,10 @@ export default function ApiExtendedScreen() {
       .catch((error: unknown) => {
         if (mounted) {
           setCases([
-            { name: "sweep", token: `fail:sweep:${describeError(error)}` },
+            {
+              name: "sweep",
+              token: `fail:sweep:${describeStorageError(error)}`,
+            },
           ]);
         }
       });
@@ -543,11 +579,9 @@ export default function ApiExtendedScreen() {
         title="API extended lab"
         subtitle="Deep link nitrostorage://e2e-api-extended"
       >
-        <View
+        <ResultsProbe
           testID="e2e-ext-results"
-          accessible
-          accessibilityLabel={tokens.map((token) => `${token};`).join("")}
-          style={localStyles.resultsProbe}
+          label={tokens.map((token) => `${token};`).join("")}
         />
         <StatusRow
           testID="e2e-ext-finished"
@@ -565,9 +599,3 @@ export default function ApiExtendedScreen() {
     </View>
   );
 }
-
-const localStyles = StyleSheet.create({
-  resultsProbe: {
-    height: 1,
-  },
-});

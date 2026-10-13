@@ -52,7 +52,7 @@ public:
     void limitValueLengthForTesting(int bytes);
 
 private:
-    void openLocked();
+    void openLocked(bool exclusiveLocking);
     void reopenLocked();
     void ensureOpenLocked();
     void closeLocked();
@@ -76,7 +76,6 @@ private:
     sqlite3_stmt* hasStmt_ = nullptr;
     sqlite3_stmt* keysStmt_ = nullptr;
     sqlite3_stmt* prefixRangeStmt_ = nullptr;
-    sqlite3_stmt* prefixFromStmt_ = nullptr;
     sqlite3_stmt* prefixLikeStmt_ = nullptr;
     sqlite3_stmt* sizeStmt_ = nullptr;
     sqlite3_stmt* clearStmt_ = nullptr;

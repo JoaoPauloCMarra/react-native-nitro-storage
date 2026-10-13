@@ -1,25 +1,22 @@
 import { useEffect, useRef, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import {
   createStorageItem,
-  getStorageErrorCode,
   storage,
   StorageScope,
   type StorageItem,
 } from "react-native-nitro-storage";
-import { Page, StatusRow } from "../components/shared";
+import {
+  Page,
+  ResultsProbe,
+  StatusRow,
+  describeStorageError,
+} from "../components/shared";
 
 const RUN_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const READ_DELAY_MS = 300;
-
-function errorCode(error: unknown): string {
-  return (
-    getStorageErrorCode(error) ??
-    (error instanceof Error ? error.name : "unknown")
-  );
-}
 
 function cleanupToken(
   key: string,
@@ -33,7 +30,7 @@ function cleanupToken(
       ? "bio:cleanup=missing;"
       : `bio:cleanup=${metadata.kind};`;
   } catch (error) {
-    return `bio:cleanup=${errorCode(error)};`;
+    return `bio:cleanup=${describeStorageError(error)};`;
   }
 }
 
@@ -83,7 +80,7 @@ export default function BiometricReplayScreen() {
       item.set(expectedValue);
       append("bio:seed=ok;");
     } catch (error) {
-      append(`bio:seed=${errorCode(error)};`);
+      append(`bio:seed=${describeStorageError(error)};`);
       append(cleanupToken(key, item));
       setFinished(true);
       return;
@@ -95,7 +92,17 @@ export default function BiometricReplayScreen() {
         `bio:meta=kind-${metadata.kind}:protected=${String(metadata.biometricProtected)}:exposed=${String(metadata.valueExposed)};`,
       );
     } catch (error) {
-      append(`bio:meta=${errorCode(error)};`);
+      append(`bio:meta=${describeStorageError(error)};`);
+    }
+
+    try {
+      const listed =
+        storage.getKeysByPrefix(key, StorageScope.Secure).includes(key) &&
+        storage.getAllKeys(StorageScope.Secure).includes(key) &&
+        storage.size(StorageScope.Secure) >= 1;
+      append(listed ? "bio:keys=listed;" : "bio:keys=missing;");
+    } catch (error) {
+      append(`bio:keys=${describeStorageError(error)};`);
     }
 
     append("bio:read=prompting;");
@@ -109,7 +116,7 @@ export default function BiometricReplayScreen() {
             : "bio:read=value-mismatch;",
         );
       } catch (error) {
-        append(`bio:read=${errorCode(error)};`);
+        append(`bio:read=${describeStorageError(error)};`);
       }
       append(cleanupToken(key, seededItem));
       setFinished(true);
@@ -126,12 +133,7 @@ export default function BiometricReplayScreen() {
         title="Biometric replay"
         subtitle="Deep link nitrostorage://e2e-biometric?runId=<uuid>"
       >
-        <View
-          testID="e2e-biometric-results"
-          accessible
-          accessibilityLabel={tokens.join("")}
-          style={localStyles.resultsProbe}
-        />
+        <ResultsProbe testID="e2e-biometric-results" label={tokens.join("")} />
         <StatusRow
           testID="e2e-biometric-finished"
           label="run"
@@ -142,9 +144,3 @@ export default function BiometricReplayScreen() {
     </View>
   );
 }
-
-const localStyles = StyleSheet.create({
-  resultsProbe: {
-    height: 1,
-  },
-});

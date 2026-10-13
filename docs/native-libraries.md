@@ -52,7 +52,14 @@ wipe leaves no pre-SQLite copy behind. Later Disk reads and writes use SQLite.
   converts to WAL), it opens once without WAL and uses `synchronous=FULL`, so
   reads keep working; the next launch tries WAL again. If WAL is active and the
   device is so full that the WAL shared-memory file cannot be created, reads
-  fail with `storage_full` until space is free. iOS has the same limit.
+  fail with `storage_full` until space is free.
+- iOS and the shared C++ store handle that case differently. When the normal
+  open fails with `storage_full` because the WAL shared-memory file (`-shm`)
+  cannot be created, the store reopens with `PRAGMA locking_mode=EXCLUSIVE`.
+  That keeps the WAL index in memory and needs no new file, so existing rows
+  read from the first call. Writes and deletes keep failing with `storage_full`
+  until space frees. The exclusive lock lasts for that connection; the next
+  launch tries the normal open first.
 - With WAL and `synchronous=NORMAL`, an app kill never loses a committed
   write. A power loss can lose the most recent commits.
 

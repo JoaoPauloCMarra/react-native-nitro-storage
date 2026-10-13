@@ -1,27 +1,12 @@
-const mockHybridObject = {
-  set: jest.fn(),
-  get: jest.fn(),
-  remove: jest.fn(),
-  clear: jest.fn(),
-  has: jest.fn(),
+import { createMockHybridObject } from "./helpers/mock-hybrid-object";
+
+const mockHybridObject = createMockHybridObject({
   getAllKeys: jest.fn(() => []),
-  size: jest.fn(() => 0),
-  setBatch: jest.fn(),
-  getBatch: jest.fn(() => []),
-  removeBatch: jest.fn(),
-  removeByPrefix: jest.fn(),
-  addOnChange: jest.fn(() => () => {}),
-  setSecureAccessControl: jest.fn(),
-  setSecureWritesAsync: jest.fn(),
-  setKeychainAccessGroup: jest.fn(),
-  setSecureBiometric: jest.fn(),
-  setSecureBiometricWithLevel: jest.fn(),
-  getSecureBiometric: jest.fn(),
-  deleteSecureBiometric: jest.fn(),
-  hasSecureBiometric: jest.fn(),
-  clearSecureBiometric: jest.fn(),
   getKeysByPrefix: jest.fn(() => []),
-};
+  size: jest.fn(() => 0),
+  getBatch: jest.fn(() => []),
+  addOnChange: jest.fn(() => () => {}),
+});
 
 jest.mock("react-native-nitro-modules", () => ({
   NitroModules: {
@@ -343,5 +328,68 @@ describe("native entry surface", () => {
     storage.setString("mem-raw", colliding, StorageScope.Memory);
     expect(storage.getString("mem-raw", StorageScope.Memory)).toBe(colliding);
     expect(escapeCollidingRawValue(colliding)).not.toBe(colliding);
+  });
+});
+
+describe("clearBiometric native echoes", () => {
+  it("suppresses the per-key native echo of clearBiometric", () => {
+    const key = uniqueKey("bio-echo");
+    let nativeChange:
+      ((changedKey: string, value: string | undefined) => void) | undefined;
+    mockHybridObject.addOnChange.mockImplementation(((
+      _scope: StorageScope,
+      callback: (changedKey: string, value: string | undefined) => void,
+    ) => {
+      nativeChange = callback;
+      return () => {};
+    }) as never);
+    mockHybridObject.getAllKeys.mockReturnValue([key]);
+    mockHybridObject.hasSecureBiometric.mockReturnValue(true);
+    const events: StorageChangeEvent[] = [];
+    const unsubscribe = storage.subscribe(StorageScope.Secure, (event) => {
+      events.push(event);
+    });
+    expect(nativeChange).toBeDefined();
+
+    storage.clearBiometric();
+    nativeChange?.(key, undefined);
+
+    expect(events.map((event) => event.operation)).toEqual(["clear"]);
+    unsubscribe();
+    mockHybridObject.addOnChange.mockImplementation(() => () => {});
+    mockHybridObject.hasSecureBiometric.mockReset();
+    mockHybridObject.getAllKeys.mockReturnValue([]);
+  });
+
+  it("notifies biometric item subscribers on the native clear echo without event listeners", () => {
+    const item = createStorageItem({
+      key: uniqueKey("bio-subscriber"),
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      biometric: true,
+    });
+    let nativeChange:
+      ((changedKey: string, value: string | undefined) => void) | undefined;
+    mockHybridObject.addOnChange.mockImplementation(((
+      _scope: StorageScope,
+      callback: (changedKey: string, value: string | undefined) => void,
+    ) => {
+      nativeChange = callback;
+      return () => {};
+    }) as never);
+    mockHybridObject.getAllKeys.mockReturnValue([item.key]);
+    mockHybridObject.hasSecureBiometric.mockReturnValue(true);
+    const listener = jest.fn();
+    const unsubscribe = item.subscribe(listener);
+    expect(nativeChange).toBeDefined();
+
+    storage.clearBiometric();
+    nativeChange?.(item.key, undefined);
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    unsubscribe();
+    mockHybridObject.addOnChange.mockImplementation(() => () => {});
+    mockHybridObject.hasSecureBiometric.mockReset();
+    mockHybridObject.getAllKeys.mockReturnValue([]);
   });
 });

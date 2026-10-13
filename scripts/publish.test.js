@@ -7,8 +7,10 @@ const { test } = require("node:test");
 
 const {
   REGISTRY_RETRY_DELAYS_SECONDS,
+  findSecurityPolicyFailure,
   isRegistryNotFound,
   parsePublishArgs,
+  validateNpmTag,
   verifyPublishedPackage,
 } = require("./publish.js");
 
@@ -92,6 +94,56 @@ test("the CLI exits 1 on an unknown argument before any work", () => {
   );
   assert.equal(result.status, 1);
   assert.match(result.stdout, /Unknown argument: --bogus/);
+});
+
+function validateTagInChild(tag) {
+  return spawnSync(
+    process.execPath,
+    [
+      "-e",
+      "require(process.argv[1]).validateNpmTag(process.argv[2])",
+      path.join(__dirname, "publish.js"),
+      tag,
+    ],
+    { encoding: "utf8" },
+  );
+}
+
+test("accepts release channel dist tags", () => {
+  for (const tag of ["latest", "next", "beta-1", "rc.2"]) {
+    assert.equal(validateTagInChild(tag).status, 0, tag);
+  }
+  assert.equal(typeof validateNpmTag, "function");
+});
+
+test("rejects dist tags that the publish workflow rejects", () => {
+  for (const tag of ["v1.4", "1.2", "1.x", "v2", "1.2.3", "V1", "a b"]) {
+    const result = validateTagInChild(tag);
+    assert.equal(result.status, 1, tag);
+    assert.match(result.stdout, /Invalid npm dist tag/);
+  }
+});
+
+test("security policy must list the released minor line as supported", () => {
+  const policy = [
+    "| Version  | Supported |",
+    "| `0.15.x` | Yes       |",
+    "| `< 0.15` | No        |",
+  ].join("\n");
+  assert.equal(findSecurityPolicyFailure("0.15.1", policy), null);
+  assert.equal(findSecurityPolicyFailure("0.15.0", policy), null);
+  assert.match(findSecurityPolicyFailure("0.16.0", policy) ?? "", /0\.16\.x/);
+  assert.match(findSecurityPolicyFailure("1.0.0", policy) ?? "", /1\.0\.x/);
+  assert.match(findSecurityPolicyFailure("0.15.1", "no table") ?? "", /0\.15\.x/);
+  const unsupported = [
+    "| Version  | Supported |",
+    "| `0.15.x` | No        |",
+  ].join("\n");
+  assert.match(findSecurityPolicyFailure("0.15.1", unsupported) ?? "", /0\.15\.x/);
+  assert.match(
+    findSecurityPolicyFailure("0.15.1", "mentions `0.15.x` in prose, Yes") ?? "",
+    /0\.15\.x/,
+  );
 });
 
 test("uses the publish workflow delay ladder", () => {

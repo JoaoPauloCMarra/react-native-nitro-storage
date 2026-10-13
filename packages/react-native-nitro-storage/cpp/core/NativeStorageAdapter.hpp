@@ -59,6 +59,15 @@ public:
     virtual void deleteSecureBiometric(const std::string& key) = 0;
     virtual bool hasSecureBiometric(const std::string& key) = 0;
     virtual void clearSecureBiometric() = 0;
+    virtual std::vector<std::string> getBiometricKeysSecure() {
+        std::vector<std::string> keys;
+        for (const auto& key : getAllKeysSecure()) {
+            if (hasSecureBiometric(key)) {
+                keys.push_back(key);
+            }
+        }
+        return keys;
+    }
 
     virtual bool isProtectedDataAvailable() { return true; }
     virtual std::function<void()> addProtectedDataAvailableListener(std::function<void()>) {

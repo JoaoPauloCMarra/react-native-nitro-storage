@@ -1,6 +1,5 @@
 const { execFileSync } = require("child_process");
 const path = require("path");
-const fs = require("fs");
 
 function fail(message) {
   console.error(`❌ ${message}`);
@@ -8,7 +7,6 @@ function fail(message) {
 }
 
 const packageRoot = path.resolve(__dirname, "..");
-const repoRoot = path.resolve(packageRoot, "../..");
 
 const docsSyncScript = path.join(packageRoot, "scripts/sync-package-docs.js");
 

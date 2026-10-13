@@ -1,13 +1,20 @@
 import { useState } from "react";
-import { Platform, StyleSheet, View } from "react-native";
+import { Platform, View } from "react-native";
 import {
   createSetItem,
   createStorageItem,
-  getStorageErrorCode,
   storage,
   StorageScope,
 } from "react-native-nitro-storage";
-import { Button, Card, Colors, StatusRow, styles } from "./shared";
+import {
+  Button,
+  Card,
+  Colors,
+  ResultsProbe,
+  StatusRow,
+  describeStorageError,
+  styles,
+} from "./shared";
 
 const memoryItem = createStorageItem({
   key: "e2e-memory",
@@ -233,7 +240,7 @@ export function StorageE2eLab() {
                 );
               } catch (error) {
                 setSecureCapabilityStatus(
-                  `fail:secure:${getStorageErrorCode(error) ?? String(error)}`,
+                  `fail:secure:${describeStorageError(error)}`,
                 );
               } finally {
                 try {
@@ -300,10 +307,9 @@ export function StorageE2eLab() {
           }}
         />
         <StatusRow testID="e2e-platform" label="platform" value={Platform.OS} />
-        <View
+        <ResultsProbe
           testID="e2e-results"
-          accessible
-          accessibilityLabel={[
+          label={[
             renameStatus,
             memoryStatus,
             secureAsyncStatus,
@@ -313,15 +319,8 @@ export function StorageE2eLab() {
             flushObserverStatus,
             stressStatus,
           ].join(" ")}
-          style={localStyles.resultsProbe}
         />
       </View>
     </Card>
   );
 }
-
-const localStyles = StyleSheet.create({
-  resultsProbe: {
-    height: 1,
-  },
-});

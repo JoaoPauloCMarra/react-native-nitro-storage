@@ -1,6 +1,7 @@
 #import "IOSStorageAdapterCpp.hpp"
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
+#import <LocalAuthentication/LocalAuthentication.h>
 
 #include <algorithm>
 #include <atomic>
@@ -31,6 +32,8 @@ struct FakeKeychain {
     NSDictionary* lastUpdateAttributes = nil;
     NSDictionary* lastQuery = nil;
     bool returnNullResult = false;
+    std::function<void()> afterEnumeration;
+    bool enforceAclInteraction = false;
 };
 
 FakeKeychain& keychain() {
@@ -64,6 +67,8 @@ void resetKeychain() {
     fake.lastUpdateAttributes = nil;
     fake.lastQuery = nil;
     fake.returnNullResult = false;
+    fake.afterEnumeration = nullptr;
+    fake.enforceAclInteraction = false;
 }
 
 void require(bool condition, const std::string& message) {
@@ -125,7 +130,7 @@ extern "C" {
 
 OSStatus SecItemCopyMatching(CFDictionaryRef query, CFTypeRef* result) {
     FakeKeychain& fake = keychain();
-    std::lock_guard<std::mutex> lock(fake.mutex);
+    std::unique_lock<std::mutex> lock(fake.mutex);
     NSDictionary* nsQuery = (__bridge NSDictionary*)query;
     fake.calls.push_back("copy");
     fake.lastQuery = [nsQuery copy];
@@ -138,8 +143,15 @@ OSStatus SecItemCopyMatching(CFDictionaryRef query, CFTypeRef* result) {
     if (account == nil) {
         NSMutableArray* matches = [NSMutableArray array];
         NSString* prefix = [service stringByAppendingString:@"\n"];
+        id enumerationContext = nsQuery[(__bridge id)kSecUseAuthenticationContext];
+        const bool enumerationNoUI = fake.enforceAclInteraction &&
+            [enumerationContext isKindOfClass:[LAContext class]] &&
+            ((LAContext*)enumerationContext).interactionNotAllowed;
         for (NSString* key in fake.items) {
             if ([key hasPrefix:prefix]) {
+                if (enumerationNoUI && fake.items[key][(__bridge id)kSecAttrAccessControl] != nil) {
+                    return errSecInteractionNotAllowed;
+                }
                 [matches addObject:@{
                     (__bridge id)kSecAttrAccount: fake.items[key][(__bridge id)kSecAttrAccount]
                 }];
@@ -151,11 +163,24 @@ OSStatus SecItemCopyMatching(CFDictionaryRef query, CFTypeRef* result) {
         if (result != NULL) {
             *result = CFBridgingRetain(matches.count == 1 ? matches[0] : matches);
         }
+        std::function<void()> hook = std::move(fake.afterEnumeration);
+        fake.afterEnumeration = nullptr;
+        lock.unlock();
+        if (hook) {
+            hook();
+        }
         return errSecSuccess;
     }
     NSDictionary* item = fake.items[itemKey(service, account)];
     if (item == nil) {
         return errSecItemNotFound;
+    }
+    id queryContext = nsQuery[(__bridge id)kSecUseAuthenticationContext];
+    if (fake.enforceAclInteraction &&
+        item[(__bridge id)kSecAttrAccessControl] != nil &&
+        [queryContext isKindOfClass:[LAContext class]] &&
+        ((LAContext*)queryContext).interactionNotAllowed) {
+        return errSecInteractionNotAllowed;
     }
     if (result == NULL) {
         return errSecSuccess;
@@ -300,7 +325,11 @@ std::vector<KeychainOperation> keychainOperations() {
         {"getSecureBiometric", "Biometric get", &fake.copyScript, 0,
             [](IOSStorageAdapterCpp& a) { (void)a.getSecureBiometric("k"); }, false},
         {"hasSecureBiometric", "Biometric has", &fake.copyScript, 0,
-            [](IOSStorageAdapterCpp& a) { (void)a.hasSecureBiometric("k"); }, false},
+            [](IOSStorageAdapterCpp& a) {
+                if (!a.hasSecureBiometric("k")) {
+                    throw std::runtime_error("unexpected absent");
+                }
+            }, true},
         {"deleteSecureBiometric", "Biometric delete", &fake.deleteScript, 0,
             [](IOSStorageAdapterCpp& a) { a.deleteSecureBiometric("k"); }, false},
         {"clearSecureBiometric", "clearSecureBiometric", &fake.deleteScript, 0,
@@ -438,6 +467,19 @@ void testSecureRoundTripAgainstFakeKeychain() {
         );
     }
     require(keychain().calls.size() == callsBefore, "invalid UTF-8 must not reach the keychain");
+}
+
+void testBiometricKeysComeFromTheCache() {
+    resetKeychain();
+    IOSStorageAdapterCpp adapter;
+    adapter.setSecure("plain", "p");
+    adapter.setSecureBiometricWithLevel("bio", "b", 2);
+    require(adapter.getBiometricKeysSecure() == std::vector<std::string>{"bio"}, "biometric keys exclude plain keys");
+    const size_t callsBefore = keychain().calls.size();
+    require(adapter.getBiometricKeysSecure() == std::vector<std::string>{"bio"}, "repeat listing");
+    require(keychain().calls.size() == callsBefore, "listing biometric keys reuses the cache");
+    adapter.clearSecureBiometric();
+    require(adapter.getBiometricKeysSecure().empty(), "clear empties the biometric keys");
 }
 
 void testUndecodableKeychainDataIsReportedAsCorruption() {
@@ -721,11 +763,65 @@ void testConcurrentSecureAccess() {
     require(failures.load() == 0, "concurrent secure access must not fail");
 }
 
+void testBiometricMetadataAndOverwriteNeedNoUserInterface() {
+    resetKeychain();
+    keychain().enforceAclInteraction = true;
+    IOSStorageAdapterCpp adapter;
+    adapter.setSecureBiometricWithLevel("vault", "one", 2);
+    require(adapter.hasSecureBiometric("vault"), "an ACL-protected item is reported present without UI");
+    require(adapter.hasSecure("vault"), "hasSecure sees the ACL-protected item without UI");
+    require(!adapter.hasSecureBiometric("missing"), "an absent biometric item is still absent");
+
+    adapter.setSecureBiometricWithLevel("vault", "two", 2);
+    adapter.setSecureBiometricWithLevel("vault", "three", 1);
+    require(stored(kBiometricService, "vault"), "overwriting a protected item keeps one biometric item");
+    require(contains(adapter.getAllKeysSecure(), "vault"), "overwritten key stays listed");
+
+    require(contains(adapter.getKeysByPrefixSecure("va"), "vault") && adapter.sizeSecure() == 1, "prefix and size list the protected item");
+
+    IOSStorageAdapterCpp fresh;
+    require(contains(fresh.getAllKeysSecure(), "vault"), "first enumeration lists a protected item without UI");
+    require(fresh.sizeSecure() == 1, "first size counts a protected item without UI");
+
+    resetKeychain();
+    keychain().enforceAclInteraction = true;
+    IOSStorageAdapterCpp failing;
+    failing.setSecureBiometricWithLevel("vault", "one", 2);
+    script(keychain().addScript, {errSecParam});
+    const std::string message = failureMessage([&] { failing.setSecureBiometricWithLevel("vault", "two", 2); });
+    require(startsWith(message, "[nitro-error:storage_compensation_failed]"), "an unreadable previous value cannot be restored: " + message);
+}
+
+void testWritesDuringFirstEnumerationAreNotLostFromTheCache() {
+    resetKeychain();
+    seed(kPlainService, "early", [@"1" dataUsingEncoding:NSUTF8StringEncoding], nil);
+    IOSStorageAdapterCpp adapter;
+    {
+        FakeKeychain& fake = keychain();
+        std::lock_guard<std::mutex> lock(fake.mutex);
+        fake.afterEnumeration = [&adapter] { adapter.setSecure("late", "2"); };
+    }
+    const auto keys = adapter.getAllKeysSecure();
+    require(contains(keys, "early") && contains(keys, "late"), "a write racing the first enumeration stays listed");
+    require(adapter.sizeSecure() == 2, "size counts the write that raced the first enumeration");
+
+    resetKeychain();
+    seed(kPlainService, "gone", [@"1" dataUsingEncoding:NSUTF8StringEncoding], nil);
+    IOSStorageAdapterCpp deleting;
+    {
+        FakeKeychain& fake = keychain();
+        std::lock_guard<std::mutex> lock(fake.mutex);
+        fake.afterEnumeration = [&deleting] { deleting.deleteSecure("gone"); };
+    }
+    require(deleting.getAllKeysSecure().empty(), "a delete racing the first enumeration stays removed");
+}
+
 } // namespace
 
 int main() {
     @autoreleasepool {
         testSecureRoundTripAgainstFakeKeychain();
+        testBiometricKeysComeFromTheCache();
         testKeychainStatusMappingForEveryOperation();
         testUndecodableKeychainDataIsReportedAsCorruption();
         testLockedEnumerationIsRetriedAndPartialBatchesReportProgress();
@@ -734,6 +830,8 @@ int main() {
         testLockedRewriteKeepsTheExistingItemUntouched();
         testBiometricPromotionCompensatesOnFailure();
         testConcurrentSecureAccess();
+        testWritesDuringFirstEnumerationAreNotLostFromTheCache();
+        testBiometricMetadataAndOverwriteNeedNoUserInterface();
         std::cout << "IOSStorageAdapterCpp keychain tests passed." << std::endl;
     }
     return 0;

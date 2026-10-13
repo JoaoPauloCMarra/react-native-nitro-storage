@@ -99,6 +99,10 @@ public:
     }
 
     std::vector<std::string> getAllKeysSecure() override {
+        secureListCalls_ += 1;
+        if (failSecureListing_) {
+            throw std::runtime_error("[nitro-error:keychain_locked] NitroStorage: listing locked");
+        }
         std::vector<std::string> keys;
         keys.reserve(secure_.size() + biometric_.size());
         for (const auto& [key, _] : secure_) {
@@ -201,6 +205,18 @@ public:
         biometric_.clear();
     }
 
+    std::vector<std::string> getBiometricKeysSecure() override {
+        biometricKeyListCalls_ += 1;
+        if (failSecureListing_) {
+            throw std::runtime_error("[nitro-error:keychain_locked] NitroStorage: listing locked");
+        }
+        std::vector<std::string> keys;
+        for (const auto& [key, _] : biometric_) {
+            keys.push_back(key);
+        }
+        return keys;
+    }
+
     bool isProtectedDataAvailable() override {
         return protectedDataAvailable_;
     }
@@ -228,6 +244,9 @@ public:
     int secureWritesAsyncCalls() const { return secureWritesAsyncCalls_; }
     const std::string& keychainGroup() const { return keychainGroup_; }
     int biometricLevel() const { return biometricLevel_; }
+    void setFailSecureListing(bool fail) { failSecureListing_ = fail; }
+    int biometricKeyListCalls() const { return biometricKeyListCalls_; }
+    int secureListCalls() const { return secureListCalls_; }
     void failSecureBatchAt(size_t index) { failSecureBatchAt_ = index; }
 
 private:
@@ -249,6 +268,9 @@ private:
     int secureWritesAsyncCalls_ = 0;
     std::string keychainGroup_;
     int biometricLevel_ = -1;
+    bool failSecureListing_ = false;
+    int biometricKeyListCalls_ = 0;
+    int secureListCalls_ = 0;
     bool protectedDataAvailable_ = true;
     size_t nextProtectedListenerId_ = 0;
     std::map<size_t, std::function<void()>> protectedListeners_;
@@ -712,10 +734,37 @@ void testBiometricMethods() {
 
     storage->setSecureBiometricWithLevel("bio-clear", "clear-value", 0.0);
     assert(storage->has("bio-clear", 2.0));
+    storage->set("plain-secure", "plain-value", 2.0);
+    events.clear();
+    const int secureListsBefore = adapter->secureListCalls();
     storage->clearSecureBiometric();
+    assert(adapter->secureListCalls() == secureListsBefore);
     assert(!storage->has("bio-clear", 2.0));
-    assert(!events.empty());
+    assert(events.size() == 1);
+    assert(events[0].first == "bio-clear");
+    assert(!events[0].second.has_value());
+    assert(storage->has("plain-secure", 2.0));
+    assert(adapter->biometricKeyListCalls() == 1);
 
+    unsubscribe();
+}
+
+void testClearBiometricFallsBackToScopeSignalWhenListingFails() {
+    auto adapter = std::make_shared<MockAdapter>();
+    auto storage = std::make_shared<HybridStorage>(adapter);
+    std::vector<std::string> keys;
+    auto unsubscribe = storage->addOnChange(2.0, [&](const std::string& key, const std::optional<std::string>&) {
+        keys.push_back(key);
+    });
+    storage->setSecureBiometricWithLevel("bio-locked", "value", 0.0);
+    keys.clear();
+    adapter->setFailSecureListing(true);
+
+    storage->clearSecureBiometric();
+
+    assert(!adapter->hasSecureBiometric("bio-locked"));
+    assert(keys.size() == 1);
+    assert(keys[0].empty());
     unsubscribe();
 }
 
@@ -1051,6 +1100,7 @@ int main() {
     testGetKeysByPrefix();
     testBiometricLevelPassThrough();
     testBiometricMethods();
+    testClearBiometricFallsBackToScopeSignalWhenListingFails();
     testClearNotifiesScope();
     testInvalidInputsAndMissingAdapter();
     testNativeTaggedErrorsPassThrough();

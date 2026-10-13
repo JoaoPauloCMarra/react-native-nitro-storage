@@ -11,4 +11,6 @@ wait id="e2e-keychain-secure-roundtrip"
 wait text "pass:native=platform-secure-storage:value=secure-sentinel:metadata-hidden:deleted=true"
 wait id="e2e-keychain-hardware-pending"
 wait text "pending:biometric,lock,corruption,hardware-backed-keychain"
+wait id="keychain-probe-protected-data"
+wait text "protected-data=true"
 close

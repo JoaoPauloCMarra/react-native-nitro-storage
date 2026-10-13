@@ -42,6 +42,8 @@ pagination, conflict resolution, or remote synchronization.
 - [Migrations And Transactions](#migrations-and-transactions)
 - [Web Backends](#web-backends)
 - [Testing](#testing)
+- [API](#api)
+- [Error Contract](#error-contract)
 - [Platform Support](#platform-support)
 - [Documentation](#documentation)
 - [Troubleshooting](#troubleshooting)
@@ -68,7 +70,7 @@ Nitro peer requirement: `react-native-nitro-modules >=0.37.0 <0.38.0`.
 
 | Tested on                                  | Supported floor                     |
 | ------------------------------------------ | ----------------------------------- |
-| React Native `0.86.3` / Expo SDK `57.0.27` | React Native `0.77` / Expo SDK `53` |
+| React Native `0.86.3` / Expo SDK `57.0.28` | React Native `0.77` / Expo SDK `53` |
 
 Nitro Storage supports React Native 0.77 or newer and Expo SDK 53 or newer,
 which is the minimum for Nitro Modules 0.37: its Android package does not
@@ -82,7 +84,7 @@ package exports are disabled (the default before React Native 0.79).
 The package gate uses React Native `0.86.3` and the Strict TypeScript API.
 `check:ci` also compiles the public source against React Native `0.87.0`'s
 Strict TypeScript API; this does not change the runtime baseline. The Expo
-example uses Expo SDK `57.0.27`, React Native
+example uses Expo SDK `57.0.28`, React Native
 `0.86.3`, React `19.2.3`, and Nitro Modules `0.37.1`, which is the React Native
 version supported by that Expo SDK. Do not override Expo's React Native version.
 
@@ -91,7 +93,7 @@ before installing this package, then rebuild the native app so the generated
 Nitro bindings and native runtime use the same major-minor version:
 
 ```sh
-bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.15.0
+bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.16.0
 bunx expo prebuild
 ```
 
@@ -836,9 +838,11 @@ the cache only for items with `readCache` or `fallbackToCacheOnReadError`. The
 cache is unbounded; `resetMetrics()` zeros the hit/miss counters and leaves
 entries in place.
 
-The example app includes hidden integrity, keychain, and Disk/Secure stress
-labs at `nitrostorage://e2e-integrity`, `nitrostorage://e2e-keychain`, and
-`nitrostorage://e2e-stress`.
+The example app includes hidden QA labs at `nitrostorage://e2e`,
+`e2e-api-extended`, `e2e-biometric`, `e2e-clear-all`, `e2e-integrity`,
+`e2e-keychain`, `e2e-persistence`, and `e2e-stress`. The replay flows that use
+them are described in
+[docs/qa/agent-device-replay.md](docs/qa/agent-device-replay.md).
 
 Secure event observer values are redacted by default. Pass
 `{ redactSecureValues: false }` only in trusted debug tooling where raw values
@@ -1033,6 +1037,13 @@ function saveDraft(draft: string): "saved" | "storage_full" {
 }
 ```
 
+A full device does not block reads. When a cold launch cannot create the WAL
+index file (`-shm`) because the volume has no space, the iOS and C++ Disk store
+reopens with exclusive locking, which keeps that index in memory, so every
+existing row stays readable from the first call. Writes and deletes still fail
+with `storage_full` until the user frees space, and the exclusive lock lasts for
+that connection only.
+
 A full device does not block cleanup. `storage.clear(StorageScope.Disk)`
 deletes and recreates the Disk database when a normal delete fails with
 `storage_full`, which frees the space the database used. `remove` and
@@ -1132,6 +1143,12 @@ Run native example builds locally before release when changing plugin, native,
 Nitro, secure storage, or packaging files. GitHub CI does not build the Android
 or iOS example. The package release path also validates package contents and
 dry-run publish behavior.
+
+The example app speeds up local builds through its tracked Expo config: iOS
+uses `ccache` when it is installed (`NITRO_EXAMPLE_CCACHE=0` turns it off) and
+Android enables the Gradle build cache and larger daemon heaps. Set
+`NITRO_EXAMPLE_ANDROID_ARCHS=x86_64` before `bun run example:prebuild` for an
+emulator-only Android build; leave it unset for release APKs.
 
 Run `bun run example:replay:check` to check that replay coverage matches package
 and example sources. After reviewing affected assertions, use

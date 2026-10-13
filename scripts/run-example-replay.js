@@ -3,10 +3,7 @@ const { randomUUID } = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const {
-  inside,
-  replayPlatforms,
-} = require("./check-example-replay-freshness.js");
+const { validateSuiteEntry } = require("./check-example-replay-freshness.js");
 
 const projectRoot = path.resolve(__dirname, "..");
 const coveragePath = path.join(
@@ -108,41 +105,7 @@ function readSuites(
   const ids = new Set();
   const paths = new Set();
   const suites = manifest.suites.map((suite) => {
-    if (
-      !suite ||
-      typeof suite.id !== "string" ||
-      !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(suite.id) ||
-      ids.has(suite.id) ||
-      typeof suite.path !== "string" ||
-      !suite.path.startsWith("e2e/") ||
-      suite.path.includes("..") ||
-      suite.path.includes("\\") ||
-      !suite.path.endsWith(".ad") ||
-      paths.has(suite.path) ||
-      typeof suite.purpose !== "string" ||
-      suite.purpose.trim() === ""
-    ) {
-      throw new Error(
-        "Storage replay manifest contains an invalid or duplicate flow",
-      );
-    }
-    if (
-      Object.hasOwn(suite, "platforms") &&
-      (!Array.isArray(suite.platforms) ||
-        suite.platforms.length === 0 ||
-        new Set(suite.platforms).size !== suite.platforms.length ||
-        suite.platforms.some((value) => !replayPlatforms.includes(value)))
-    ) {
-      throw new Error(
-        `${suite.id} platforms must be a non-empty subset of ${replayPlatforms.join(", ")} without duplicates`,
-      );
-    }
-    ids.add(suite.id);
-    paths.add(suite.path);
-    const suiteFile = inside(root, suite.path);
-    if (!fs.existsSync(suiteFile) || !fs.lstatSync(suiteFile).isFile()) {
-      throw new Error(`Replay flow is missing: ${suite.path}`);
-    }
+    validateSuiteEntry(suite, ids, paths, root);
     return suite;
   });
   const unknownFlow = selectedFlowIds.find((id) => !ids.has(id));

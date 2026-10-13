@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "runtimeSourceSha256": "2179bc5284b90ccd0176f075cd96e369110487a5d009b2158f441ded88e79470",
+  "runtimeSourceSha256": "5df316f774fe00ac3c7e1b6acf19776fe6c13c400e85e9067118a55fced6e9b5",
   "runtimeSourceFiles": [
     "apps/example/app.config.js",
     "apps/example/app/_layout.tsx",
@@ -25,6 +25,7 @@
     "apps/example/components/smoke-test.tsx",
     "apps/example/metro.config.js",
     "apps/example/package.json",
+    "apps/example/plugins/with-gradle-build-speed.js",
     "apps/example/tsconfig.json",
     "bun.lock",
     "package.json",
@@ -82,7 +83,7 @@
     "packages/react-native-nitro-storage/src/web-backend-contract.ts",
     "packages/react-native-nitro-storage/src/web-storage-backend.ts"
   ],
-  "replayInputsSha256": "020a34e196ab954ae9fabef478dcf0ea7730929e2928a2cf92dc705e51cba8f6",
+  "replayInputsSha256": "81ec829a43b5c90849526df0699335b38d06e2c97fb68f724e2d063c14219fb4",
   "replayInputs": [
     "e2e/qa-api-extended.ad",
     "e2e/qa-biometric-ios.ad",

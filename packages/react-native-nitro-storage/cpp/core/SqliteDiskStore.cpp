@@ -41,6 +41,10 @@ const char* storageErrorTag(sqlite3* db, int code) {
     }
 }
 
+bool isStorageFullError(const std::exception& error) {
+    return std::string(error.what()).rfind("[nitro-error:storage_full] ", 0) == 0;
+}
+
 [[noreturn]] void throwSqlite(sqlite3* db, const char* operation, int code) {
     const char* message = db != nullptr ? sqlite3_errmsg(db) : sqlite3_errstr(code);
     throw std::runtime_error(
@@ -78,14 +82,8 @@ std::string escapeLikePrefix(const std::string& prefix) {
     return escaped;
 }
 
-std::optional<std::string> prefixUpperBound(const std::string& prefix) {
+std::string prefixUpperBound(const std::string& prefix) {
     std::string upper = prefix;
-    while (!upper.empty() && static_cast<unsigned char>(upper.back()) == 0xFF) {
-        upper.pop_back();
-    }
-    if (upper.empty()) {
-        return std::nullopt;
-    }
     upper.back() = static_cast<char>(static_cast<unsigned char>(upper.back()) + 1);
     return upper;
 }
@@ -188,9 +186,23 @@ void SqliteDiskStore::recreate() {
     reopenLocked();
 }
 
+// A full device cannot create the WAL index file (-shm) on a cold launch, so a
+// normal open fails on `PRAGMA journal_mode=WAL` with ENOSPC and every read
+// would fail with it. Exclusive locking keeps the WAL index in heap memory and
+// needs no new file, so the existing rows stay readable; writes still report
+// storage_full until space frees. The mode lasts for this connection only.
 void SqliteDiskStore::reopenLocked() {
     try {
-        openLocked();
+        openLocked(false);
+        return;
+    } catch (const std::exception& error) {
+        closeLocked();
+        if (!isStorageFullError(error)) {
+            throw;
+        }
+    }
+    try {
+        openLocked(true);
     } catch (...) {
         closeLocked();
         throw;
@@ -220,7 +232,7 @@ std::string SqliteDiskStore::defaultPath() {
 #endif
 }
 
-void SqliteDiskStore::openLocked() {
+void SqliteDiskStore::openLocked(bool exclusiveLocking) {
     const auto parent = std::filesystem::path(path_).parent_path();
     if (!parent.empty()) {
         std::filesystem::create_directories(parent);
@@ -240,6 +252,9 @@ void SqliteDiskStore::openLocked() {
     }
     db_ = db;
     sqlite3_busy_timeout(db_, 5000);
+    if (exclusiveLocking) {
+        execLocked("PRAGMA locking_mode=EXCLUSIVE;");
+    }
     execLocked("PRAGMA journal_mode=WAL;");
     execLocked("PRAGMA synchronous=NORMAL;");
     execLocked("PRAGMA temp_store=MEMORY;");
@@ -263,7 +278,6 @@ void SqliteDiskStore::openLocked() {
     hasStmt_ = prepareLocked("SELECT 1 FROM kv WHERE key = ?1 LIMIT 1;");
     keysStmt_ = prepareLocked("SELECT key FROM kv;");
     prefixRangeStmt_ = prepareLocked("SELECT key FROM kv WHERE key >= ?1 AND key < ?2;");
-    prefixFromStmt_ = prepareLocked("SELECT key FROM kv WHERE key >= ?1;");
     prefixLikeStmt_ = prepareLocked("SELECT key FROM kv WHERE key LIKE ?1 ESCAPE '\\';");
     sizeStmt_ = prepareLocked("SELECT COUNT(*) FROM kv;");
     clearStmt_ = prepareLocked("DELETE FROM kv;");
@@ -287,7 +301,6 @@ void SqliteDiskStore::closeLocked() {
     finalize(hasStmt_);
     finalize(keysStmt_);
     finalize(prefixRangeStmt_);
-    finalize(prefixFromStmt_);
     finalize(prefixLikeStmt_);
     finalize(sizeStmt_);
     finalize(clearStmt_);
@@ -494,18 +507,18 @@ std::vector<std::string> SqliteDiskStore::getAllKeys() {
 }
 
 std::vector<std::string> SqliteDiskStore::getKeysByPrefix(const std::string& prefix) {
+    if (prefix.empty()) {
+        return getAllKeys();
+    }
     std::lock_guard<std::mutex> lock(mutex_);
     ensureOpenLocked();
     const bool useRange = isValidUtf8(prefix);
-    const auto upperBound = useRange ? prefixUpperBound(prefix) : std::nullopt;
-    sqlite3_stmt* stmt = !useRange
-        ? prefixLikeStmt_
-        : upperBound.has_value() ? prefixRangeStmt_ : prefixFromStmt_;
+    sqlite3_stmt* stmt = useRange ? prefixRangeStmt_ : prefixLikeStmt_;
     sqlite3_reset(stmt);
     sqlite3_clear_bindings(stmt);
     bindText(stmt, 1, useRange ? prefix : escapeLikePrefix(prefix));
-    if (upperBound.has_value()) {
-        bindText(stmt, 2, *upperBound);
+    if (useRange) {
+        bindText(stmt, 2, prefixUpperBound(prefix));
     }
     std::vector<std::string> keys;
     while (true) {

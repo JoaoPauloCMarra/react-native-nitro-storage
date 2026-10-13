@@ -8,6 +8,7 @@ import {
   runTransaction,
   secureItem,
   storage,
+  type StorageBatchChangeEvent,
   type StorageChangeEvent,
   type StorageKeyChangeEvent,
   StorageScope,
@@ -19,6 +20,18 @@ import {
   unescapeCollidingRawValue,
 } from "../internal";
 import { createNitroStorageMock, resetNitroStorageMock } from "../testing";
+
+function onlyBatchEvent(
+  events: StorageChangeEvent[],
+  operation: string,
+): StorageBatchChangeEvent {
+  const matches = events.filter(
+    (event): event is StorageBatchChangeEvent =>
+      event.type === "batch" && event.operation === operation,
+  );
+  expect(matches).toHaveLength(1);
+  return matches[0] as StorageBatchChangeEvent;
+}
 
 const retiredBatchMissingSentinel = "__nitro_storage_batch_missing__::v1";
 
@@ -134,15 +147,10 @@ describe("item 1: import cannot be overwritten by pending writes", () => {
     storage.import({ k: "imported" }, StorageScope.Disk);
     storage.setEventObserver(undefined);
     storage.setDiskWritesAsync(false);
-    const importEvents = events.filter(
-      (event) => event.type === "batch" && event.operation === "import",
-    );
-    expect(importEvents).toHaveLength(1);
-    expect(importEvents[0].type).toBe("batch");
-    if (importEvents[0].type === "batch") {
-      expect(importEvents[0].changes[0].oldValue).toBe("stale");
-      expect(importEvents[0].changes[0].newValue).toBe("imported");
-    }
+    const importEvent = onlyBatchEvent(events, "import");
+    const change = importEvent.changes[0] as StorageKeyChangeEvent;
+    expect(change.oldValue).toBe("stale");
+    expect(change.newValue).toBe("imported");
   });
 });
 
@@ -165,13 +173,9 @@ describe("item 4: rollback events", () => {
     storage.setEventObserver(undefined);
 
     expect(item.get()).toBe("before");
-    const rollbacks = events.filter(
-      (event) => event.type === "batch" && event.operation === "rollback",
-    );
-    expect(rollbacks).toHaveLength(1);
-    if (rollbacks[0].type !== "batch") return;
-    expect(rollbacks[0].changes).toHaveLength(1);
-    const change = rollbacks[0].changes[0] as StorageKeyChangeEvent;
+    const rollback = onlyBatchEvent(events, "rollback");
+    expect(rollback.changes).toHaveLength(1);
+    const change = rollback.changes[0] as StorageKeyChangeEvent;
     expect(change.key).toBe("rb-memory");
     expect(change.oldValue).toBe("failed");
     expect(change.newValue).toBe("before");
@@ -195,12 +199,8 @@ describe("item 4: rollback events", () => {
     storage.setEventObserver(undefined);
 
     expect(item.get()).toBe("before");
-    const rollbacks = events.filter(
-      (event) => event.type === "batch" && event.operation === "rollback",
-    );
-    expect(rollbacks).toHaveLength(1);
-    if (rollbacks[0].type !== "batch") return;
-    const change = rollbacks[0].changes[0] as StorageKeyChangeEvent;
+    const rollback = onlyBatchEvent(events, "rollback");
+    const change = rollback.changes[0] as StorageKeyChangeEvent;
     expect(change.oldValue).toBe(serializeWithPrimitiveFastPath("failed"));
     expect(change.newValue).toBe(serializeWithPrimitiveFastPath("before"));
   });

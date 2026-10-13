@@ -3,6 +3,7 @@ open "com.nitrostorage.example" "nitrostorage://e2e-biometric?runId=${RUN_ID}" -
 wait id="e2e-biometric-results"
 wait text "bio:seed=ok;"
 wait text "bio:meta=kind-biometric:protected=true:exposed=false;"
+wait text "bio:keys=listed;"
 wait text "bio:read=prompting;"
 wait 1500
 settings faceid match

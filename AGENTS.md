@@ -66,6 +66,12 @@ React Native Nitro Storage — synchronous storage for React Native via JSI.
 - `storage.flushSecureWrites()` drains the JavaScript queue, not Android's asynchronous `apply()` persistence. Select synchronous secure writes before writes that need synchronous persistence; changing the mode is not a barrier for earlier `apply()` calls.
 - `getBatch(...)` raw-path misses return each item's internal default value instead of calling `item.get()` fallback reads.
 
+## Example Build Speed
+
+- Local example builds read speed settings from tracked config only. `apps/example/app.config.js` turns on `ios.ccacheEnabled` when `ccache` is installed (set `NITRO_EXAMPLE_CCACHE=0` to skip it) and sets `android.buildArchs` only when `NITRO_EXAMPLE_ANDROID_ARCHS` is set, for example `x86_64` for an emulator-only build. Unset it for release APKs so all four ABIs build.
+- `apps/example/plugins/with-gradle-build-speed.js` writes `org.gradle.caching`, `org.gradle.parallel`, a 6 GB Gradle daemon heap and a 3 GB Kotlin daemon heap into the generated `android/gradle.properties`. The Gradle configuration cache stays off: `android:assemble` and `android:test` pass `--no-configuration-cache`.
+- `buildReactNativeFromSource` stays at the Expo default (`false`), so iOS uses the prebuilt React Native core. `useFrameworks` is unchanged. Example builds never run in CI.
+
 ## Replay Maintenance
 
 - Keep `e2e/storage-replay-coverage.json` aligned with concrete assertions in the example and its `.ad` flows. Distinguish native storage, testing adapters, and pending hardware prerequisites.

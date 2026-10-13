@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { StyleSheet, View } from "react-native";
+import { View } from "react-native";
 import {
   createStorageItem,
   createSetItem,
@@ -11,7 +11,7 @@ import {
   StorageScope,
   type TransactionContext,
 } from "react-native-nitro-storage";
-import { Card, Page, StatusRow } from "../components/shared";
+import { Card, Page, ResultsProbe, StatusRow } from "../components/shared";
 
 type CaseStatus = "pass" | "fail" | "skip";
 type LabCase = {
@@ -26,10 +26,6 @@ type IntegrityReport = {
   skip: number;
   cases: LabCase[];
 };
-
-declare global {
-  var __integrityReport: IntegrityReport | undefined;
-}
 
 function runCase(name: string, fn: () => string | void): LabCase {
   try {
@@ -432,7 +428,7 @@ function runIntegritySweep(): IntegrityReport {
         }
         assert(rolledBack, "expected throw");
         assert(item.get() === "committed", `got ${item.get()}`);
-        return "committed:rollback=true";
+        return "secure:committed:rollback=true";
       } finally {
         item.delete();
         storage.flushSecureWrites();
@@ -554,7 +550,6 @@ function runIntegritySweep(): IntegrityReport {
     skip: cases.filter((item) => item.status === "skip").length,
     cases,
   };
-  globalThis.__integrityReport = report;
   return report;
 }
 
@@ -591,13 +586,11 @@ export default function IntegrityLabScreen() {
           value={summary}
         />
         {report ? (
-          <View
+          <ResultsProbe
             testID="e2e-integrity-results"
-            accessible
-            accessibilityLabel={report.cases
+            label={report.cases
               .map((item) => `${item.status}:${item.detail ?? ""}`)
               .join(" ")}
-            style={styles.resultsProbe}
           />
         ) : null}
         <Card title="Cases" subtitle="Disk, Secure, import, tx, rename, cache">
@@ -614,9 +607,3 @@ export default function IntegrityLabScreen() {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  resultsProbe: {
-    height: 1,
-  },
-});

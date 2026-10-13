@@ -16,5 +16,6 @@ wait text "ok:scoped=disk+secure;"
 wait text "ok:op=set:source=native;"
 wait text "ok:auth-ttl=expired-default;"
 wait text "passcode-acl="
+wait text "ok:migrate=handled:value=intact;"
 wait text "ok:hooks=value,selector,setter,actions;"
 close

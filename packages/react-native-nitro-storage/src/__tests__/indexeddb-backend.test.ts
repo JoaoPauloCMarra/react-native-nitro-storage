@@ -470,7 +470,7 @@ describe("createIndexedDBBackend", () => {
     }
     seed.setItem("raced", "old");
     await seed.flush?.();
-    seed.close();
+    seed.close?.();
 
     const pending = createIndexedDBBackend("race-db", "kv");
     for (let tick = 0; tick < 10; tick += 1) {
@@ -486,7 +486,7 @@ describe("createIndexedDBBackend", () => {
 
     expect(backend.getItem("raced")).toBeNull();
     expect(backend.getItem("filler-0")).toBe("x");
-    backend.close();
+    backend.close?.();
   });
 
   it("closes the backend and rejects further synchronous operations", async () => {
@@ -639,20 +639,20 @@ describe("indexeddb persistence lifecycle", () => {
   it("close rejects later writes", async () => {
     const backend = await createIndexedDBBackend();
     backend.setItem("k", "v");
-    backend.close();
+    backend.close?.();
     expect(() => backend.setItem("k2", "v2")).toThrow(/is closed/);
   });
 
   it("close aborts queued transactions like a real browser", async () => {
     const backend = await createIndexedDBBackend("close-abort-db", "kv");
     backend.setItem("doomed", "value");
-    backend.close();
+    backend.close?.();
 
-    await expect(backend.flush()).rejects.toThrow(/aborted/);
+    await expect(backend.flush?.()).rejects.toThrow(/aborted/);
 
     const fresh = await createIndexedDBBackend("close-abort-db", "kv");
     expect(fresh.getItem("doomed")).toBeNull();
-    fresh.close();
+    fresh.close?.();
   });
 
   it("does not drop in-flight writes when the backend is swapped out", async () => {
@@ -665,7 +665,7 @@ describe("indexeddb persistence lifecycle", () => {
 
     const fresh = await createIndexedDBBackend("swap-flush-db", "kv");
     expect(fresh.getItem("__secure_swap-idb")).toBe("persisted");
-    fresh.close();
+    fresh.close?.();
   });
 
   it("surfaces in-flight failures of a swapped-out backend through flushWebStorageBackends", async () => {

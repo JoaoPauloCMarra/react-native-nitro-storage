@@ -233,9 +233,16 @@ function signDarwinBinary(binaryPath) {
     return;
   }
 
-  execFileSync("codesign", ["--force", "--sign", "-", binaryPath], {
-    stdio: "ignore",
-  });
+  try {
+    execFileSync("codesign", ["--force", "--sign", "-", binaryPath], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+  } catch (error) {
+    if (error.stderr) {
+      process.stderr.write(String(error.stderr));
+    }
+    throw error;
+  }
 }
 
 function sanitizerRuntimeEnv() {
@@ -542,5 +549,11 @@ try {
   console.log("✅ C++ tests passed!");
 } catch (error) {
   console.error("❌ C++ tests failed.");
+  if (error instanceof Error) {
+    console.error(error.message);
+    if (error.stderr) {
+      console.error(String(error.stderr));
+    }
+  }
   process.exit(1);
 }

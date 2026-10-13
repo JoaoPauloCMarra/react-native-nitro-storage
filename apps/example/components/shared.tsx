@@ -10,6 +10,7 @@ import {
   View,
   type ViewStyle,
 } from "react-native";
+import { getStorageErrorCode } from "react-native-nitro-storage";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const isWeb = Platform.OS === "web";
@@ -239,6 +240,28 @@ export const StatusRow = ({
   </View>
 );
 
+export function describeStorageError(error: unknown): string {
+  return (
+    getStorageErrorCode(error) ??
+    (error instanceof Error ? error.message : String(error))
+  );
+}
+
+export const ResultsProbe = ({
+  testID,
+  label,
+}: {
+  testID: string;
+  label: string;
+}) => (
+  <View
+    testID={testID}
+    accessible
+    accessibilityLabel={label}
+    style={styles.resultsProbe}
+  />
+);
+
 export const CodeBlock = ({
   children,
   testID,
@@ -368,6 +391,9 @@ const consumerStyles = {
 } as const;
 
 export const styles = StyleSheet.create({
+  resultsProbe: {
+    height: 1,
+  },
   ...consumerStyles,
   container: {
     flex: 1,
