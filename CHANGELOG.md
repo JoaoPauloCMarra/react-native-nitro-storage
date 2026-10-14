@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes are always listed first in each release section.
 
+## [0.16.1] - 2026-10-14
+
+### Breaking changes
+
+- None.
+
+### Fixed
+
+- iOS Disk storage now also opens and reads on a full device that reports the failure as `SQLITE_CANTOPEN` ("unable to open database file"). A full APFS volume reports the missing WAL index file (`-shm`) this way, with no usable errno, so the 0.16.0 `storage_full` fallback did not run and every Disk read on that launch failed. The open now retries with `PRAGMA locking_mode=EXCLUSIVE` for this error too, so existing rows stay readable. Writes and deletes keep failing until space frees. If the exclusive retry also fails, the original error is thrown as before. A `CANTOPEN` error with `ENOSPC` or `EDQUOT` is now tagged `[nitro-error:storage_full]`.
+
 ## [0.16.0] - 2026-10-13
 
 ### Breaking changes

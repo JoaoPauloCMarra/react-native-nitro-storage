@@ -30,7 +30,8 @@ const char* storageErrorTag(sqlite3* db, int code) {
         case SQLITE_CORRUPT:
         case SQLITE_NOTADB:
             return "[nitro-error:storage_corruption] ";
-        case SQLITE_IOERR: {
+        case SQLITE_IOERR:
+        case SQLITE_CANTOPEN: {
             const int systemError = db != nullptr ? sqlite3_system_errno(db) : 0;
             return systemError == ENOSPC || systemError == EDQUOT
                 ? "[nitro-error:storage_full] "
@@ -43,6 +44,10 @@ const char* storageErrorTag(sqlite3* db, int code) {
 
 bool isStorageFullError(const std::exception& error) {
     return std::string(error.what()).rfind("[nitro-error:storage_full] ", 0) == 0;
+}
+
+bool isCannotOpenError(const std::exception& error) {
+    return std::string(error.what()).find(sqlite3_errstr(SQLITE_CANTOPEN)) != std::string::npos;
 }
 
 [[noreturn]] void throwSqlite(sqlite3* db, const char* operation, int code) {
@@ -187,7 +192,8 @@ void SqliteDiskStore::recreate() {
 }
 
 // A full device cannot create the WAL index file (-shm) on a cold launch, so a
-// normal open fails on `PRAGMA journal_mode=WAL` with ENOSPC and every read
+// normal open fails on `PRAGMA journal_mode=WAL` with ENOSPC, or with CANTOPEN
+// when the file system reports no usable errno, and every read
 // would fail with it. Exclusive locking keeps the WAL index in heap memory and
 // needs no new file, so the existing rows stay readable; writes still report
 // storage_full until space frees. The mode lasts for this connection only.
@@ -197,7 +203,7 @@ void SqliteDiskStore::reopenLocked() {
         return;
     } catch (const std::exception& error) {
         closeLocked();
-        if (!isStorageFullError(error)) {
+        if (!isStorageFullError(error) && !isCannotOpenError(error)) {
             throw;
         }
     }
