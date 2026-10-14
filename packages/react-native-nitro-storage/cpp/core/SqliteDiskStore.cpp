@@ -30,7 +30,8 @@ const char* storageErrorTag(sqlite3* db, int code) {
         case SQLITE_CORRUPT:
         case SQLITE_NOTADB:
             return "[nitro-error:storage_corruption] ";
-        case SQLITE_IOERR: {
+        case SQLITE_IOERR:
+        case SQLITE_CANTOPEN: {
             const int systemError = db != nullptr ? sqlite3_system_errno(db) : 0;
             return systemError == ENOSPC || systemError == EDQUOT
                 ? "[nitro-error:storage_full] "
