@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes are always listed first in each release section.
 
+## [0.16.1] - 2026-10-14
+
+### Breaking changes
+
+- None.
+
+### Fixed
+
+- iOS Disk storage now also opens and reads on a full device that reports the failure as `SQLITE_CANTOPEN` ("unable to open database file"). A full APFS volume reports the missing WAL index file (`-shm`) this way, with no usable errno, so the 0.16.0 `storage_full` fallback did not run and every Disk read on that launch failed. The open now retries with `PRAGMA locking_mode=EXCLUSIVE` for this error too, so existing rows stay readable. Writes and deletes keep failing until space frees. If the exclusive retry also fails, the original error is thrown as before. A `CANTOPEN` error with `ENOSPC` or `EDQUOT` is now tagged `[nitro-error:storage_full]`.
+
 ## [0.16.0] - 2026-10-13
 
 ### Breaking changes
@@ -16,7 +26,7 @@ Breaking changes are always listed first in each release section.
 
 ### Fixed
 
-- iOS Disk storage opens and reads on a full device. A cold launch could not create the SQLite WAL index file (`-shm`) when the volume had no space, so `PRAGMA journal_mode=WAL` failed with `[nitro-error:storage_full] NitroStorage: Disk SQLite exec failed: disk I/O error` and every Disk read on that launch failed with it, not only writes. When the normal open fails with `storage_full`, the store now reopens with `PRAGMA locking_mode=EXCLUSIVE`, which keeps the WAL index in memory and needs no new file, so existing rows read from the first call. Writes and deletes keep failing with `storage_full` until space frees. The exclusive lock lasts for that connection; the next launch tries the normal open first. The same fallback applies when the open fails with `SQLITE_CANTOPEN` ("unable to open database file"), which a full APFS volume reports without a usable errno; if the exclusive retry also fails, the error is thrown as before. Other IO errors during open still fail as before. Android already retried its open without WAL since 0.13.0.
+- iOS Disk storage opens and reads on a full device. A cold launch could not create the SQLite WAL index file (`-shm`) when the volume had no space, so `PRAGMA journal_mode=WAL` failed with `[nitro-error:storage_full] NitroStorage: Disk SQLite exec failed: disk I/O error` and every Disk read on that launch failed with it, not only writes. When the normal open fails with `storage_full`, the store now reopens with `PRAGMA locking_mode=EXCLUSIVE`, which keeps the WAL index in memory and needs no new file, so existing rows read from the first call. Writes and deletes keep failing with `storage_full` until space frees. The exclusive lock lasts for that connection; the next launch tries the normal open first. Other IO errors during open still fail as before. Android already retried its open without WAL since 0.13.0.
 - Items with `readCache` no longer return a value the backend rejected. A synchronous Disk or Secure write or delete that throws (`storage_full`, `keychain_locked`, `storage_corruption`) now leaves `get()`, `has()` and `getString()` on the stored value instead of the value that failed to save. The same ordering is fixed for `storage.setString` and `storage.remove`.
 - `setBatch` on a Memory key no longer keeps the deadline left by a TTL item that used the same key, matching `item.set`.
 - `storage.import` and `storage.setString` on a Memory key that belongs to a TTL item no longer leave the previous expiry in place, so the written value is not expired (with an `onExpired` call and an `expire` event) at the old deadline. Disk and Secure already behaved this way.
