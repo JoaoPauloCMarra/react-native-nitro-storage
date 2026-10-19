@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { View } from "react-native";
 import {
   AccessControl,
   createSecureAuthStorage,
@@ -18,7 +17,7 @@ import {
 } from "react-native-nitro-storage";
 import {
   Card,
-  Page,
+  LabScreen,
   ResultsProbe,
   StatusRow,
   describeStorageError,
@@ -396,7 +395,7 @@ function checkPasscodeAcl(): string {
       ? "ok:passcode-acl=stored"
       : `passcode-acl=readback-${String(value)}`;
   } catch (error) {
-    return `passcode-acl=${getStorageErrorCode(error) ?? `error:${error instanceof Error ? error.message : String(error)}`}`;
+    return `passcode-acl=${describeStorageError(error)}`;
   } finally {
     safely(() => {
       storage.deleteString(passcodeKey, StorageScope.Secure);
@@ -427,7 +426,7 @@ function checkAccessControlMigration(): string {
       ? "ok:migrate=handled:value=intact"
       : `fail:migrate:migrated=${result.migrated.length}:skipped=${result.skipped.length}:locked=${result.locked.length}:failed=${result.failed.length}:value=${String(value)}`;
   } catch (error) {
-    return `migrate=${getStorageErrorCode(error) ?? `error:${error instanceof Error ? error.message : String(error)}`}`;
+    return `migrate=${describeStorageError(error)}`;
   } finally {
     safely(() => {
       storage.deleteString(migrateKey, StorageScope.Secure);
@@ -570,32 +569,28 @@ export default function ApiExtendedScreen() {
   const finished = cases !== null && hooksToken !== null;
 
   return (
-    <View
+    <LabScreen
       testID="e2e-api-extended-screen"
-      style={{ flex: 1 }}
-      accessibilityLabel="API extended lab"
+      label="API extended lab"
+      title="API extended lab"
+      subtitle="Deep link nitrostorage://e2e-api-extended"
     >
-      <Page
-        title="API extended lab"
-        subtitle="Deep link nitrostorage://e2e-api-extended"
-      >
-        <ResultsProbe
-          testID="e2e-ext-results"
-          label={tokens.map((token) => `${token};`).join("")}
-        />
-        <StatusRow
-          testID="e2e-ext-finished"
-          label="run"
-          value={finished ? "finished" : "running"}
-        />
-        <HooksProbe onResult={setHooksToken} />
-        <Card title="Cases" subtitle="Items, sets, groups, TTL, Secure, hooks">
-          {(cases ?? []).map((item) => (
-            <StatusRow key={item.name} label={item.name} value={item.token} />
-          ))}
-          <StatusRow label="hooks" value={hooksToken ?? "running"} />
-        </Card>
-      </Page>
-    </View>
+      <ResultsProbe
+        testID="e2e-ext-results"
+        label={tokens.map((token) => `${token};`).join("")}
+      />
+      <StatusRow
+        testID="e2e-ext-finished"
+        label="run"
+        value={finished ? "finished" : "running"}
+      />
+      <HooksProbe onResult={setHooksToken} />
+      <Card title="Cases" subtitle="Items, sets, groups, TTL, Secure, hooks">
+        {(cases ?? []).map((item) => (
+          <StatusRow key={item.name} label={item.name} value={item.token} />
+        ))}
+        <StatusRow label="hooks" value={hooksToken ?? "running"} />
+      </Card>
+    </LabScreen>
   );
 }

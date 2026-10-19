@@ -114,6 +114,7 @@ export type RollbackRecord =
       kind: "raw";
       value: string | undefined;
       accessControl?: AccessControl;
+      fillsRawCache?: boolean;
     }
   | {
       kind: "biometric";

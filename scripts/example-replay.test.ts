@@ -8,6 +8,7 @@ import {
   checkReplayFreshness,
   collectRuntimeFiles,
   hasStatusSelector,
+  isSuiteId,
   readCoverageManifest,
   refreshReplayLock,
 } from "./check-example-replay-freshness.js";
@@ -29,6 +30,15 @@ test("dynamic status selectors require both their renderer and declared case", (
   );
   assert.equal(hasStatusSelector(renderer, statusId), false);
   assert.equal(hasStatusSelector(declaration, statusId), false);
+});
+
+test("isSuiteId accepts lowercase hyphenated ids only", () => {
+  for (const id of ["smoke", "e2e-keychain-1", "biometric-ios"]) {
+    assert.equal(isSuiteId(id), true, id);
+  }
+  for (const id of ["", "Smoke", "-a", "a-", "a--b", "a_b", "../a"]) {
+    assert.equal(isSuiteId(id), false, id);
+  }
 });
 
 test("smoke and integrity rows resolve only through their results probes", () => {

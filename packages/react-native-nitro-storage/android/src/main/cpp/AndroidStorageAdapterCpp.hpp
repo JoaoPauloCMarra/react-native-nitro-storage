@@ -55,6 +55,7 @@ public:
     std::optional<std::string> getSecureBiometric(const std::string& key) override;
     void deleteSecureBiometric(const std::string& key) override;
     bool hasSecureBiometric(const std::string& key) override;
+    std::vector<std::string> getBiometricKeysSecure() override;
     void clearSecureBiometric() override;
 };
 

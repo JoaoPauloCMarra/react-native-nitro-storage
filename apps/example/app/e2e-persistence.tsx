@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { storage, StorageScope } from "react-native-nitro-storage";
-import { Card, Page, StatusRow } from "../components/shared";
+import { Card, LabScreen, StatusRow } from "../components/shared";
 
 type ReplayStage = "seed" | "verify";
 type PersistenceReport = {
@@ -143,38 +142,34 @@ export default function PersistenceReplayScreen() {
   }, [runId, stage]);
 
   return (
-    <View
+    <LabScreen
       testID="e2e-persistence-screen"
-      style={{ flex: 1 }}
-      accessibilityLabel="Disk persistence replay"
+      label="Disk persistence replay"
+      title="Disk persistence replay"
+      subtitle="Run seed, process relaunch, and verify with the same RUN_ID"
     >
-      <Page
-        title="Disk persistence replay"
-        subtitle="Run seed, process relaunch, and verify with the same RUN_ID"
-      >
-        <StatusRow testID="e2e-persistence-ready" label="state" value="ready" />
+      <StatusRow testID="e2e-persistence-ready" label="state" value="ready" />
+      <StatusRow
+        testID="e2e-persistence-stage"
+        label="stage"
+        value={report?.stage ?? "running"}
+      />
+      <StatusRow
+        testID="e2e-persistence-result"
+        label="Disk result"
+        value={report?.result ?? "running"}
+      />
+      <StatusRow
+        testID="e2e-persistence-finished"
+        label="verify run"
+        value={report?.finished ? "finished" : "pending-relaunch"}
+      />
+      <Card title="Test boundary" subtitle="Native Disk public API only">
         <StatusRow
-          testID="e2e-persistence-stage"
-          label="stage"
-          value={report?.stage ?? "running"}
+          label="Data scope"
+          value="one RUN_ID-scoped QA key; deleted after verify"
         />
-        <StatusRow
-          testID="e2e-persistence-result"
-          label="Disk result"
-          value={report?.result ?? "running"}
-        />
-        <StatusRow
-          testID="e2e-persistence-finished"
-          label="verify run"
-          value={report?.finished ? "finished" : "pending-relaunch"}
-        />
-        <Card title="Test boundary" subtitle="Native Disk public API only">
-          <StatusRow
-            label="Data scope"
-            value="one RUN_ID-scoped QA key; deleted after verify"
-          />
-        </Card>
-      </Page>
-    </View>
+      </Card>
+    </LabScreen>
   );
 }

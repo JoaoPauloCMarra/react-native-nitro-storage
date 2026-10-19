@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes are always listed first in each release section.
 
+## [0.17.0] - 2026-10-15
+
+### Breaking changes
+
+- **Web: Disk keys that start with `__secure_` or `__bio_` are rejected on the default backend.** The default web backends store Secure values under those prefixes in the same `localStorage` namespace, so a Disk item with such a key could read and overwrite a Secure value. `get`, `set`, `remove`, `getBatch`, `setBatch` and `removeBatch` on the default web Disk backend now throw the same `[nitro-error:invalid_key]` error as an empty key, with a message naming the prefix. Custom backends set through `setWebDiskStorageBackend` are not affected. Migration: rename such Disk keys (for example with `renameFrom` on a new key).
+
+### Fixed
+
+- `storage.clear(StorageScope.Memory)` now reports every cleared key in its change event, including keys that held objects, numbers or booleans. Key subscribers for those keys are notified.
+- After `storage.clear(StorageScope.Disk)` or `clear(StorageScope.Secure)` with a scope subscriber, a later change written by native code to a cleared key is delivered as an `external` event again. It was silently dropped.
+- Web: setting a new Secure backend no longer closes a backend instance that is still bound to Disk.
+- `item.has()` reports `false` for an expired TTL value without a prior `get()`, and fires `onExpired`. Biometric items keep the existence-only check, so `has()` never shows a biometric prompt.
+- `resetNitroStorageMock()` also clears registered migrations, the duplicate-key registry and the Disk async-write mode, so tests that call it in `beforeEach` are isolated.
+- Web: a failed IndexedDB write is reported once to `onError` and counted once by `flush()`.
+- A rolled-back Secure transaction no longer leaves the previous plaintext in the JavaScript raw cache for items without `readCache`.
+- Android: reading the key list, size, prefix keys or presence of the Secure scope reports a value that cannot be decrypted as `[nitro-error:storage_corruption]`, as single reads do. `clearBiometric()` lists biometric keys in one native call.
+- iOS: `clear(StorageScope.Secure)` invalidates the key cache when the biometric delete fails after the plain delete.
+
+### Compatibility
+
+- Tested with Expo SDK 58 (React Native 0.88.0, React 19.3.0).
+
 ## [0.16.1] - 2026-10-14
 
 ### Breaking changes

@@ -413,7 +413,6 @@ try {
   const hybridArgs = (testFile, outputFile) => [
     ...commonFlags,
     "-DNITRO_STORAGE_DISABLE_PLATFORM_ADAPTER",
-    "-DNITRO_STORAGE_USE_ORDERED_MAP_FOR_TESTS",
     `-I${path.join(cppDir, "core")}`,
     `-I${path.join(cppDir, "bindings")}`,
     `-I${includeRoot}`,

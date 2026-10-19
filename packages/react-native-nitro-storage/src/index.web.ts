@@ -128,11 +128,32 @@ function isSecureWebStorageKey(key: string): boolean {
   );
 }
 
+const defaultDiskBackends = new WeakSet<WebStorageBackend>();
+
 function createDefaultDiskBackend(): WebDiskStorageBackend {
-  return createLocalStorageWebBackend({
+  const backend = createLocalStorageWebBackend({
     name: DEFAULT_DISK_BACKEND_NAME,
     includeKey: (key) => !isSecureWebStorageKey(key),
   });
+  defaultDiskBackends.add(backend);
+  return backend;
+}
+
+function assertDiskKeyAllowed(scope: NonMemoryScope, key: string): void {
+  if (
+    scope !== StorageScope.Disk ||
+    !isSecureWebStorageKey(key) ||
+    !webDiskStorageBackend ||
+    !defaultDiskBackends.has(webDiskStorageBackend)
+  ) {
+    return;
+  }
+  const prefix = key.startsWith(SECURE_WEB_PREFIX)
+    ? SECURE_WEB_PREFIX
+    : BIOMETRIC_WEB_PREFIX;
+  throw new Error(
+    `[nitro-error:invalid_key] NitroStorage: Disk keys cannot start with the reserved prefix "${prefix}" on the default web backend.`,
+  );
 }
 
 function createDefaultSecureBackend(): WebSecureStorageBackend {
@@ -323,6 +344,58 @@ function ensureWebScopeKeyIndex(scope: NonMemoryScope): Set<string> {
   return getWebScopeKeyIndex(scope);
 }
 
+function applySecureExternalChange(
+  plainKey: string,
+  newValue: string | null,
+  representation: "plain" | "biometric",
+  oppositeOperation: string,
+  toOppositeKey: (plainKey: string) => string,
+): void {
+  const oldValue = getInternals().readCachedRawValue(
+    StorageScope.Secure,
+    plainKey,
+    representation,
+  );
+  getInternals().invalidateRawCache(StorageScope.Secure, plainKey);
+  if (newValue === null) {
+    if (
+      !withWebBackendOperation(
+        StorageScope.Secure,
+        oppositeOperation,
+        (backend) => backend.getAllKeys().includes(toOppositeKey(plainKey)),
+      )
+    ) {
+      ensureWebScopeKeyIndex(StorageScope.Secure).delete(plainKey);
+    }
+    getInternals().cacheRawValue(
+      StorageScope.Secure,
+      plainKey,
+      undefined,
+      representation,
+    );
+  } else {
+    ensureWebScopeKeyIndex(StorageScope.Secure).add(plainKey);
+    getInternals().cacheRawValue(
+      StorageScope.Secure,
+      plainKey,
+      newValue,
+      representation,
+    );
+  }
+  notifyKeyListeners(
+    getInternals().getScopedListeners(StorageScope.Secure),
+    plainKey,
+  );
+  getInternals().emitKeyChange(
+    StorageScope.Secure,
+    plainKey,
+    oldValue === undefined ? undefined : unescapeCollidingRawValue(oldValue),
+    newValue === null ? undefined : unescapeCollidingRawValue(newValue),
+    "external",
+    "external",
+  );
+}
+
 function applyExternalChangeEvent(
   scope: NonMemoryScope,
   key: string | null,
@@ -336,99 +409,23 @@ function applyExternalChangeEvent(
   }
 
   if (scope === StorageScope.Secure && key.startsWith(SECURE_WEB_PREFIX)) {
-    const plainKey = fromSecureStorageKey(key);
-    const oldValue = getInternals().readCachedRawValue(
-      StorageScope.Secure,
-      plainKey,
+    applySecureExternalChange(
+      fromSecureStorageKey(key),
+      newValue,
       "plain",
-    );
-    getInternals().invalidateRawCache(StorageScope.Secure, plainKey);
-    if (newValue === null) {
-      if (
-        !withWebBackendOperation(
-          StorageScope.Secure,
-          "external-sync:getBiometricItem",
-          (backend) =>
-            backend.getAllKeys().includes(toBiometricStorageKey(plainKey)),
-        )
-      ) {
-        ensureWebScopeKeyIndex(StorageScope.Secure).delete(plainKey);
-      }
-      getInternals().cacheRawValue(
-        StorageScope.Secure,
-        plainKey,
-        undefined,
-        "plain",
-      );
-    } else {
-      ensureWebScopeKeyIndex(StorageScope.Secure).add(plainKey);
-      getInternals().cacheRawValue(
-        StorageScope.Secure,
-        plainKey,
-        newValue,
-        "plain",
-      );
-    }
-    notifyKeyListeners(
-      getInternals().getScopedListeners(StorageScope.Secure),
-      plainKey,
-    );
-    getInternals().emitKeyChange(
-      StorageScope.Secure,
-      plainKey,
-      oldValue === undefined ? undefined : unescapeCollidingRawValue(oldValue),
-      newValue === null ? undefined : unescapeCollidingRawValue(newValue),
-      "external",
-      "external",
+      "external-sync:getBiometricItem",
+      toBiometricStorageKey,
     );
     return;
   }
 
   if (scope === StorageScope.Secure && key.startsWith(BIOMETRIC_WEB_PREFIX)) {
-    const plainKey = fromBiometricStorageKey(key);
-    const oldValue = getInternals().readCachedRawValue(
-      StorageScope.Secure,
-      plainKey,
+    applySecureExternalChange(
+      fromBiometricStorageKey(key),
+      newValue,
       "biometric",
-    );
-    getInternals().invalidateRawCache(StorageScope.Secure, plainKey);
-    if (newValue === null) {
-      if (
-        !withWebBackendOperation(
-          StorageScope.Secure,
-          "external-sync:getItem",
-          (backend) =>
-            backend.getAllKeys().includes(toSecureStorageKey(plainKey)),
-        )
-      ) {
-        ensureWebScopeKeyIndex(StorageScope.Secure).delete(plainKey);
-      }
-      getInternals().cacheRawValue(
-        StorageScope.Secure,
-        plainKey,
-        undefined,
-        "biometric",
-      );
-    } else {
-      ensureWebScopeKeyIndex(StorageScope.Secure).add(plainKey);
-      getInternals().cacheRawValue(
-        StorageScope.Secure,
-        plainKey,
-        newValue,
-        "biometric",
-      );
-    }
-    notifyKeyListeners(
-      getInternals().getScopedListeners(StorageScope.Secure),
-      plainKey,
-    );
-    getInternals().emitKeyChange(
-      StorageScope.Secure,
-      plainKey,
-      oldValue === undefined ? undefined : unescapeCollidingRawValue(oldValue),
-      newValue === null ? undefined : unescapeCollidingRawValue(newValue),
-      "external",
-      "external",
+      "external-sync:getItem",
+      toSecureStorageKey,
     );
     return;
   }
@@ -553,6 +550,12 @@ function retireWebBackend(
   if (!previousBackend || previousBackend === nextBackend) {
     return;
   }
+  if (
+    previousBackend === webDiskStorageBackend ||
+    previousBackend === webSecureStorageBackend
+  ) {
+    return;
+  }
   if (previousBackend.flush) {
     retiredWebBackends.set(previousBackend, scope);
     return;
@@ -574,6 +577,39 @@ function ensureExternalSyncSubscriptions(): void {
   subscribeToBackendChanges(StorageScope.Secure);
 }
 
+function toBackendKey(scope: NonMemoryScope, key: string): string {
+  return scope === StorageScope.Secure ? toSecureStorageKey(key) : key;
+}
+
+function toBackendRemovalKeys(scope: NonMemoryScope, key: string): string[] {
+  return scope === StorageScope.Secure
+    ? [toSecureStorageKey(key), toBiometricStorageKey(key)]
+    : [key];
+}
+
+function removeKeys(backend: WebStorageBackend, keys: string[]): void {
+  if (backend.removeMany) {
+    backend.removeMany(keys);
+    return;
+  }
+  keys.forEach((key) => {
+    backend.removeItem(key);
+  });
+}
+
+function setEntries(
+  backend: WebStorageBackend,
+  entries: (readonly [string, string])[],
+): void {
+  if (backend.setMany) {
+    backend.setMany(entries);
+    return;
+  }
+  entries.forEach(([key, value]) => {
+    backend.setItem(key, value);
+  });
+}
+
 const WebStorage: Storage = {
   name: "Storage",
   equals: (other) => other === WebStorage,
@@ -582,8 +618,8 @@ const WebStorage: Storage = {
     if (scope !== StorageScope.Disk && scope !== StorageScope.Secure) {
       return;
     }
-    const storageKey =
-      scope === StorageScope.Secure ? toSecureStorageKey(key) : key;
+    assertDiskKeyAllowed(scope, key);
+    const storageKey = toBackendKey(scope, key);
     try {
       withWebBackendOperation(scope, "set", (backend) => {
         backend.setItem(storageKey, value);
@@ -598,8 +634,8 @@ const WebStorage: Storage = {
     if (scope !== StorageScope.Disk && scope !== StorageScope.Secure) {
       return undefined;
     }
-    const storageKey =
-      scope === StorageScope.Secure ? toSecureStorageKey(key) : key;
+    assertDiskKeyAllowed(scope, key);
+    const storageKey = toBackendKey(scope, key);
     const value = withWebBackendOperation(scope, "get", (backend) =>
       backend.getItem(storageKey),
     );
@@ -609,24 +645,11 @@ const WebStorage: Storage = {
     if (scope !== StorageScope.Disk && scope !== StorageScope.Secure) {
       return;
     }
+    assertDiskKeyAllowed(scope, key);
     try {
-      if (scope === StorageScope.Secure) {
-        withWebBackendOperation(scope, "remove", (backend) => {
-          if (backend.removeMany) {
-            backend.removeMany([
-              toSecureStorageKey(key),
-              toBiometricStorageKey(key),
-            ]);
-            return;
-          }
-          backend.removeItem(toSecureStorageKey(key));
-          backend.removeItem(toBiometricStorageKey(key));
-        });
-      } else {
-        withWebBackendOperation(scope, "remove", (backend) => {
-          backend.removeItem(key);
-        });
-      }
+      withWebBackendOperation(scope, "remove", (backend) => {
+        removeKeys(backend, toBackendRemovalKeys(scope, key));
+      });
     } catch (error) {
       throwAfterWebMutationFailure(scope, "remove", error);
     }
@@ -650,13 +673,7 @@ const WebStorage: Storage = {
               ? isSecureWebStorageKey(key)
               : !isSecureWebStorageKey(key),
           );
-        if (backend.removeMany) {
-          backend.removeMany(ownedKeys);
-          return;
-        }
-        ownedKeys.forEach((key) => {
-          backend.removeItem(key);
-        });
+        removeKeys(backend, ownedKeys);
       });
     } catch (error) {
       throwAfterWebMutationFailure(scope, "clear", error);
@@ -673,6 +690,9 @@ const WebStorage: Storage = {
         "NitroStorage: Keys and values size mismatch in setBatch",
       );
     }
+    keys.forEach((key) => {
+      assertDiskKeyAllowed(scope, key);
+    });
 
     const entries: (readonly [string, string])[] = [];
     keys.forEach((key, index) => {
@@ -680,20 +700,11 @@ const WebStorage: Storage = {
       if (value === undefined) {
         return;
       }
-      entries.push([
-        scope === StorageScope.Secure ? toSecureStorageKey(key) : key,
-        value,
-      ]);
+      entries.push([toBackendKey(scope, key), value]);
     });
     try {
       withWebBackendOperation(scope, "setBatch", (backend) => {
-        if (backend.setMany) {
-          backend.setMany(entries);
-          return;
-        }
-        entries.forEach(([storageKey, value]) => {
-          backend.setItem(storageKey, value);
-        });
+        setEntries(backend, entries);
       });
     } catch (error) {
       throwAfterWebMutationFailure(scope, "setBatch", error);
@@ -715,9 +726,10 @@ const WebStorage: Storage = {
     if (scope !== StorageScope.Disk && scope !== StorageScope.Secure) {
       return keys.map(() => undefined);
     }
-    const storageKeys = keys.map((key) =>
-      scope === StorageScope.Secure ? toSecureStorageKey(key) : key,
-    );
+    keys.forEach((key) => {
+      assertDiskKeyAllowed(scope, key);
+    });
+    const storageKeys = keys.map((key) => toBackendKey(scope, key));
     const values = withWebBackendOperation(scope, "getBatch", (backend) => {
       if (backend.getMany) {
         return backend.getMany(storageKeys);
@@ -730,33 +742,17 @@ const WebStorage: Storage = {
     if (scope !== StorageScope.Disk && scope !== StorageScope.Secure) {
       return;
     }
+    keys.forEach((key) => {
+      assertDiskKeyAllowed(scope, key);
+    });
 
     try {
-      if (scope === StorageScope.Secure) {
-        const storageKeys = keys.flatMap((key) => [
-          toSecureStorageKey(key),
-          toBiometricStorageKey(key),
-        ]);
-        withWebBackendOperation(scope, "removeBatch", (backend) => {
-          if (backend.removeMany) {
-            backend.removeMany(storageKeys);
-            return;
-          }
-          storageKeys.forEach((storageKey) => {
-            backend.removeItem(storageKey);
-          });
-        });
-      } else {
-        withWebBackendOperation(scope, "removeBatch", (backend) => {
-          if (backend.removeMany) {
-            backend.removeMany(keys);
-            return;
-          }
-          keys.forEach((key) => {
-            backend.removeItem(key);
-          });
-        });
-      }
+      const storageKeys = keys.flatMap((key) =>
+        toBackendRemovalKeys(scope, key),
+      );
+      withWebBackendOperation(scope, "removeBatch", (backend) => {
+        removeKeys(backend, storageKeys);
+      });
     } catch (error) {
       throwAfterWebMutationFailure(scope, "removeBatch", error);
     }
@@ -1001,13 +997,7 @@ const WebStorage: Storage = {
           const biometricKeys = keysToNotify.map((key) =>
             toBiometricStorageKey(key),
           );
-          if (backend.removeMany) {
-            backend.removeMany(biometricKeys);
-            return;
-          }
-          biometricKeys.forEach((storageKey) => {
-            backend.removeItem(storageKey);
-          });
+          removeKeys(backend, biometricKeys);
         },
       );
     } catch (error) {

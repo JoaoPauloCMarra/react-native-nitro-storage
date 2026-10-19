@@ -51,6 +51,20 @@ async function main(): Promise<void> {
   const packageManifest = JSON.parse(
     await Bun.file(packageManifestPath).text(),
   ) as JsonRecord;
+  const rootManifest = JSON.parse(
+    await Bun.file(join(projectRoot, "package.json")).text(),
+  ) as JsonRecord;
+  const rootPins: DependencyMap = {
+    ...asDependencies(rootManifest.devDependencies),
+    ...asDependencies(rootManifest.overrides),
+  };
+  const rootPin = (name: string): string => {
+    const pin = rootPins[name];
+    if (pin === undefined) {
+      throw new Error(`Root package.json does not pin ${name}.`);
+    }
+    return pin;
+  };
   const packageName = String(packageManifest.name);
   const packageRoot = dirname(packageManifestPath);
   const sourceDirectory = join(packageRoot, "src");
@@ -240,11 +254,11 @@ void setSurface;
       ...asDependencies(packageManifest.peerDependencies),
       ...asDependencies(packageManifest.devDependencies),
       "@types/node": "^24.0.0",
-      "@types/react": "~19.2.18",
-      react: "19.2.3",
+      "@types/react": rootPin("@types/react"),
+      react: rootPin("react"),
       "react-native": "0.87.0",
-      "react-native-nitro-modules": "0.37.1",
-      typescript: "6.0.3",
+      "react-native-nitro-modules": rootPin("react-native-nitro-modules"),
+      typescript: rootPin("typescript"),
       [packageName]: `file:${packageTarball}`,
     };
 

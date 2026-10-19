@@ -5,7 +5,8 @@ const MAX_DIST_TAG_LENGTH = 63;
 const CONTROL_OR_WHITESPACE = /[\s\u0000-\u001f\u007f-\u009f]/u;
 const RELEASE_TAG_PATTERN = /^v[A-Za-z0-9][A-Za-z0-9.+-]{0,126}$/u;
 const DIST_TAG_PATTERN = /^[A-Za-z][A-Za-z0-9._-]{0,62}$/u;
-const SEMVER_OR_RANGE_PREFIX = /^[vV](?:\d|[xX*])/u;
+const SEMVER_PREFIX = /^[vV]\d/u;
+const X_RANGE = /^[vV]?[xX](?:\.[xX])*$/u;
 
 function assertString(value, name) {
   if (typeof value !== "string") {
@@ -36,7 +37,7 @@ function validateDistTag(value) {
   if (CONTROL_OR_WHITESPACE.test(value) || !DIST_TAG_PATTERN.test(value)) {
     throw new Error("DIST_TAG contains unsafe characters.");
   }
-  if (SEMVER_OR_RANGE_PREFIX.test(value)) {
+  if (SEMVER_PREFIX.test(value) || X_RANGE.test(value)) {
     throw new Error("DIST_TAG must not be a SemVer or range.");
   }
   return value;
@@ -75,6 +76,9 @@ function runMatrix() {
     ["dist-tag shell metacharacter", () => validateDistTag("latest;echo")],
     ["dist-tag SemVer", () => validateDistTag("v1.2.3")],
     ["dist-tag range", () => validateDistTag("v1.2")],
+    ["dist-tag x-range", () => validateDistTag("x")],
+    ["dist-tag upper x-range", () => validateDistTag("X")],
+    ["dist-tag dotted x-range", () => validateDistTag("x.x")],
   ];
 
   for (const [releaseTag, distTag] of valid) {

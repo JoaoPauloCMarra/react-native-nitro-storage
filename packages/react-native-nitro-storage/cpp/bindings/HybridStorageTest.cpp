@@ -7,6 +7,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -17,24 +18,29 @@ using namespace margelo::nitro::NitroStorage;
 class MockAdapter final : public ::NitroStorage::NativeStorageAdapter {
 public:
     void setDisk(const std::string& key, const std::string& value) override {
+        std::lock_guard<std::mutex> lock(diskMutex_);
         disk_[key] = value;
     }
 
     std::optional<std::string> getDisk(const std::string& key) override {
+        std::lock_guard<std::mutex> lock(diskMutex_);
         auto it = disk_.find(key);
         if (it == disk_.end()) return std::nullopt;
         return it->second;
     }
 
     void deleteDisk(const std::string& key) override {
+        std::lock_guard<std::mutex> lock(diskMutex_);
         disk_.erase(key);
     }
 
     bool hasDisk(const std::string& key) override {
+        std::lock_guard<std::mutex> lock(diskMutex_);
         return disk_.find(key) != disk_.end();
     }
 
     std::vector<std::string> getAllKeysDisk() override {
+        std::lock_guard<std::mutex> lock(diskMutex_);
         std::vector<std::string> keys;
         keys.reserve(disk_.size());
         for (const auto& [key, _] : disk_) {
@@ -44,6 +50,7 @@ public:
     }
 
     std::vector<std::string> getKeysByPrefixDisk(const std::string& prefix) override {
+        std::lock_guard<std::mutex> lock(diskMutex_);
         std::vector<std::string> keys;
         for (const auto& [key, _] : disk_) {
             if (key.rfind(prefix, 0) == 0) {
@@ -54,10 +61,12 @@ public:
     }
 
     size_t sizeDisk() override {
+        std::lock_guard<std::mutex> lock(diskMutex_);
         return disk_.size();
     }
 
     void setDiskBatch(const std::vector<std::string>& keys, const std::vector<std::string>& values) override {
+        std::lock_guard<std::mutex> lock(diskMutex_);
         const auto count = std::min(keys.size(), values.size());
         for (size_t index = 0; index < count; index += 1) {
             disk_[keys[index]] = values[index];
@@ -74,6 +83,7 @@ public:
     }
 
     void deleteDiskBatch(const std::vector<std::string>& keys) override {
+        std::lock_guard<std::mutex> lock(diskMutex_);
         for (const auto& key : keys) {
             disk_.erase(key);
         }
@@ -260,6 +270,7 @@ private:
     }
 
     std::optional<size_t> failSecureBatchAt_;
+    std::mutex diskMutex_;
     std::map<std::string, std::string> disk_;
     std::map<std::string, std::string> secure_;
     std::map<std::string, std::string> biometric_;
@@ -382,11 +393,9 @@ void testSetGetAcrossScopes() {
     auto adapter = std::make_shared<MockAdapter>();
     HybridStorage storage(adapter);
 
-    storage.set("memory-key", "memory-value", 0.0);
     storage.set("disk-key", "disk-value", 1.0);
     storage.set("secure-key", "secure-value", 2.0);
 
-    assert(storage.get("memory-key", 0.0).value() == "memory-value");
     assert(storage.get("disk-key", 1.0).value() == "disk-value");
     assert(storage.get("secure-key", 2.0).value() == "secure-value");
 }
@@ -395,38 +404,29 @@ void testRemoveGetAllSizeAndClearAcrossScopes() {
     auto adapter = std::make_shared<MockAdapter>();
     HybridStorage storage(adapter);
 
-    storage.set("memory-a", "1", 0.0);
-    storage.set("memory-b", "2", 0.0);
     storage.set("disk-a", "1", 1.0);
     storage.set("disk-b", "2", 1.0);
     storage.set("secure-a", "1", 2.0);
 
-    assert(storage.has("memory-a", 0.0));
-    assert(storage.size(0.0) == 2.0);
+    assert(storage.has("disk-a", 1.0));
     assert(storage.size(1.0) == 2.0);
     assert(storage.size(2.0) == 1.0);
 
-    const auto memoryKeys = storage.getAllKeys(0.0);
     const auto diskKeys = storage.getAllKeys(1.0);
     const auto secureKeys = storage.getAllKeys(2.0);
-    assert(contains(memoryKeys, "memory-a"));
     assert(contains(diskKeys, "disk-a"));
     assert(contains(secureKeys, "secure-a"));
 
-    assert(storage.getKeysByPrefix("", 0.0).size() == memoryKeys.size());
-    assert(storage.getKeysByPrefix("memory-", 0.0).size() == 2);
-    assert(storage.get("missing", 0.0) == std::nullopt);
+    assert(storage.getKeysByPrefix("", 1.0).size() == diskKeys.size());
+    assert(storage.getKeysByPrefix("disk-", 1.0).size() == 2);
+    assert(storage.get("missing", 1.0) == std::nullopt);
 
-    storage.remove("memory-a", 0.0);
     storage.remove("disk-a", 1.0);
     storage.remove("secure-a", 2.0);
-    assert(!storage.has("memory-a", 0.0));
     assert(!storage.has("disk-a", 1.0));
     assert(!storage.has("secure-a", 2.0));
 
-    storage.clear(0.0);
     storage.clear(1.0);
-    assert(storage.size(0.0) == 0.0);
     assert(storage.size(1.0) == 0.0);
 }
 
@@ -442,16 +442,16 @@ void testBatchMissingValue() {
     assert(!values[1].has_value());
 }
 
-void testMemoryAndSecureBatchPaths() {
+void testDiskAndSecureBatchPaths() {
     auto adapter = std::make_shared<MockAdapter>();
     HybridStorage storage(adapter);
 
-    storage.setBatch({"m1", "m2"}, {"one", "two"}, 0.0);
-    auto memoryValues = storage.getBatch({"m1", "missing"}, 0.0);
-    assert(memoryValues[0] == "one");
-    assert(!memoryValues[1].has_value());
-    storage.removeBatch({"m1", "m2"}, 0.0);
-    assert(!storage.getBatch({"m1"}, 0.0)[0].has_value());
+    storage.setBatch({"d1", "d2"}, {"one", "two"}, 1.0);
+    auto diskValues = storage.getBatch({"d1", "missing"}, 1.0);
+    assert(diskValues[0] == "one");
+    assert(!diskValues[1].has_value());
+    storage.removeBatch({"d1", "d2"}, 1.0);
+    assert(!storage.getBatch({"d1"}, 1.0)[0].has_value());
 
     storage.setBatch({"s1", "s2"}, {"secure-one", "secure-two"}, 2.0);
     auto secureValues = storage.getBatch({"s1", "missing"}, 2.0);
@@ -461,7 +461,7 @@ void testMemoryAndSecureBatchPaths() {
     assert(!storage.has("s1", 2.0));
 
     expectThrows([&]() {
-        storage.setBatch({"one"}, {"a", "b"}, 0.0);
+        storage.setBatch({"one"}, {"a", "b"}, 1.0);
     });
 }
 
@@ -537,14 +537,14 @@ void testListenerExceptionsAreIgnored() {
     auto storage = std::make_shared<HybridStorage>(adapter);
     bool secondListenerCalled = false;
 
-    auto unsubscribeThrowing = storage->addOnChange(0.0, [](const std::string&, const std::optional<std::string>&) {
+    auto unsubscribeThrowing = storage->addOnChange(1.0, [](const std::string&, const std::optional<std::string>&) {
         throw std::runtime_error("listener failed");
     });
-    auto unsubscribeSecond = storage->addOnChange(0.0, [&](const std::string&, const std::optional<std::string>&) {
+    auto unsubscribeSecond = storage->addOnChange(1.0, [&](const std::string&, const std::optional<std::string>&) {
         secondListenerCalled = true;
     });
 
-    storage->set("listener-key", "value", 0.0);
+    storage->set("listener-key", "value", 1.0);
 
     assert(secondListenerCalled);
     unsubscribeThrowing();
@@ -558,7 +558,7 @@ void testListenerUnsubscribeStress() {
     std::vector<std::function<void()>> unsubscribers;
 
     for (int index = 0; index < 24; index += 1) {
-        unsubscribers.push_back(storage->addOnChange(0.0, [&](const std::string&, const std::optional<std::string>&) {
+        unsubscribers.push_back(storage->addOnChange(1.0, [&](const std::string&, const std::optional<std::string>&) {
             callCount += 1;
         }));
     }
@@ -567,14 +567,14 @@ void testListenerUnsubscribeStress() {
         unsubscribers[index]();
     }
 
-    storage->set("listener-stress", "value", 0.0);
+    storage->set("listener-stress", "value", 1.0);
     assert(callCount == 12);
 
     for (auto& unsubscribe : unsubscribers) {
         unsubscribe();
     }
 
-    storage->set("listener-stress", "next", 0.0);
+    storage->set("listener-stress", "next", 1.0);
     assert(callCount == 12);
 }
 
@@ -875,7 +875,7 @@ void testAdapterBackedBatchKeyQueries() {
     assert(storage.getAllKeys(1.0).size() == 2);
 }
 
-void testConcurrentMemoryAccess() {
+void testConcurrentDiskAccess() {
     auto adapter = std::make_shared<MockAdapter>();
     auto storage = std::make_shared<HybridStorage>(adapter);
     std::atomic<int> failures{0};
@@ -886,8 +886,8 @@ void testConcurrentMemoryAccess() {
             for (int iteration = 0; iteration < 250; iteration += 1) {
                 const auto key = "thread-" + std::to_string(threadIndex) + "-" + std::to_string(iteration % 16);
                 const auto value = std::to_string(threadIndex * 1000 + iteration);
-                storage->set(key, value, 0.0);
-                const auto stored = storage->get(key, 0.0);
+                storage->set(key, value, 1.0);
+                const auto stored = storage->get(key, 1.0);
                 if (!stored.has_value() || stored.value().empty()) {
                     failures.fetch_add(1, std::memory_order_relaxed);
                 }
@@ -900,33 +900,23 @@ void testConcurrentMemoryAccess() {
     }
 
     assert(failures.load(std::memory_order_relaxed) == 0);
-    assert(storage->getAllKeys(0.0).size() == 64);
+    assert(storage->getAllKeys(1.0).size() == 64);
 }
 
-void testExternalMemorySizeTracksRetainedState() {
+void testExternalMemorySizeTracksListeners() {
     auto adapter = std::make_shared<MockAdapter>();
     auto storage = std::make_shared<HybridStorage>(adapter);
 
-    assert(storage->getExternalMemorySize() == 0);
-
-    const std::string retainedKey(256, 'k');
-    const std::string retainedValue(512, 'v');
-    storage->set(retainedKey, retainedValue, 0.0);
-    const auto withMemoryValue = storage->getExternalMemorySize();
-    assert(withMemoryValue >= retainedKey.capacity() + retainedValue.capacity());
+    const auto baseline = storage->getExternalMemorySize();
 
     auto unsubscribe = storage->addOnChange(
-        0.0,
+        1.0,
         [](const std::string&, const std::optional<std::string>&) {});
     const auto withListener = storage->getExternalMemorySize();
-    assert(withListener > withMemoryValue);
-
-    storage->clear(0.0);
-    const auto afterClear = storage->getExternalMemorySize();
-    assert(afterClear > 0);
+    assert(withListener > baseline);
 
     unsubscribe();
-    assert(storage->getExternalMemorySize() >= afterClear);
+    assert(storage->getExternalMemorySize() >= baseline);
 }
 
 void testKeyQueriesDelegateToAdapter() {
@@ -1023,21 +1013,18 @@ void testConcurrentListenerChurn() {
     std::atomic<int> notifications{0};
     std::vector<std::thread> threads;
 
-    // Memory scope keeps the write path inside HybridStorage's own mutexes
-    // (the test adapter is intentionally not thread-safe), isolating the
-    // listener-count atomics and listener vector under concurrent churn.
     for (int threadIndex = 0; threadIndex < 4; threadIndex += 1) {
         threads.emplace_back([storage, threadIndex, &notifications]() {
             for (int iteration = 0; iteration < 100; iteration += 1) {
                 auto unsubscribe = storage->addOnChange(
-                    0.0,
+                    1.0,
                     [&](const std::string&, const std::optional<std::string>&) {
                         notifications.fetch_add(1, std::memory_order_relaxed);
                     });
                 storage->set(
                     "churn-" + std::to_string(threadIndex),
                     std::to_string(iteration),
-                    0.0);
+                    1.0);
                 unsubscribe();
             }
         });
@@ -1085,7 +1072,7 @@ int main() {
     testSetGetAcrossScopes();
     testRemoveGetAllSizeAndClearAcrossScopes();
     testBatchMissingValue();
-    testMemoryAndSecureBatchPaths();
+    testDiskAndSecureBatchPaths();
     testBatchListeners();
     testPartialSecureBatchNotifiesAppliedKeysBeforeThrowing();
     testListenerExceptionsAreIgnored();
@@ -1107,8 +1094,8 @@ int main() {
     testNativeCompensationTagPassThrough();
     testAdapterBackedKeyQueries();
     testAdapterBackedBatchKeyQueries();
-    testConcurrentMemoryAccess();
-    testExternalMemorySizeTracksRetainedState();
+    testConcurrentDiskAccess();
+    testExternalMemorySizeTracksListeners();
     testKeyQueriesDelegateToAdapter();
     testDelegatedQueriesFireChangeEvents();
     testListenerFastPathToggles();

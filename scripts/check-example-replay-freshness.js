@@ -95,7 +95,7 @@ function validateSuiteEntry(suite, seenIds, seenPaths, root) {
   if (
     !suite ||
     typeof suite.id !== "string" ||
-    !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(suite.id) ||
+    !isSuiteId(suite.id) ||
     seenIds.has(suite.id) ||
     typeof suite.path !== "string" ||
     !suite.path.startsWith("e2e/") ||
@@ -255,24 +255,20 @@ function hashFiles(root, relativePaths) {
   return hash.digest("hex");
 }
 
+function isSuiteId(value) {
+  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
+}
+
 function hasStatusSelector(source, statusId) {
   if (source.includes(`testID="${statusId}"`)) return true;
-  const cases = [
-    {
-      prefix: "e2e-keychain-",
-      template: "testID={`e2e-keychain-${item.name}`}",
-      declaration: (key) => `name: "${key}"`,
-    },
-  ];
-  return cases.some(({ prefix, template, declaration }) => {
-    const key = statusId.slice(prefix.length);
-    return (
-      statusId.startsWith(prefix) &&
-      /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(key) &&
-      source.includes(template) &&
-      source.includes(declaration(key))
-    );
-  });
+  const prefix = "e2e-keychain-";
+  if (!statusId.startsWith(prefix)) return false;
+  const key = statusId.slice(prefix.length);
+  return (
+    /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(key) &&
+    source.includes("testID={`e2e-keychain-${item.name}`}") &&
+    source.includes(`name: "${key}"`)
+  );
 }
 
 function readCoverageManifest(root, manifestPath = manifestRelativePath) {
@@ -585,6 +581,7 @@ module.exports = {
   checkReplayFreshness,
   collectRuntimeFiles,
   inside,
+  isSuiteId,
   readCoverageManifest,
   validateSuiteEntry,
   refreshReplayLock,

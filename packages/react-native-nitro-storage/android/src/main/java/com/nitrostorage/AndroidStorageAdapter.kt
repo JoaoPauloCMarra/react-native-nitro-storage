@@ -92,6 +92,16 @@ internal fun Throwable.wrapStorageException(
     return RuntimeException(message, this)
 }
 
+private const val SECURE_INTERNAL_KEY_PREFIX = "__androidx_security_crypto_encrypted_prefs_"
+
+internal inline fun <T> secureRead(message: String, block: () -> T): T {
+    return try {
+        block()
+    } catch (e: Exception) {
+        throw e.wrapStorageException("$message: ${e.message}")
+    }
+}
+
 class AndroidStorageAdapter private constructor(private val context: Context) {
     private val sharedPreferences: SharedPreferences =
         context.getSharedPreferences("NitroStorage", Context.MODE_PRIVATE)
@@ -579,11 +589,10 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
             if (existing != null) {
                 return existing
             }
-            val INTERNAL_PREFIX = "__androidx_security_crypto_encrypted_prefs_"
             val keys = linkedSetOf<String>()
-            keys.addAll(encryptedPreferences.all.keys.filter { !it.startsWith(INTERNAL_PREFIX) })
+            keys.addAll(encryptedPreferences.all.keys.filter { !it.startsWith(SECURE_INTERNAL_KEY_PREFIX) })
             for (preferences in existingBiometricPreferences()) {
-                keys.addAll(preferences.all.keys.filter { !it.startsWith(INTERNAL_PREFIX) })
+                keys.addAll(preferences.all.keys.filter { !it.startsWith(SECURE_INTERNAL_KEY_PREFIX) })
             }
             val built = keys.toTypedArray()
             secureKeysCache = built
@@ -763,26 +772,18 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         @JvmStatic
         fun getSecure(key: String): String? {
             val inst = getInstanceOrThrow()
-            return try {
+            return secureRead("NitroStorage: Failed to read secure storage") {
                 inst.encryptedPreferences.getString(key, null)
-            } catch (e: Exception) {
-                throw e.wrapStorageException(
-                    "NitroStorage: Failed to read secure storage: ${e.message}",
-                )
             }
         }
 
         @JvmStatic
         fun getSecureBatch(keys: Array<String>): Array<String?> {
             val inst = getInstanceOrThrow()
-            return try {
+            return secureRead("NitroStorage: Failed to read secure storage batch") {
                 Array(keys.size) { index ->
                     inst.encryptedPreferences.getString(keys[index], null)
                 }
-            } catch (e: Exception) {
-                throw e.wrapStorageException(
-                    "NitroStorage: Failed to read secure storage batch: ${e.message}",
-                )
             }
         }
 
@@ -819,16 +820,17 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
         @JvmStatic
         fun hasSecure(key: String): Boolean {
             val inst = getInstanceOrThrow()
-            if (inst.encryptedPreferences.contains(key)) {
-                return true
+            return secureRead("NitroStorage: Failed to inspect secure storage") {
+                inst.encryptedPreferences.contains(key) || inst.biometricPreferencesContain(key)
             }
-            return inst.biometricPreferencesContain(key)
         }
 
         @JvmStatic
         fun getAllKeysSecure(): Array<String> {
             val inst = getInstanceOrThrow()
-            return inst.getSecureKeysCached()
+            return secureRead("NitroStorage: Failed to list secure storage keys") {
+                inst.getSecureKeysCached()
+            }
         }
 
         @JvmStatic
@@ -838,7 +840,10 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
 
         @JvmStatic
         fun sizeSecure(): Int {
-            return getInstanceOrThrow().getSecureKeysCached().size
+            val inst = getInstanceOrThrow()
+            return secureRead("NitroStorage: Failed to count secure storage keys") {
+                inst.getSecureKeysCached().size
+            }
         }
 
         @JvmStatic
@@ -968,6 +973,18 @@ class AndroidStorageAdapter private constructor(private val context: Context) {
                 throw e.wrapStorageException(
                     "NitroStorage: Failed to inspect biometric storage: ${e.message}",
                 )
+            }
+        }
+
+        @JvmStatic
+        fun getBiometricKeysSecure(): Array<String> {
+            val inst = getInstanceOrThrow()
+            return secureRead("NitroStorage: Failed to list biometric storage keys") {
+                val keys = linkedSetOf<String>()
+                for (preferences in inst.existingBiometricPreferences()) {
+                    keys.addAll(preferences.all.keys.filter { !it.startsWith(SECURE_INTERNAL_KEY_PREFIX) })
+                }
+                keys.toTypedArray()
             }
         }
 

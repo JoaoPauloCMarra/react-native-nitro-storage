@@ -1,7 +1,6 @@
 #include "AndroidStorageAdapterCpp.hpp"
 #include "JniSize.hpp"
 
-#include <limits>
 #include <stdexcept>
 
 namespace NitroStorage {
@@ -275,6 +274,14 @@ void AndroidStorageAdapterCpp::deleteSecureBiometric(const std::string& key) {
 bool AndroidStorageAdapterCpp::hasSecureBiometric(const std::string& key) {
     static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<jboolean(alias_ref<JString>)>("hasSecureBiometric");
     return method(AndroidStorageAdapterJava::javaClassStatic(), toJavaString(key));
+}
+
+std::vector<std::string> AndroidStorageAdapterCpp::getBiometricKeysSecure() {
+    static auto method = AndroidStorageAdapterJava::javaClassStatic()->getStaticMethod<
+        local_ref<JavaStringArray>()
+    >("getBiometricKeysSecure");
+    auto keys = method(AndroidStorageAdapterJava::javaClassStatic());
+    return fromJavaStringArray(keys);
 }
 
 void AndroidStorageAdapterCpp::clearSecureBiometric() {

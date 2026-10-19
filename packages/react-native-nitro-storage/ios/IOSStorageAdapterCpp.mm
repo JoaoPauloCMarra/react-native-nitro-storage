@@ -8,7 +8,6 @@
 
 #include "SqliteDiskStore.hpp"
 
-#include <chrono>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -644,12 +643,7 @@ std::vector<std::string> IOSStorageAdapterCpp::getKeysByPrefixDisk(const std::st
             combined.insert(key);
         }
     }
-    std::vector<std::string> filtered;
-    filtered.reserve(combined.size());
-    for (const auto& key : combined) {
-        filtered.push_back(key);
-    }
-    return filtered;
+    return std::vector<std::string>(combined.begin(), combined.end());
 }
 
 size_t IOSStorageAdapterCpp::sizeDisk() {
@@ -1256,6 +1250,7 @@ void IOSStorageAdapterCpp::clearSecure() {
     }
     OSStatus bioStatus = SecItemDelete((__bridge CFDictionaryRef)biometricQuery);
     if (bioStatus != errSecSuccess && bioStatus != errSecItemNotFound) {
+        clearSecureKeyCache();  // The plain items are already gone
         if (bioStatus == errSecInteractionNotAllowed) {
             throw taggedStorageError(
                 "keychain_locked",
@@ -1264,7 +1259,7 @@ void IOSStorageAdapterCpp::clearSecure() {
         }
         throw keychainStatusError(bioStatus, "clearSecureBiometric");
     }
-    clearSecureKeyCache();  // Only clears cache AFTER confirmed deletion
+    clearSecureKeyCache();
 }
 
 // --- Configuration ---

@@ -3851,3 +3851,76 @@ describe("web transaction edge cases", () => {
     expect(item.get()).toBe("before");
   });
 });
+
+describe("reserved Secure key prefixes on the default web Disk backend", () => {
+  beforeEach(() => {
+    installWebGlobals();
+    setWebDiskStorageBackend(undefined);
+    setWebSecureStorageBackend(undefined);
+    storage.clearAll();
+  });
+
+  afterEach(() => {
+    setWebDiskStorageBackend(undefined);
+    setWebSecureStorageBackend(undefined);
+  });
+
+  it("default web Disk rejects reserved-prefix keys", () => {
+    const secure = createStorageItem({
+      key: "token",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+    });
+    secure.set("SECRET");
+    const emptyKeyError = (() => {
+      try {
+        createStorageItem({ key: "", scope: StorageScope.Disk });
+      } catch (error) {
+        return error as Error;
+      }
+      throw new Error("expected an empty key to throw");
+    })();
+
+    for (const key of ["__secure_token", "__bio_token"]) {
+      const disk = createStorageItem({
+        key,
+        scope: StorageScope.Disk,
+        defaultValue: "",
+      });
+      let caught: unknown;
+      try {
+        disk.set("overwrite");
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(emptyKeyError.constructor);
+      expect(getStorageErrorCode(caught)).toBe("invalid_key");
+      expect((caught as Error).message).toContain(
+        key.startsWith("__secure_") ? "__secure_" : "__bio_",
+      );
+      expect(() => disk.get()).toThrow("invalid_key");
+      expect(() => disk.delete()).toThrow("invalid_key");
+      expect(() => storage.setString(key, "x", StorageScope.Disk)).toThrow(
+        "invalid_key",
+      );
+      expect(() =>
+        setBatch([{ item: disk, value: "x" }], StorageScope.Disk),
+      ).toThrow("invalid_key");
+    }
+    expect(secure.get()).toBe("SECRET");
+  });
+
+  it("keeps reserved-prefix Disk keys working on a custom backend", () => {
+    const custom = createWebBackendMock("custom-disk");
+    setWebDiskStorageBackend(custom);
+    const disk = createStorageItem({
+      key: "__secure_token",
+      scope: StorageScope.Disk,
+      defaultValue: "",
+    });
+
+    disk.set("value");
+
+    expect(disk.get()).toBe("value");
+  });
+});

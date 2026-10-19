@@ -182,4 +182,23 @@ class StorageErrorClassificationTest {
         assertEquals("NitroStorage: wrapped", wrapped.message)
         assertSame(checked, wrapped.cause)
     }
+
+    @Test
+    fun wrappedSecurityExceptionWithAeadBadTagCauseIsStorageCorruption() {
+        val failure = SecurityException("decrypt", AEADBadTagException("bad tag"))
+
+        val error = try {
+            secureRead("NitroStorage: Failed to read secure storage") { throw failure }
+        } catch (thrown: RuntimeException) {
+            thrown
+        }
+
+        assertTrue(error.message!!.startsWith("[nitro-error:storage_corruption] "))
+        assertSame(failure, error.cause)
+    }
+
+    @Test
+    fun secureReadReturnsTheBlockResult() {
+        assertEquals(7, secureRead("unused") { 7 })
+    }
 }

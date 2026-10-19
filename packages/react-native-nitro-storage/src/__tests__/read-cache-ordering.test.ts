@@ -238,3 +238,45 @@ describe("Secure raw writes do not keep plaintext in the cache", () => {
     expect(item.get()).toBe("second");
   });
 });
+
+describe("Secure transaction rollback caching", () => {
+  it("rolled-back Secure transaction does not cache plaintext without readCache", () => {
+    const { createStorageItem, runTransaction, storage } = createTestCore();
+    const item = createStorageItem({
+      key: "secret",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+    });
+    item.set("SECRET-1");
+
+    expect(() =>
+      runTransaction(StorageScope.Secure, (tx) => {
+        tx.setItem(item, "SECRET-2");
+        throw new Error("boom");
+      }),
+    ).toThrow("boom");
+
+    expect(storage.getCacheMetrics().cacheEntries).toBe(0);
+    expect(storage.getCacheMetrics().cacheBytes).toBe(0);
+  });
+
+  it("still caches a rolled-back Secure value for a readCache item", () => {
+    const { createStorageItem, runTransaction, storage } = createTestCore();
+    const item = createStorageItem({
+      key: "secret",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      readCache: true,
+    });
+    item.set("SECRET-1");
+
+    expect(() =>
+      runTransaction(StorageScope.Secure, (tx) => {
+        tx.setItem(item, "SECRET-2");
+        throw new Error("boom");
+      }),
+    ).toThrow("boom");
+
+    expect(storage.getCacheMetrics().cacheEntries).toBe(1);
+  });
+});

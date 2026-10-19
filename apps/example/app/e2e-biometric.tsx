@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import {
   createStorageItem,
@@ -8,7 +7,7 @@ import {
   type StorageItem,
 } from "react-native-nitro-storage";
 import {
-  Page,
+  LabScreen,
   ResultsProbe,
   StatusRow,
   describeStorageError,
@@ -124,23 +123,19 @@ export default function BiometricReplayScreen() {
   }, [runId]);
 
   return (
-    <View
+    <LabScreen
       testID="e2e-biometric-screen"
-      style={{ flex: 1 }}
-      accessibilityLabel="Biometric replay"
+      label="Biometric replay"
+      title="Biometric replay"
+      subtitle="Deep link nitrostorage://e2e-biometric?runId=<uuid>"
     >
-      <Page
-        title="Biometric replay"
-        subtitle="Deep link nitrostorage://e2e-biometric?runId=<uuid>"
-      >
-        <ResultsProbe testID="e2e-biometric-results" label={tokens.join("")} />
-        <StatusRow
-          testID="e2e-biometric-finished"
-          label="run"
-          value={finished ? "finished" : "running"}
-        />
-        <StatusRow label="result" value={tokens.join("") || "running"} />
-      </Page>
-    </View>
+      <ResultsProbe testID="e2e-biometric-results" label={tokens.join("")} />
+      <StatusRow
+        testID="e2e-biometric-finished"
+        label="run"
+        value={finished ? "finished" : "running"}
+      />
+      <StatusRow label="result" value={tokens.join("") || "running"} />
+    </LabScreen>
   );
 }

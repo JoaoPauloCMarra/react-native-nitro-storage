@@ -310,3 +310,26 @@ describe("synchronous transaction callbacks", () => {
     );
   });
 });
+
+describe("resetNitroStorageMock registries", () => {
+  it("reset clears migrations, key registry and disk async mode", () => {
+    registerMigration(1, () => {});
+    createStorageItem({
+      key: "reset-dup",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    });
+    storage.setDiskWritesAsync(true);
+
+    resetNitroStorageMock();
+
+    expect(() => registerMigration(1, () => {})).not.toThrow();
+    createStorageItem({
+      key: "reset-dup",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    });
+    expect(storage.findDuplicateKeys()).toEqual([]);
+    expect(storage.getCapabilities().writeBuffering.disk).toBe(false);
+  });
+});

@@ -4,17 +4,9 @@ const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const readline = require("readline");
+const { execCommand, log, projectRoot } = require("./cli-utils.js");
 const { validateDistTag } = require("./validate-release-tags.js");
 
-const colors = {
-  green: (text) => `\x1b[32m${text}\x1b[0m`,
-  yellow: (text) => `\x1b[33m${text}\x1b[0m`,
-  red: (text) => `\x1b[31m${text}\x1b[0m`,
-  cyan: (text) => `\x1b[36m${text}\x1b[0m`,
-  bold: (text) => `\x1b[1m${text}\x1b[0m`,
-};
-
-const projectRoot = path.resolve(__dirname, "..");
 const packageDir = path.join(
   projectRoot,
   "packages/react-native-nitro-storage",
@@ -33,24 +25,6 @@ const lifecycleFlags = [
   "publish",
   "postpublish",
 ];
-
-function log(message, color = "green") {
-  console.log(colors[color](message));
-}
-
-function execCommand(command, options = {}) {
-  try {
-    execSync(command, {
-      stdio: "inherit",
-      cwd: projectRoot,
-      shell: true,
-      ...options,
-    });
-    return true;
-  } catch (error) {
-    return false;
-  }
-}
 
 function execCommandWithOutput(command, options = {}) {
   try {
@@ -138,14 +112,6 @@ function checkNpmAuth() {
   return whoami !== null && whoami !== "";
 }
 
-function isPackageVersionPublished(packageName, version) {
-  return (
-    execCommandWithOutput(
-      `npm view ${shellQuote(`${packageName}@${version}`)} version 2>/dev/null`,
-    ) !== null
-  );
-}
-
 const REGISTRY_RETRY_DELAYS_SECONDS = [10, 20, 40, 60, 60, 60];
 
 function isRegistryNotFound(output) {
@@ -170,6 +136,23 @@ function viewRegistryMetadata(packageName, version) {
       output: `${error.stdout ?? ""}${error.stderr ?? ""}`.trim(),
     };
   }
+}
+
+function isPackageVersionPublished(
+  packageName,
+  version,
+  view = viewRegistryMetadata,
+) {
+  const result = view(packageName, version);
+  if (result.ok) {
+    return result.output !== "";
+  }
+  if (isRegistryNotFound(result.output)) {
+    return false;
+  }
+  throw new Error(
+    `npm registry lookup failed; cannot tell whether ${packageName}@${version} is published: ${result.output}`,
+  );
 }
 
 function sleepSeconds(seconds) {
@@ -385,7 +368,7 @@ function assertReleaseDocs(version) {
     !readme.includes("storage.export") ||
     !readme.includes("subscribeNamespace")
   ) {
-    failures.push("README.md is missing 0.5.1 export/event API examples");
+    failures.push("README.md is missing storage.export and subscribeNamespace API examples");
   }
 
   if (failures.length > 0) {
@@ -717,6 +700,7 @@ if (require.main === module) {
 module.exports = {
   REGISTRY_RETRY_DELAYS_SECONDS,
   findSecurityPolicyFailure,
+  isPackageVersionPublished,
   isRegistryNotFound,
   parsePublishArgs,
   validateNpmTag,

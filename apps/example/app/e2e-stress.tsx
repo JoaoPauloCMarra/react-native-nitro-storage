@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
-import { View } from "react-native";
 import { storage, StorageScope } from "react-native-nitro-storage";
-import { Card, Page, StatusRow } from "../components/shared";
+import {
+  Card,
+  LabScreen,
+  StatusRow,
+  describeStorageError,
+  nowMs,
+} from "../components/shared";
 
 type StressReport = {
   fail: number;
@@ -24,10 +29,6 @@ function percentile(values: number[], p: number): number {
     Math.floor((p / 100) * sorted.length),
   );
   return sorted[index] ?? 0;
-}
-
-function nowMs(): number {
-  return globalThis.performance?.now?.() ?? Date.now();
 }
 
 function runScope(
@@ -85,7 +86,7 @@ function runStressSweep(): StressReport {
       diskP95: 0,
       secureP50: 0,
       secureP95: 0,
-      detail: error instanceof Error ? error.message : String(error),
+      detail: describeStorageError(error),
     };
     return report;
   }
@@ -103,47 +104,42 @@ export default function StressLabScreen() {
     : "running";
 
   return (
-    <View
+    <LabScreen
       testID="e2e-stress-screen"
-      style={{ flex: 1 }}
-      accessibilityLabel="Stress lab"
+      label="Stress lab"
+      title="Stress lab"
+      subtitle="Deep link nitrostorage://e2e-stress"
     >
-      <Page title="Stress lab" subtitle="Deep link nitrostorage://e2e-stress">
-        <StatusRow testID="e2e-stress-ready" label="state" value="ready" />
+      <StatusRow testID="e2e-stress-ready" label="state" value="ready" />
+      <StatusRow
+        testID="e2e-stress-finished"
+        label="run"
+        value={report ? "finished" : "running"}
+      />
+      <StatusRow testID="e2e-stress-summary" label="summary" value={summary} />
+      <Card title="Disk + Secure batches" subtitle="40 Disk / 20 Secure">
         <StatusRow
-          testID="e2e-stress-finished"
-          label="run"
-          value={report ? "finished" : "running"}
+          label="disk p50/p95"
+          value={
+            report
+              ? `${report.diskP50.toFixed(2)}/${report.diskP95.toFixed(2)}`
+              : "—"
+          }
         />
         <StatusRow
-          testID="e2e-stress-summary"
-          label="summary"
-          value={summary}
+          label="secure p50/p95"
+          value={
+            report
+              ? `${report.secureP50.toFixed(2)}/${report.secureP95.toFixed(2)}`
+              : "—"
+          }
         />
-        <Card title="Disk + Secure batches" subtitle="40 Disk / 20 Secure">
-          <StatusRow
-            label="disk p50/p95"
-            value={
-              report
-                ? `${report.diskP50.toFixed(2)}/${report.diskP95.toFixed(2)}`
-                : "—"
-            }
-          />
-          <StatusRow
-            label="secure p50/p95"
-            value={
-              report
-                ? `${report.secureP50.toFixed(2)}/${report.secureP95.toFixed(2)}`
-                : "—"
-            }
-          />
-          <StatusRow
-            testID="e2e-stress-detail"
-            label="detail"
-            value={report?.detail ?? "running"}
-          />
-        </Card>
-      </Page>
-    </View>
+        <StatusRow
+          testID="e2e-stress-detail"
+          label="detail"
+          value={report?.detail ?? "running"}
+        />
+      </Card>
+    </LabScreen>
   );
 }

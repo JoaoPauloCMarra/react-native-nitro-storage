@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "runtimeSourceSha256": "2fda05b3c8604433ce9e58d459d02fe9cfd0a65a1269ca85f1a30b24547723fa",
+  "runtimeSourceSha256": "91588d624a7f16b740a2cc674a5b05e0a3b1e723bff18917307260caf3d71157",
   "runtimeSourceFiles": [
     "apps/example/app.config.js",
     "apps/example/app/_layout.tsx",
@@ -20,7 +20,11 @@
     "apps/example/components/e2e-gate.tsx",
     "apps/example/components/e2e-lab.tsx",
     "apps/example/components/ergonomics-demo.tsx",
+    "apps/example/components/home-feature-cards.tsx",
+    "apps/example/components/home-scope-cards.tsx",
+    "apps/example/components/home-utility-cards.tsx",
     "apps/example/components/keychain-lifecycle-probe.tsx",
+    "apps/example/components/runtime.ts",
     "apps/example/components/shared.tsx",
     "apps/example/components/smoke-test.tsx",
     "apps/example/metro.config.js",
@@ -83,7 +87,7 @@
     "packages/react-native-nitro-storage/src/web-backend-contract.ts",
     "packages/react-native-nitro-storage/src/web-storage-backend.ts"
   ],
-  "replayInputsSha256": "81ec829a43b5c90849526df0699335b38d06e2c97fb68f724e2d063c14219fb4",
+  "replayInputsSha256": "0faa7138d7a03ab5e2bc7d63638766f6e854e2487a68409369f3411ecd5d0106",
   "replayInputs": [
     "e2e/qa-api-extended.ad",
     "e2e/qa-biometric-ios.ad",

@@ -638,17 +638,20 @@ export function createStorageCore(
     source: StorageChangeSource,
     changes: StorageKeyChangeEvent[],
     emitWhenEmpty = false,
+    markNativeEcho = true,
   ): void {
     if (changes.length === 0 && !emitWhenEmpty) {
       return;
     }
 
-    adapter.onWillEmitChanges(
-      scope,
-      changes.map((change) => change.key),
-      operation,
-      source,
-    );
+    if (markNativeEcho) {
+      adapter.onWillEmitChanges(
+        scope,
+        changes.map((change) => change.key),
+        operation,
+        source,
+      );
+    }
 
     const event: StorageBatchChangeEvent = {
       type: "batch",
@@ -679,48 +682,16 @@ export function createStorageCore(
     metrics.record(operation, scope, durationMs, keysCount);
   }
 
-  function clearPendingDiskWrite(key: string): void {
-    durability.clearPendingDiskWrite(key);
-  }
-
-  function clearPendingSecureWrite(key: string): void {
-    durability.clearPendingSecureWrite(key);
-  }
-
-  function flushDiskWrites(): void {
-    durability.flushDiskWrites();
-  }
-
-  function flushSecureWrites(): void {
-    durability.flushSecureWrites();
-  }
-
-  function runSecurePromotion<T>(key: string, promotion: () => T): T {
-    return durability.runSecurePromotion(key, promotion);
-  }
-
-  function scheduleDiskWrite(
-    key: string,
-    value: string | undefined,
-  ): PendingDiskWrite {
-    return durability.scheduleDiskWrite(key, value);
-  }
-
-  function scheduleSecureWrite(
-    key: string,
-    value: string | undefined,
-    accessControl?: AccessControl,
-  ): PendingSecureWrite {
-    return durability.scheduleSecureWrite(key, value, accessControl);
-  }
-
-  function setDiskWritesAsyncMode(enabled: boolean): void {
-    durability.setDiskWritesAsync(enabled);
-  }
-
-  function isDiskWritesAsync(): boolean {
-    return durability.isDiskWritesAsync();
-  }
+  const {
+    clearPendingDiskWrite,
+    clearPendingSecureWrite,
+    flushDiskWrites,
+    flushSecureWrites,
+    runSecurePromotion,
+    scheduleDiskWrite,
+    scheduleSecureWrite,
+    isDiskWritesAsync,
+  } = durability;
 
   function getStoredRawValue(
     key: string,
@@ -731,18 +702,9 @@ export function createStorageCore(
       return typeof value === "string" ? value : undefined;
     }
 
-    if (scope === StorageScope.Disk) {
-      const pending = durability.getPendingDiskWrite(key);
-      if (pending !== undefined) {
-        return pending.value;
-      }
-    }
-
-    if (scope === StorageScope.Secure) {
-      const pending = durability.getPendingSecureWrite(key);
-      if (pending !== undefined) {
-        return pending.value;
-      }
+    const pending = durability.getPendingWrite(scope, key);
+    if (pending !== undefined) {
+      return pending.value;
     }
 
     return adapter.backend.get(key, scope);
@@ -768,22 +730,11 @@ export function createStorageCore(
         : undefined;
     }
 
-    if (scope === StorageScope.Disk) {
-      const pending = durability.getPendingDiskWrite(key);
-      if (pending !== undefined) {
-        return pending.value === undefined
-          ? undefined
-          : unescapeCollidingRawValue(pending.value);
-      }
-    }
-
-    if (scope === StorageScope.Secure) {
-      const pending = durability.getPendingSecureWrite(key);
-      if (pending !== undefined) {
-        return pending.value === undefined
-          ? undefined
-          : unescapeCollidingRawValue(pending.value);
-      }
+    const pending = durability.getPendingWrite(scope, key);
+    if (pending !== undefined) {
+      return pending.value === undefined
+        ? undefined
+        : unescapeCollidingRawValue(pending.value);
     }
 
     const raw = adapter.backend.get(key, scope);
@@ -916,12 +867,8 @@ export function createStorageCore(
     clearScopeRawCache,
     clearPendingDiskWrite,
     clearPendingSecureWrite,
-    clearAllPendingDiskWrites: () => {
-      durability.clearAllPendingDiskWrites();
-    },
-    clearAllPendingSecureWrites: () => {
-      durability.clearAllPendingSecureWrites();
-    },
+    clearAllPendingDiskWrites: durability.clearAllPendingDiskWrites,
+    clearAllPendingSecureWrites: durability.clearAllPendingSecureWrites,
     flushDiskWrites,
     flushSecureWrites,
     emitKeyChange,
@@ -1111,6 +1058,24 @@ export function createStorageCore(
       measureOperation("storage:clear", scope, () => {
         let previousValues: Record<string, string> = {};
         let previousValuesUnreadable = false;
+        if (scope === StorageScope.Memory) {
+          const previousEntries = Array.from(memoryStore.keys()).map((key) => ({
+            key,
+            value: getEventRawValue(scope, key),
+          }));
+          memoryStore.clear();
+          memoryExpirationDeadlines.clear();
+          notifyAllListeners(memoryListeners);
+          emitBatchChange(
+            scope,
+            "clear",
+            "memory",
+            previousEntries.map(({ key, value }) =>
+              createKeyChange(scope, key, value, undefined, "clear", "memory"),
+            ),
+          );
+          return;
+        }
         if (shouldReadPreviousEventValues(scope)) {
           try {
             previousValues = storage.getAll(scope);
@@ -1120,27 +1085,6 @@ export function createStorageCore(
             }
             previousValuesUnreadable = true;
           }
-        }
-        if (scope === StorageScope.Memory) {
-          memoryStore.clear();
-          memoryExpirationDeadlines.clear();
-          notifyAllListeners(memoryListeners);
-          emitBatchChange(
-            scope,
-            "clear",
-            "memory",
-            Object.keys(previousValues).map((key) =>
-              createKeyChange(
-                scope,
-                key,
-                previousValues[key],
-                undefined,
-                "clear",
-                "memory",
-              ),
-            ),
-          );
-          return;
         }
 
         let diskFlushFailed = false;
@@ -1179,6 +1123,7 @@ export function createStorageCore(
             ),
           ),
           previousValuesUnreadable,
+          false,
         );
       });
     },
@@ -1552,10 +1497,7 @@ export function createStorageCore(
     },
     setDiskWritesAsync: (enabled: boolean) => {
       measureOperation("storage:setDiskWritesAsync", StorageScope.Disk, () => {
-        setDiskWritesAsyncMode(enabled);
-        if (!enabled) {
-          flushDiskWrites();
-        }
+        durability.setDiskWritesAsync(enabled);
       });
     },
     flushDiskWrites: () => {
@@ -1749,6 +1691,8 @@ export function createStorageCore(
         : config.scope === StorageScope.Secure
           ? StorageScope.Secure
           : null;
+    const getItemPendingWrite = (key: string) =>
+      isBiometric ? undefined : durability.getPendingWrite(nonMemoryScope, key);
     const renameFromKeys: readonly string[] =
       config.renameFrom === undefined
         ? EMPTY_KEYS
@@ -1846,34 +1790,13 @@ export function createStorageCore(
           : memoryStored;
       }
 
-      if (nonMemoryScope === StorageScope.Disk) {
-        const pending = durability.getPendingDiskWrite(storageKey);
-        if (pending !== undefined) {
-          return pending.value;
-        }
+      let pending = getItemPendingWrite(storageKey);
+      if (pending === undefined) {
+        migrateRenamesIfNeeded();
+        pending = getItemPendingWrite(storageKey);
       }
-
-      if (nonMemoryScope === StorageScope.Secure && !isBiometric) {
-        const pending = durability.getPendingSecureWrite(storageKey);
-        if (pending !== undefined) {
-          return pending.value;
-        }
-      }
-
-      migrateRenamesIfNeeded();
-
-      if (nonMemoryScope === StorageScope.Disk) {
-        const pending = durability.getPendingDiskWrite(storageKey);
-        if (pending !== undefined) {
-          return pending.value;
-        }
-      }
-
-      if (nonMemoryScope === StorageScope.Secure && !isBiometric) {
-        const pending = durability.getPendingSecureWrite(storageKey);
-        if (pending !== undefined) {
-          return pending.value;
-        }
+      if (pending !== undefined) {
+        return pending.value;
       }
 
       if (readCache) {
@@ -2157,23 +2080,13 @@ export function createStorageCore(
     function captureItemState(): ItemStateSnapshot {
       const records = getItemStateKeys().map((key) => {
         let pending: ItemPendingSnapshot | undefined;
-        if (nonMemoryScope === StorageScope.Disk) {
-          const pendingWrite = durability.getPendingDiskWrite(key);
-          if (pendingWrite !== undefined) {
-            pending = {
-              value: pendingWrite.value,
-            };
-          }
-        } else if (nonMemoryScope === StorageScope.Secure && !isBiometric) {
-          const pendingWrite = durability.getPendingSecureWrite(key);
-          if (pendingWrite !== undefined) {
-            pending = {
-              value: pendingWrite.value,
-              ...(pendingWrite.accessControl === undefined
-                ? {}
-                : { accessControl: pendingWrite.accessControl }),
-            };
-          }
+        const pendingWrite = getItemPendingWrite(key);
+        if (pendingWrite !== undefined) {
+          const { accessControl } = pendingWrite as Partial<PendingSecureWrite>;
+          pending = {
+            value: pendingWrite.value,
+            ...(accessControl === undefined ? {} : { accessControl }),
+          };
         }
 
         return {
@@ -2205,9 +2118,6 @@ export function createStorageCore(
       error: unknown;
     }[] {
       const rollbackErrors: { label: string; error: unknown }[] = [];
-      const recordsByKey = new Map(
-        snapshot.records.map((record) => [record.key, record]),
-      );
       snapshot.records.forEach(({ key }) => {
         clearPendingItemWrite(key);
         if (nonMemoryScope !== null) {
@@ -2320,7 +2230,7 @@ export function createStorageCore(
         }
       });
 
-      recordsByKey.forEach(({ key }) => {
+      snapshot.records.forEach(({ key }) => {
         if (nonMemoryScope !== null) {
           invalidateRawCache(nonMemoryScope, key);
         }
@@ -2860,21 +2770,44 @@ export function createStorageCore(
       set(value);
     };
 
+    const expireLapsedStoredValue = (): void => {
+      if (isMemory) {
+        readStoredRaw();
+        return;
+      }
+      const raw = readStoredRaw();
+      if (typeof raw !== "string") {
+        return;
+      }
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (!isStoredEnvelope(parsed) || parsed.expiresAt > Date.now()) {
+          return;
+        }
+      } catch {
+        return;
+      }
+      runAtomicItemMutation(() => {
+        removeStoredRaw("expire");
+      });
+      invalidateParsedCache();
+      onExpired?.(storageKey);
+      listeners.forEach((cb) => {
+        cb();
+      });
+    };
+
     const hasItem = (): boolean =>
       measureOperation("item:has", config.scope, () => {
+        // Biometric reads prompt the user, so has() keeps the existence-only check for them.
+        if (expiration && !isBiometric) {
+          expireLapsedStoredValue();
+        }
         if (isMemory) return memoryStore.has(storageKey);
         if (isBiometric) return adapter.backend.hasSecureBiometric(storageKey);
-        if (nonMemoryScope === StorageScope.Disk) {
-          const pending = durability.getPendingDiskWrite(storageKey);
-          if (pending !== undefined) {
-            return pending.value !== undefined;
-          }
-        }
-        if (nonMemoryScope === StorageScope.Secure) {
-          const pending = durability.getPendingSecureWrite(storageKey);
-          if (pending !== undefined) {
-            return pending.value !== undefined;
-          }
+        const pending = getItemPendingWrite(storageKey);
+        if (pending !== undefined) {
+          return pending.value !== undefined;
         }
         return adapter.backend.has(storageKey, config.scope);
       });
@@ -3021,20 +2954,10 @@ export function createStorageCore(
         const keyIndexes: number[] = [];
 
         items.forEach((item, index) => {
-          if (scope === StorageScope.Disk) {
-            const pending = durability.getPendingDiskWrite(item.key);
-            if (pending !== undefined) {
-              rawValues[index] = pending.value;
-              return;
-            }
-          }
-
-          if (scope === StorageScope.Secure) {
-            const pending = durability.getPendingSecureWrite(item.key);
-            if (pending !== undefined) {
-              rawValues[index] = pending.value;
-              return;
-            }
+          const pending = durability.getPendingWrite(scope, item.key);
+          if (pending !== undefined) {
+            rawValues[index] = pending.value;
+            return;
           }
 
           if (item._readCacheEnabled === true) {
@@ -3623,6 +3546,10 @@ export function createStorageCore(
               internal?._secureAccessControl !== undefined
                 ? { accessControl: internal._secureAccessControl }
                 : {}),
+              ...(scope === StorageScope.Secure &&
+              internal?._fillsRawCache === true
+                ? { fillsRawCache: true }
+                : {}),
             },
           });
         };
@@ -3761,6 +3688,7 @@ export function createStorageCore(
             { keys: string[]; values: string[] }
           >();
           const keysToRemove: string[] = [];
+          const secureKeysToCache = new Set<string>();
           const biometricEntries: TransactionRollbackEntry[] = [];
           const biometricValues = new Map<string, string | undefined>();
 
@@ -3773,6 +3701,9 @@ export function createStorageCore(
             }
             if (record.kind !== "raw") {
               return;
+            }
+            if (record.fillsRawCache === true) {
+              secureKeysToCache.add(key);
             }
             if (record.value === undefined) {
               keysToRemove.push(key);
@@ -3845,7 +3776,12 @@ export function createStorageCore(
               }
               adapter.backend.setBatch(group.keys, group.values, scope);
               group.keys.forEach((key, index) => {
-                cacheRawValue(scope, key, group.values[index], "plain");
+                if (
+                  scope !== StorageScope.Secure ||
+                  secureKeysToCache.has(key)
+                ) {
+                  cacheRawValue(scope, key, group.values[index], "plain");
+                }
               });
             } catch (rollbackError) {
               rollbackErrors.push({
@@ -3866,7 +3802,12 @@ export function createStorageCore(
                 );
               }
               keysToRemove.forEach((key) => {
-                cacheRawValue(scope, key, undefined, "plain");
+                if (
+                  scope !== StorageScope.Secure ||
+                  secureKeysToCache.has(key)
+                ) {
+                  cacheRawValue(scope, key, undefined, "plain");
+                }
               });
             } catch (rollbackError) {
               rollbackErrors.push({
@@ -4070,6 +4011,12 @@ export function createStorageCore(
     };
   }
 
+  function resetState(): void {
+    registeredMigrations.clear();
+    registeredKeyCounts.clear();
+    durability.setDiskWritesAsync(false);
+  }
+
   return {
     storage,
     createStorageItem,
@@ -4086,6 +4033,7 @@ export function createStorageCore(
     runTransaction,
     createSecureAuthStorage,
     internals,
+    resetState,
   };
 }
 

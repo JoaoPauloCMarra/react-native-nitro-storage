@@ -731,3 +731,83 @@ describe("indexeddb persistence lifecycle", () => {
     );
   });
 });
+
+describe("IndexedDB write failure reporting", () => {
+  it("one failed IndexedDB write is reported once", async () => {
+    Object.defineProperty(globalThis, "indexedDB", {
+      value: {
+        open() {
+          const db = {
+            objectStoreNames: { contains: () => true },
+            createObjectStore() {
+              return {};
+            },
+            close() {},
+            transaction(_storeName: string, mode: IDBTransactionMode) {
+              if (mode === "readwrite") {
+                let onError: ((event: Event) => void) | null = null;
+                let onAbort: ((event: Event) => void) | null = null;
+                return {
+                  error: new Error("quota exceeded"),
+                  objectStore() {
+                    return { put() {}, delete() {}, clear() {} };
+                  },
+                  set oncomplete(_callback: (() => void) | null) {},
+                  set onerror(callback: ((event: Event) => void) | null) {
+                    onError = callback;
+                  },
+                  set onabort(callback: ((event: Event) => void) | null) {
+                    onAbort = callback;
+                    queueMicrotask(() => {
+                      onError?.(new Event("error"));
+                      onAbort?.(new Event("abort"));
+                    });
+                  },
+                };
+              }
+              return {
+                objectStore() {
+                  return {
+                    openCursor() {
+                      const request = {
+                        result: null,
+                        onsuccess: null as ((event: Event) => void) | null,
+                      };
+                      queueMicrotask(() => request.onsuccess?.({} as Event));
+                      return request;
+                    },
+                  };
+                },
+                set oncomplete(callback: (() => void) | null) {
+                  queueMicrotask(() => callback?.());
+                },
+                set onerror(_callback: ((event: Event) => void) | null) {},
+              };
+            },
+          };
+          const request = {
+            result: db,
+            error: null,
+            onupgradeneeded: null as
+              ((event: IDBVersionChangeEvent) => void) | null,
+            onsuccess: null as ((event: Event) => void) | null,
+            onerror: null as ((event: Event) => void) | null,
+          };
+          queueMicrotask(() => request.onsuccess?.({} as Event));
+          return request;
+        },
+      },
+      writable: true,
+      configurable: true,
+    });
+    const onError = jest.fn();
+    const backend = await createIndexedDBBackend("double-report-db", "kv", {
+      onError,
+    });
+
+    backend.setItem("a", "1");
+
+    await expect(backend.flush?.()).rejects.toThrow(/for 1 write\(s\)/);
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+});

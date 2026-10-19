@@ -342,6 +342,7 @@ function buildTestingModule() {
     storage.resetMetrics();
     storage.clearAll();
     backend.resetState();
+    core.resetState();
     internals.setSecureDefaultAccessControl(AccessControl.WhenUnlocked);
   };
 

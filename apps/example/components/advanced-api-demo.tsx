@@ -9,7 +9,14 @@ import {
   useStorageValue,
 } from "react-native-nitro-storage";
 import { createIndexedDBBackend } from "react-native-nitro-storage/indexeddb-backend";
-import { Button, Card, Colors, StatusRow, styles } from "./shared";
+import {
+  Button,
+  Card,
+  Colors,
+  StatusRow,
+  describeStorageError,
+  styles,
+} from "./shared";
 
 const secureDemoItem = secureItem<string>({
   key: "advanced-secure-demo",
@@ -132,7 +139,7 @@ function IndexedDbCard() {
         setStatus(`${backend.name ?? "IndexedDB"}: ${value}`);
         backend.close?.();
       } catch (error) {
-        setStatus(error instanceof Error ? error.message : String(error));
+        setStatus(describeStorageError(error));
       }
     })();
   };

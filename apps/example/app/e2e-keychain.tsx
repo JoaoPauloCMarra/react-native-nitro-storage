@@ -1,26 +1,16 @@
 import { useEffect, useState } from "react";
-import { View } from "react-native";
 import { storage, StorageScope } from "react-native-nitro-storage";
 import { KeychainLifecycleProbe } from "../components/keychain-lifecycle-probe";
 import {
   Card,
-  Page,
+  LabScreen,
   StatusRow,
   describeStorageError,
+  summarizeCases,
+  type LabCase,
 } from "../components/shared";
 
-type CaseStatus = "pass" | "fail";
-type LabCase = {
-  name: string;
-  status: CaseStatus;
-  detail?: string;
-};
-
-type KeychainReport = {
-  fail: number;
-  pass: number;
-  cases: LabCase[];
-};
+type KeychainReport = ReturnType<typeof summarizeCases>;
 
 function runSecureRoundTrip(): LabCase {
   const key = "__e2e_secure_roundtrip__";
@@ -77,13 +67,7 @@ function runSecureRoundTrip(): LabCase {
 }
 
 function runKeychainSweep(): KeychainReport {
-  const cases = [runSecureRoundTrip()];
-  const report: KeychainReport = {
-    fail: cases.filter((item) => item.status === "fail").length,
-    pass: cases.filter((item) => item.status === "pass").length,
-    cases,
-  };
-  return report;
+  return summarizeCases([runSecureRoundTrip()]);
 }
 
 export default function KeychainLabScreen() {
@@ -98,43 +82,39 @@ export default function KeychainLabScreen() {
     : "running";
 
   return (
-    <View
+    <LabScreen
       testID="e2e-keychain-screen"
-      style={{ flex: 1 }}
-      accessibilityLabel="Keychain lab"
+      label="Keychain lab"
+      title="Keychain lab"
+      subtitle="Deep link nitrostorage://e2e-keychain"
     >
-      <Page
-        title="Keychain lab"
-        subtitle="Deep link nitrostorage://e2e-keychain"
-      >
-        <StatusRow testID="e2e-keychain-ready" label="state" value="ready" />
-        <StatusRow
-          testID="e2e-keychain-finished"
-          label="run"
-          value={report ? "finished" : "running"}
-        />
-        <StatusRow
-          testID="e2e-keychain-summary"
-          label="summary"
-          value={summary}
-        />
-        <StatusRow
-          testID="e2e-keychain-hardware-pending"
-          label="hardware cases"
-          value="pending:biometric,lock,corruption,hardware-backed-keychain"
-        />
-        <Card title="Secure checks" subtitle="No real tokens">
-          {(report?.cases ?? []).map((item) => (
-            <StatusRow
-              key={item.name}
-              testID={`e2e-keychain-${item.name}`}
-              label={item.name}
-              value={`${item.status}:${item.detail ?? ""}`}
-            />
-          ))}
-        </Card>
-        <KeychainLifecycleProbe />
-      </Page>
-    </View>
+      <StatusRow testID="e2e-keychain-ready" label="state" value="ready" />
+      <StatusRow
+        testID="e2e-keychain-finished"
+        label="run"
+        value={report ? "finished" : "running"}
+      />
+      <StatusRow
+        testID="e2e-keychain-summary"
+        label="summary"
+        value={summary}
+      />
+      <StatusRow
+        testID="e2e-keychain-hardware-pending"
+        label="hardware cases"
+        value="pending:biometric,lock,corruption,hardware-backed-keychain"
+      />
+      <Card title="Secure checks" subtitle="No real tokens">
+        {(report?.cases ?? []).map((item) => (
+          <StatusRow
+            key={item.name}
+            testID={`e2e-keychain-${item.name}`}
+            label={item.name}
+            value={`${item.status}:${item.detail ?? ""}`}
+          />
+        ))}
+      </Card>
+      <KeychainLifecycleProbe />
+    </LabScreen>
   );
 }

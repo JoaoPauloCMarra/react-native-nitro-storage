@@ -3,7 +3,10 @@ const { randomUUID } = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { validateSuiteEntry } = require("./check-example-replay-freshness.js");
+const {
+  isSuiteId,
+  validateSuiteEntry,
+} = require("./check-example-replay-freshness.js");
 
 const projectRoot = path.resolve(__dirname, "..");
 const coveragePath = path.join(
@@ -37,7 +40,7 @@ function parseArgs(argv) {
       throw new Error(`${flag} requires a value\n${usage()}`);
     }
     if (flag === "--flow") {
-      if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)) {
+      if (!isSuiteId(value)) {
         throw new Error(`Invalid replay flow id: ${value}`);
       }
       if (flows.includes(value)) {

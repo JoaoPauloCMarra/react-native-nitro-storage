@@ -1,5 +1,9 @@
 import { StorageScope } from "../Storage.types";
-import { StorageEventRegistry } from "../storage-events";
+import {
+  StorageEventRegistry,
+  type StorageBatchChangeEvent,
+} from "../storage-events";
+import { createTestCore } from "./core-test-backend";
 
 describe("StorageEventRegistry", () => {
   it("tracks listener presence and ignores double unsubscribe", () => {
@@ -139,5 +143,40 @@ describe("StorageEventRegistry", () => {
     });
 
     expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe("storage.clear(Memory) events", () => {
+  it("clear(Memory) emits every key, including non-string values", () => {
+    const { createStorageItem, storage } = createTestCore();
+    const obj = createStorageItem<{ n: number }>({
+      key: "obj",
+      scope: StorageScope.Memory,
+      defaultValue: { n: 0 },
+    });
+    const str = createStorageItem({
+      key: "str",
+      scope: StorageScope.Memory,
+      defaultValue: "",
+    });
+    obj.set({ n: 1 });
+    str.set("s");
+    const batches: StorageBatchChangeEvent[] = [];
+    storage.subscribe(StorageScope.Memory, (event) => {
+      if (event.type === "batch") {
+        batches.push(event);
+      }
+    });
+    const keyListener = jest.fn();
+    storage.subscribeKey(StorageScope.Memory, "obj", keyListener);
+
+    storage.clear(StorageScope.Memory);
+
+    expect(batches).toHaveLength(1);
+    expect(batches[0]?.changes.map((change) => change.key)).toEqual([
+      "obj",
+      "str",
+    ]);
+    expect(keyListener).toHaveBeenCalledTimes(1);
   });
 });
