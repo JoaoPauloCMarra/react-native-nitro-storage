@@ -28,7 +28,7 @@ void require(bool condition, const std::string& message) {
 
 enum class FailureMode { None, Tagged, Unknown, Partial };
 
-class FailingAdapter final : public ::NitroStorage::NativeStorageAdapter {
+class FailingAdapter : public ::NitroStorage::NativeStorageAdapter {
 public:
     FailureMode mode = FailureMode::None;
     size_t partialAppliedCount = 0;
@@ -134,7 +134,7 @@ public:
     int accessControl = -1;
     int biometricLevel = -1;
 
-private:
+protected:
     void enter(const std::string& method) {
         calls += 1;
         log.push_back(method);
@@ -149,6 +149,45 @@ private:
                 throw ::NitroStorage::PartialBatchError(partialAppliedCount, taggedMessage(method));
         }
     }
+};
+
+class DiskMapAdapter final : public FailingAdapter {
+public:
+    void setDisk(const std::string& key, const std::string& value) override { disk_[key] = value; }
+    std::optional<std::string> getDisk(const std::string& key) override {
+        const auto found = disk_.find(key);
+        if (found == disk_.end()) return std::nullopt;
+        return found->second;
+    }
+    void deleteDisk(const std::string& key) override { disk_.erase(key); }
+    bool hasDisk(const std::string& key) override { return disk_.find(key) != disk_.end(); }
+    std::vector<std::string> getAllKeysDisk() override {
+        std::vector<std::string> keys;
+        for (const auto& entry : disk_) keys.push_back(entry.first);
+        return keys;
+    }
+    std::vector<std::string> getKeysByPrefixDisk(const std::string& prefix) override {
+        std::vector<std::string> keys;
+        for (const auto& entry : disk_) {
+            if (entry.first.compare(0, prefix.size(), prefix) == 0) keys.push_back(entry.first);
+        }
+        return keys;
+    }
+    size_t sizeDisk() override { return disk_.size(); }
+    void setDiskBatch(const std::vector<std::string>& keys, const std::vector<std::string>& values) override {
+        for (size_t index = 0; index < keys.size(); ++index) disk_[keys[index]] = values[index];
+    }
+    std::vector<std::optional<std::string>> getDiskBatch(const std::vector<std::string>& keys) override {
+        std::vector<std::optional<std::string>> values;
+        for (const auto& key : keys) values.push_back(getDisk(key));
+        return values;
+    }
+    void deleteDiskBatch(const std::vector<std::string>& keys) override {
+        for (const auto& key : keys) disk_.erase(key);
+    }
+
+private:
+    std::map<std::string, std::string> disk_;
 };
 
 struct Operation {
@@ -272,11 +311,6 @@ void testMissingAdapterIsReportedByEveryNativeOperation() {
             operation.adapterMethod + " without adapter, got: " + outcome.message
         );
     }
-    HybridStorage memoryOnly(nullptr);
-    memoryOnly.set("k", "v", 0.0);
-    memoryOnly.setBatch({"a"}, {"1"}, 0.0);
-    memoryOnly.removeByPrefix("a", 0.0);
-    require(memoryOnly.get("k", 0.0).value() == "v" && memoryOnly.size(0.0) == 1.0, "memory scope needs no adapter");
 }
 
 std::vector<double> invalidNumbers(double maxValid) {
@@ -336,7 +370,10 @@ void testEveryScopeArgumentRejectsInvalidNumbers() {
         }},
     };
     for (const auto& [name, run] : scoped) {
-        for (const double value : invalidNumbers(2.0)) {
+        auto invalidScopes = invalidNumbers(2.0);
+        invalidScopes.push_back(0.0);
+        invalidScopes.push_back(-0.0);
+        for (const double value : invalidScopes) {
             auto adapter = std::make_shared<FailingAdapter>();
             auto storage = std::make_shared<HybridStorage>(adapter);
             const Outcome outcome = outcomeOf([&] { run(*storage, value); });
@@ -345,14 +382,11 @@ void testEveryScopeArgumentRejectsInvalidNumbers() {
                 name + " must reject scope " + std::to_string(value) + ", got: " + outcome.message
             );
             require(adapter->calls == 0, name + " must not reach the adapter with an invalid scope");
-            require(storage->size(0.0) == 0.0, name + " must not write memory with an invalid scope");
         }
     }
 
     auto adapter = std::make_shared<FailingAdapter>();
     HybridStorage storage(adapter);
-    storage.set("zero", "v", -0.0);
-    require(storage.get("zero", 0.0).value() == "v", "negative zero is the Memory scope");
     storage.set("disk", "v", 1.0);
     storage.set("secure", "v", 2.0);
     require((adapter->log == std::vector<std::string>{"setDisk", "setSecure"}), "valid scopes reach the adapter");
@@ -405,7 +439,7 @@ void testBatchLengthMismatchIsRejectedBeforeAnyEffect() {
         auto storage = std::make_shared<HybridStorage>(adapter);
         int notifications = 0;
         std::vector<std::function<void()>> unsubscribers;
-        for (const double listenerScope : {0.0, 1.0, 2.0}) {
+        for (const double listenerScope : {1.0, 2.0}) {
             unsubscribers.push_back(storage->addOnChange(
                 listenerScope,
                 [&](const std::string&, const std::optional<std::string>&) { notifications += 1; }
@@ -415,7 +449,6 @@ void testBatchLengthMismatchIsRejectedBeforeAnyEffect() {
         require(outcomeOf([&] { storage->setBatch({"a"}, {"1", "2"}, scope); }).message == expected, "more values");
         require(outcomeOf([&] { storage->setBatch({}, {"1"}, scope); }).message == expected, "no keys");
         require(adapter->calls == 0 && notifications == 0, "mismatched batch must have no effect");
-        require(storage->size(0.0) == 0.0, "mismatched batch must not write memory");
         for (auto& unsubscribe : unsubscribers) {
             unsubscribe();
         }
@@ -458,22 +491,22 @@ void testPartialBatchFailureNotifiesOnlyAppliedKeys() {
 }
 
 void testListenersMayThrowAnythingAndMutateListenersDuringNotify() {
-    auto adapter = std::make_shared<FailingAdapter>();
+    auto adapter = std::make_shared<DiskMapAdapter>();
     auto storage = std::make_shared<HybridStorage>(adapter);
     std::vector<std::string> events;
     std::function<void()> unsubscribeSelf;
     std::function<void()> unsubscribeLate;
     std::function<void()> unsubscribeVictim;
 
-    auto unsubscribeThrowsInt = storage->addOnChange(0.0, [&](const std::string&, const std::optional<std::string>&) {
+    auto unsubscribeThrowsInt = storage->addOnChange(1.0, [&](const std::string&, const std::optional<std::string>&) {
         events.push_back("throws-int");
         throw 42;
     });
-    auto unsubscribeThrowsStd = storage->addOnChange(0.0, [&](const std::string&, const std::optional<std::string>&) {
+    auto unsubscribeThrowsStd = storage->addOnChange(1.0, [&](const std::string&, const std::optional<std::string>&) {
         events.push_back("throws-std");
         throw std::runtime_error("listener failed");
     });
-    unsubscribeSelf = storage->addOnChange(0.0, [&](const std::string&, const std::optional<std::string>&) {
+    unsubscribeSelf = storage->addOnChange(1.0, [&](const std::string&, const std::optional<std::string>&) {
         events.push_back("self-removing");
         unsubscribeSelf();
         unsubscribeSelf();
@@ -481,25 +514,25 @@ void testListenersMayThrowAnythingAndMutateListenersDuringNotify() {
             unsubscribeVictim();
         }
         if (!unsubscribeLate) {
-            unsubscribeLate = storage->addOnChange(0.0, [&](const std::string&, const std::optional<std::string>&) {
+            unsubscribeLate = storage->addOnChange(1.0, [&](const std::string&, const std::optional<std::string>&) {
                 events.push_back("late");
             });
         }
     });
-    unsubscribeVictim = storage->addOnChange(0.0, [&](const std::string&, const std::optional<std::string>&) {
+    unsubscribeVictim = storage->addOnChange(1.0, [&](const std::string&, const std::optional<std::string>&) {
         events.push_back("victim");
     });
-    auto unsubscribeReentrant = storage->addOnChange(0.0, [&](const std::string& key, const std::optional<std::string>&) {
+    auto unsubscribeReentrant = storage->addOnChange(1.0, [&](const std::string& key, const std::optional<std::string>&) {
         events.push_back("reentrant");
         if (key == "first") {
-            storage->set("nested", "value", 0.0);
-            (void)storage->getAllKeys(0.0);
+            storage->set("nested", "value", 1.0);
+            (void)storage->getAllKeys(1.0);
             (void)storage->getExternalMemorySize();
         }
     });
 
-    storage->set("first", "value", 0.0);
-    require(storage->get("nested", 0.0).value() == "value", "re-entrant set from a listener must not deadlock");
+    storage->set("first", "value", 1.0);
+    require(storage->get("nested", 1.0).value() == "value", "re-entrant set from a listener must not deadlock");
     const std::vector<std::string> expectedFirst = {
         "throws-int", "throws-std", "self-removing", "victim", "reentrant",
         "throws-int", "throws-std", "reentrant", "late",
@@ -507,7 +540,7 @@ void testListenersMayThrowAnythingAndMutateListenersDuringNotify() {
     require(events == expectedFirst, "first notification must use the listener snapshot taken before notify");
 
     events.clear();
-    storage->set("second", "value", 0.0);
+    storage->set("second", "value", 1.0);
     const std::vector<std::string> expectedSecond = {"throws-int", "throws-std", "reentrant", "late"};
     require(events == expectedSecond, "listener changes made during notify apply to the next notification");
 
@@ -516,7 +549,7 @@ void testListenersMayThrowAnythingAndMutateListenersDuringNotify() {
     unsubscribeReentrant();
     unsubscribeLate();
     events.clear();
-    storage->clear(0.0);
+    storage->clear(1.0);
     require(events.empty(), "no listener may run after every unsubscribe");
 
     auto unsubscribeAfterDestroy = storage->addOnChange(1.0, [](const std::string&, const std::optional<std::string>&) {});
@@ -525,35 +558,34 @@ void testListenersMayThrowAnythingAndMutateListenersDuringNotify() {
     unsubscribeAfterDestroy();
 }
 
-void testMemoryScopeHostileInputs() {
-    HybridStorage storage(nullptr);
+void testDiskScopeHostileInputs() {
+    HybridStorage storage(std::make_shared<DiskMapAdapter>());
     const std::string nulKey("a\0b", 3);
     const std::string nulValue("x\0y", 3);
     const std::string invalidUtf8("\xff\xfe\xc3\x28", 4);
     const std::string large(4 * 1024 * 1024, 'L');
 
-    storage.set("", "empty-key", 0.0);
-    storage.set(nulKey, nulValue, 0.0);
-    storage.set(invalidUtf8, invalidUtf8, 0.0);
-    storage.set("large", large, 0.0);
-    storage.set("a", "plain", 0.0);
+    storage.set("", "empty-key", 1.0);
+    storage.set(nulKey, nulValue, 1.0);
+    storage.set(invalidUtf8, invalidUtf8, 1.0);
+    storage.set("large", large, 1.0);
+    storage.set("a", "plain", 1.0);
 
-    require(storage.get("", 0.0).value() == "empty-key", "empty key round trip");
-    require(storage.get(nulKey, 0.0).value() == nulValue, "NUL key and value round trip");
-    require(storage.get("a", 0.0).value() == "plain", "NUL key must not alias its C-string prefix");
-    require(storage.get(invalidUtf8, 0.0).value() == invalidUtf8, "invalid UTF-8 round trip");
-    require(storage.get("large", 0.0).value() == large, "large value round trip");
-    require(storage.getKeysByPrefix(std::string("a\0", 2), 0.0) == std::vector<std::string>{nulKey}, "NUL prefix");
-    require(storage.getKeysByPrefix("a", 0.0).size() == 2, "prefix must match byte-wise");
-    require(storage.getExternalMemorySize() >= large.size(), "memory size must count large values");
+    require(storage.get("", 1.0).value() == "empty-key", "empty key round trip");
+    require(storage.get(nulKey, 1.0).value() == nulValue, "NUL key and value round trip");
+    require(storage.get("a", 1.0).value() == "plain", "NUL key must not alias its C-string prefix");
+    require(storage.get(invalidUtf8, 1.0).value() == invalidUtf8, "invalid UTF-8 round trip");
+    require(storage.get("large", 1.0).value() == large, "large value round trip");
+    require(storage.getKeysByPrefix(std::string("a\0", 2), 1.0) == std::vector<std::string>{nulKey}, "NUL prefix");
+    require(storage.getKeysByPrefix("a", 1.0).size() == 2, "prefix must match byte-wise");
 
-    storage.removeByPrefix(std::string("a\0", 2), 0.0);
-    require(!storage.has(nulKey, 0.0) && storage.has("a", 0.0), "removeByPrefix with NUL prefix");
-    storage.setBatch({"dup", "dup"}, {"1", "2"}, 0.0);
-    require(storage.get("dup", 0.0).value() == "2", "duplicate batch keys keep the last value");
-    storage.setBatch({}, {}, 0.0);
-    storage.removeBatch({}, 0.0);
-    require(storage.getBatch({}, 0.0).empty(), "empty batches are no-ops");
+    storage.removeByPrefix(std::string("a\0", 2), 1.0);
+    require(!storage.has(nulKey, 1.0) && storage.has("a", 1.0), "removeByPrefix with NUL prefix");
+    storage.setBatch({"dup", "dup"}, {"1", "2"}, 1.0);
+    require(storage.get("dup", 1.0).value() == "2", "duplicate batch keys keep the last value");
+    storage.setBatch({}, {}, 1.0);
+    storage.removeBatch({}, 1.0);
+    require(storage.getBatch({}, 1.0).empty(), "empty batches are no-ops");
 }
 
 void testAdapterResultsAreForwardedUnchanged() {
@@ -613,7 +645,7 @@ int main() {
     testBatchLengthMismatchIsRejectedBeforeAnyEffect();
     testPartialBatchFailureNotifiesOnlyAppliedKeys();
     testListenersMayThrowAnythingAndMutateListenersDuringNotify();
-    testMemoryScopeHostileInputs();
+    testDiskScopeHostileInputs();
     testAdapterResultsAreForwardedUnchanged();
     std::cout << "HybridStorage failure tests passed." << std::endl;
     return 0;

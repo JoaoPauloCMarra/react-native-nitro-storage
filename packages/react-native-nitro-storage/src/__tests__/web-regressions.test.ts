@@ -332,3 +332,44 @@ describe("window storage events", () => {
     expect(storage.has("tab-key", StorageScope.Disk)).toBe(true);
   });
 });
+
+describe("swapping one scope of a shared web backend", () => {
+  it("swapping Secure keeps a backend still bound to Disk open", () => {
+    const shared = createMapBackend("custom:shared");
+    let closed = false;
+    shared.close = () => {
+      closed = true;
+    };
+    const setItem = shared.setItem;
+    shared.setItem = (key, value) => {
+      if (closed) {
+        throw new Error("closed");
+      }
+      setItem(key, value);
+    };
+    setWebDiskStorageBackend(shared);
+    setWebSecureStorageBackend(shared);
+
+    setWebSecureStorageBackend(createMapBackend("custom:other"));
+
+    expect(closed).toBe(false);
+    expect(() =>
+      storage.setString("after-swap", "v", StorageScope.Disk),
+    ).not.toThrow();
+    expect(shared.store.get("after-swap")).toBe("v");
+  });
+
+  it("closes the previous backend once neither scope uses it", () => {
+    const shared = createMapBackend("custom:shared-close");
+    const close = jest.fn();
+    shared.close = close;
+    setWebDiskStorageBackend(shared);
+    setWebSecureStorageBackend(shared);
+
+    setWebSecureStorageBackend(createMapBackend("custom:other"));
+    expect(close).not.toHaveBeenCalled();
+    setWebDiskStorageBackend(createMapBackend("custom:other-disk"));
+
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+});

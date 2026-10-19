@@ -3,9 +3,6 @@
 #include "HybridStorageSpec.hpp"
 #include "../core/NativeStorageAdapter.hpp"
 #include <unordered_map>
-#ifdef NITRO_STORAGE_USE_ORDERED_MAP_FOR_TESTS
-#include <map>
-#endif
 #include <mutex>
 #include <functional>
 #include <memory>
@@ -15,14 +12,6 @@
 #include <stdexcept>
 
 namespace margelo::nitro::NitroStorage {
-
-#ifdef NITRO_STORAGE_USE_ORDERED_MAP_FOR_TESTS
-template <typename Key, typename Value>
-using HybridStorageMap = std::map<Key, Value>;
-#else
-template <typename Key, typename Value>
-using HybridStorageMap = std::unordered_map<Key, Value>;
-#endif
 
 class HybridStorage : public HybridStorageSpec {
 public:
@@ -61,7 +50,6 @@ public:
 
 private:
     enum class Scope {
-        Memory = 0,
         Disk = 1,
         Secure = 2
     };
@@ -71,12 +59,9 @@ private:
         std::function<void(const std::string&, const std::optional<std::string>&)> callback;
     };
 
-    HybridStorageMap<std::string, std::string> memoryStore_;
-    std::mutex memoryMutex_;
-    
     std::shared_ptr<::NitroStorage::NativeStorageAdapter> nativeAdapter_;
 
-    HybridStorageMap<int, std::vector<Listener>> listeners_;
+    std::unordered_map<int, std::vector<Listener>> listeners_;
     std::mutex listenersMutex_;
     size_t nextListenerId_ = 0;
     // Lock-free fast path: skip locking/copying the listener vector on the
@@ -92,10 +77,10 @@ private:
     void notifyListeners(int scope, const std::string& key, const std::optional<std::string>& value);
     void ensureAdapter() const;
     Scope toScope(double scopeValue);
-    size_t memorySize() noexcept;
 
     template <typename TOperation>
     auto runAdapterOperation(TOperation&& operation, const char* description) -> decltype(operation()) {
+        ensureAdapter();
         try {
             return operation();
         } catch (const std::exception&) {

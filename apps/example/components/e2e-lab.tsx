@@ -13,6 +13,7 @@ import {
   ResultsProbe,
   StatusRow,
   describeStorageError,
+  nowMs,
   styles,
 } from "./shared";
 
@@ -20,13 +21,6 @@ const memoryItem = createStorageItem({
   key: "e2e-memory",
   scope: StorageScope.Memory,
   defaultValue: "default",
-});
-
-const renamedItem = createStorageItem({
-  key: "e2e-renamed",
-  scope: StorageScope.Disk,
-  defaultValue: "",
-  renameFrom: "e2e-legacy",
 });
 
 const tagSet = createSetItem<"red" | "blue">({
@@ -103,6 +97,12 @@ export function StorageE2eLab() {
             disabled={renameStatus !== "(idle)"}
             onPress={() => {
               let passed = false;
+              const renamedItem = createStorageItem({
+                key: "e2e-renamed",
+                scope: StorageScope.Disk,
+                defaultValue: "",
+                renameFrom: "e2e-legacy",
+              });
               try {
                 storage.deleteString("e2e-renamed", StorageScope.Disk);
                 storage.setString(
@@ -279,7 +279,7 @@ export function StorageE2eLab() {
           testID="e2e-run-stress"
           title="Stress 200 writes"
           onPress={() => {
-            const started = globalThis.performance?.now?.() ?? Date.now();
+            const started = nowMs();
             for (let index = 0; index < 200; index += 1) {
               storage.setString(
                 `e2e-stress-${index}`,
@@ -299,8 +299,7 @@ export function StorageE2eLab() {
               }
               storage.deleteString(`e2e-stress-${index}`, StorageScope.Memory);
             }
-            const elapsed =
-              (globalThis.performance?.now?.() ?? Date.now()) - started;
+            const elapsed = nowMs() - started;
             setStressStatus(
               `${reads === 200 ? "ok" : "fail"}:writes=200:reads=${reads}:ms=${elapsed.toFixed(1)}`,
             );

@@ -4,11 +4,16 @@ import {
   AccessControl,
   StorageScope,
   createStorageItem,
-  getStorageErrorCode,
-  isStorageError,
   storage,
 } from "react-native-nitro-storage";
-import { Button, Card, Colors, StatusRow, styles } from "./shared";
+import {
+  Button,
+  Card,
+  Colors,
+  StatusRow,
+  describeStorageError,
+  styles,
+} from "./shared";
 
 const probeValue = "lifecycle-probe-sentinel";
 
@@ -25,10 +30,7 @@ function readProbe(): string {
       ? "readable"
       : "missing or changed";
   } catch (error) {
-    if (isStorageError(error, "keychain_locked")) {
-      return "keychain_locked";
-    }
-    return getStorageErrorCode(error) ?? "unknown_error";
+    return describeStorageError(error);
   }
 }
 
@@ -78,9 +80,7 @@ export function KeychainLifecycleProbe() {
       keychainLifecycleItem.set(probeValue);
       setStatus("seeded");
     } catch (error) {
-      setStatus(
-        `seed failed: ${getStorageErrorCode(error) ?? "unknown_error"}`,
-      );
+      setStatus(`seed failed: ${describeStorageError(error)}`);
     }
   };
 

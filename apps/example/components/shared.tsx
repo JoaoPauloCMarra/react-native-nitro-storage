@@ -34,8 +34,8 @@ export const Colors = {
   accent: "#334155",
 };
 
-type ButtonVariant = "primary" | "danger" | "secondary" | "ghost" | "success";
-type ButtonSize = "sm" | "md" | "lg";
+type ButtonVariant = "primary" | "danger" | "secondary" | "success";
+type ButtonSize = "sm" | "md";
 
 type ButtonProps = {
   title: string;
@@ -52,7 +52,6 @@ const buttonBackground: Record<ButtonVariant, string> = {
   danger: Colors.danger,
   success: Colors.success,
   secondary: Colors.card,
-  ghost: "transparent",
 };
 
 const buttonTextColor: Record<ButtonVariant, string> = {
@@ -60,7 +59,6 @@ const buttonTextColor: Record<ButtonVariant, string> = {
   danger: "#f8fafc",
   success: "#f8fafc",
   secondary: Colors.text,
-  ghost: Colors.muted,
 };
 
 export const Button = ({
@@ -82,8 +80,6 @@ export const Button = ({
       styles.button,
       { backgroundColor: buttonBackground[variant] },
       size === "sm" && styles.buttonSm,
-      size === "lg" && styles.buttonLg,
-      variant === "ghost" && styles.buttonGhost,
       pressed && !disabled && styles.buttonPressed,
       disabled && styles.buttonDisabled,
       style,
@@ -96,7 +92,6 @@ export const Button = ({
         styles.buttonText,
         { color: buttonTextColor[variant] },
         size === "sm" && styles.buttonTextSm,
-        size === "lg" && styles.buttonTextLg,
       ]}
     >
       {title}
@@ -173,51 +168,6 @@ export const Input = ({
   </View>
 );
 
-type BadgeProps = {
-  label: string;
-  color?: string;
-};
-
-export const Badge = ({ label, color = Colors.primary }: BadgeProps) => (
-  <View
-    style={[
-      styles.badge,
-      { borderColor: `${color}55`, backgroundColor: `${color}14` },
-    ]}
-  >
-    <Text style={[styles.badgeText, { color }]}>{label}</Text>
-  </View>
-);
-
-export const Chip = ({
-  label,
-  active = false,
-  color = Colors.primary,
-}: {
-  label: string;
-  active?: boolean;
-  color?: string;
-}) => (
-  <View
-    style={[
-      styles.chip,
-      active
-        ? { backgroundColor: `${color}14`, borderColor: `${color}4f` }
-        : styles.chipInactive,
-    ]}
-  >
-    <View
-      style={[
-        styles.chipDot,
-        { backgroundColor: active ? color : Colors.border },
-      ]}
-    />
-    <Text style={[styles.chipText, { color: active ? color : Colors.muted }]}>
-      {label}
-    </Text>
-  </View>
-);
-
 export const StatusRow = ({
   label,
   value,
@@ -245,6 +195,24 @@ export function describeStorageError(error: unknown): string {
     getStorageErrorCode(error) ??
     (error instanceof Error ? error.message : String(error))
   );
+}
+
+export function nowMs(): number {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
+
+export type LabCase = {
+  name: string;
+  status: "pass" | "fail";
+  detail?: string;
+};
+
+export function summarizeCases(cases: LabCase[]) {
+  return {
+    fail: cases.filter((item) => item.status === "fail").length,
+    pass: cases.filter((item) => item.status === "pass").length,
+    cases,
+  };
 }
 
 export const ResultsProbe = ({
@@ -293,7 +261,6 @@ type PageProps = {
   children: React.ReactNode;
   title?: string;
   subtitle?: string;
-  scroll?: boolean;
 };
 
 function Header({ title, subtitle }: { title?: string; subtitle?: string }) {
@@ -307,49 +274,47 @@ function Header({ title, subtitle }: { title?: string; subtitle?: string }) {
   );
 }
 
-export const Page = ({
-  children,
-  title,
-  subtitle,
-  scroll = true,
-}: PageProps) => {
+export const Page = ({ children, title, subtitle }: PageProps) => {
   const insets = useSafeAreaInsets();
   const contentPaddingTop = insets.top + (isWeb ? 18 : 10);
 
-  if (scroll) {
-    return (
-      <View style={styles.container}>
-        <ScrollView
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingTop: contentPaddingTop },
-          ]}
-          bounces={false}
-          keyboardShouldPersistTaps="handled"
-          style={styles.pageBody}
-        >
-          <Header title={title} subtitle={subtitle} />
-          {children}
-        </ScrollView>
-      </View>
-    );
-  }
-
   return (
     <View style={styles.container}>
-      <View
-        style={[
+      <ScrollView
+        contentContainerStyle={[
           styles.scrollContent,
-          styles.pageBody,
           { paddingTop: contentPaddingTop },
         ]}
+        bounces={false}
+        keyboardShouldPersistTaps="handled"
+        style={styles.pageBody}
       >
         <Header title={title} subtitle={subtitle} />
         {children}
-      </View>
+      </ScrollView>
     </View>
   );
 };
+
+export const LabScreen = ({
+  testID,
+  label,
+  title,
+  subtitle,
+  children,
+}: {
+  testID: string;
+  label: string;
+  title: string;
+  subtitle: string;
+  children: React.ReactNode;
+}) => (
+  <View testID={testID} style={styles.flex1} accessibilityLabel={label}>
+    <Page title={title} subtitle={subtitle}>
+      {children}
+    </Page>
+  </View>
+);
 
 const consumerStyles = {
   row: {
@@ -382,11 +347,24 @@ const consumerStyles = {
     lineHeight: 44,
     textAlign: "center",
   },
-  helperText: {
+  labLink: {
+    paddingVertical: 8,
+  },
+  labLinkText: {
+    color: Colors.primary,
+    fontWeight: "600",
+  },
+  labLinkSubtle: {
+    alignSelf: "flex-start",
+    paddingVertical: 6,
+  },
+  labLinkSubtleFirst: {
+    marginTop: 16,
+  },
+  labLinkSubtleText: {
     color: Colors.muted,
-    fontWeight: "400",
     fontSize: 12,
-    lineHeight: 18,
+    fontWeight: "600",
   },
 } as const;
 
@@ -488,16 +466,6 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 10,
     borderRadius: 10,
   },
-  buttonLg: {
-    minHeight: 50,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-  },
-  buttonGhost: {
-    borderWidth: 1,
-    borderColor: Colors.border,
-    boxShadow: "none",
-  },
   buttonPressed: {
     transform: [{ scale: 0.98 }],
     opacity: 0.9,
@@ -512,9 +480,6 @@ export const styles = StyleSheet.create({
   },
   buttonTextSm: {
     fontSize: 12,
-  },
-  buttonTextLg: {
-    fontSize: 16,
   },
   inputGroup: {
     gap: 6,
@@ -537,43 +502,6 @@ export const styles = StyleSheet.create({
     color: Colors.text,
     fontSize: 14,
     fontWeight: "400",
-  },
-  badge: {
-    alignSelf: "flex-start",
-    paddingVertical: 3,
-    paddingHorizontal: 9,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  badgeText: {
-    fontSize: 10,
-    fontWeight: "800",
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-  },
-  chip: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    borderRadius: 9,
-    borderWidth: 1,
-    gap: 6,
-  },
-  chipInactive: {
-    backgroundColor: Colors.card,
-    borderColor: Colors.border,
-  },
-  chipDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-  },
-  chipText: {
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
   },
   statusRow: {
     flexDirection: "row",

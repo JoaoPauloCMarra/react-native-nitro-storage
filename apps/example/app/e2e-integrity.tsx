@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { View } from "react-native";
 import {
   createStorageItem,
   createSetItem,
@@ -11,21 +10,17 @@ import {
   StorageScope,
   type TransactionContext,
 } from "react-native-nitro-storage";
-import { Card, Page, ResultsProbe, StatusRow } from "../components/shared";
+import {
+  Card,
+  LabScreen,
+  ResultsProbe,
+  StatusRow,
+  describeStorageError,
+  summarizeCases,
+  type LabCase,
+} from "../components/shared";
 
-type CaseStatus = "pass" | "fail" | "skip";
-type LabCase = {
-  name: string;
-  status: CaseStatus;
-  detail?: string;
-};
-
-type IntegrityReport = {
-  fail: number;
-  pass: number;
-  skip: number;
-  cases: LabCase[];
-};
+type IntegrityReport = ReturnType<typeof summarizeCases>;
 
 function runCase(name: string, fn: () => string | void): LabCase {
   try {
@@ -35,7 +30,7 @@ function runCase(name: string, fn: () => string | void): LabCase {
     return {
       name,
       status: "fail",
-      detail: error instanceof Error ? error.message : String(error),
+      detail: describeStorageError(error),
     };
   }
 }
@@ -544,13 +539,7 @@ function runIntegritySweep(): IntegrityReport {
     }),
   ];
 
-  const report: IntegrityReport = {
-    fail: cases.filter((item) => item.status === "fail").length,
-    pass: cases.filter((item) => item.status === "pass").length,
-    skip: cases.filter((item) => item.status === "skip").length,
-    cases,
-  };
-  return report;
+  return summarizeCases(cases);
 }
 
 export default function IntegrityLabScreen() {
@@ -561,49 +550,45 @@ export default function IntegrityLabScreen() {
   }, []);
 
   const summary = report
-    ? `finished:fail=${report.fail}:skip=${report.skip}`
+    ? `finished:fail=${report.fail}:pass=${report.pass}`
     : "running";
 
   return (
-    <View
+    <LabScreen
       testID="e2e-integrity-screen"
-      style={{ flex: 1 }}
-      accessibilityLabel="Integrity lab"
+      label="Integrity lab"
+      title="Integrity lab"
+      subtitle="Deep link nitrostorage://e2e-integrity"
     >
-      <Page
-        title="Integrity lab"
-        subtitle="Deep link nitrostorage://e2e-integrity"
-      >
-        <StatusRow testID="e2e-integrity-ready" label="state" value="ready" />
-        <StatusRow
-          testID="e2e-integrity-finished"
-          label="run"
-          value={report ? "finished" : "running"}
+      <StatusRow testID="e2e-integrity-ready" label="state" value="ready" />
+      <StatusRow
+        testID="e2e-integrity-finished"
+        label="run"
+        value={report ? "finished" : "running"}
+      />
+      <StatusRow
+        testID="e2e-integrity-summary"
+        label="summary"
+        value={summary}
+      />
+      {report ? (
+        <ResultsProbe
+          testID="e2e-integrity-results"
+          label={report.cases
+            .map((item) => `${item.status}:${item.detail ?? ""}`)
+            .join(" ")}
         />
-        <StatusRow
-          testID="e2e-integrity-summary"
-          label="summary"
-          value={summary}
-        />
-        {report ? (
-          <ResultsProbe
-            testID="e2e-integrity-results"
-            label={report.cases
-              .map((item) => `${item.status}:${item.detail ?? ""}`)
-              .join(" ")}
+      ) : null}
+      <Card title="Cases" subtitle="Disk, Secure, import, tx, rename, cache">
+        {(report?.cases ?? []).map((item) => (
+          <StatusRow
+            key={item.name}
+            testID={`e2e-integrity-${item.name}`}
+            label={item.name}
+            value={`${item.status}:${item.detail ?? ""}`}
           />
-        ) : null}
-        <Card title="Cases" subtitle="Disk, Secure, import, tx, rename, cache">
-          {(report?.cases ?? []).map((item) => (
-            <StatusRow
-              key={item.name}
-              testID={`e2e-integrity-${item.name}`}
-              label={item.name}
-              value={`${item.status}:${item.detail ?? ""}`}
-            />
-          ))}
-        </Card>
-      </Page>
-    </View>
+        ))}
+      </Card>
+    </LabScreen>
   );
 }

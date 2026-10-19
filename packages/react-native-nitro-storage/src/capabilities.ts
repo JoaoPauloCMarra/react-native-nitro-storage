@@ -5,11 +5,6 @@ export type WriteBuffering = {
   secure: boolean;
 };
 
-export type PlatformCapabilityProfile = {
-  platform: "native" | "web" | "testing";
-  writeBuffering: WriteBuffering;
-};
-
 export function resolveWebWriteBuffering(
   diskBackendName: string | undefined,
   secureBackendName: string | undefined,

@@ -230,10 +230,10 @@
       "claimLimit": "The ready row proves only that the Integrity screen mounted; it does not prove any Storage operation."
     },
     {
-      "id": "integrity.finished-with-no-skips",
+      "id": "integrity.finished-all-passed",
       "coverage": "replay-asserted",
       "kind": "coverage-state",
-      "transport": "The route marks the full required case list finished and reports zero failures and zero skipped cases.",
+      "transport": "The route marks the full required case list finished and reports zero failures with every required case passing.",
       "suite": "e2e/qa-integrity.ad",
       "source": "apps/example/app/e2e-integrity.tsx",
       "statusSource": "apps/example/app/e2e-integrity.tsx",
@@ -247,15 +247,15 @@
       "id": "integrity.summary",
       "coverage": "replay-asserted",
       "kind": "coverage-state",
-      "transport": "The required Integrity cases finish with fail=0 and skip=0.",
+      "transport": "All 18 required Integrity cases finish with fail=0 and pass=18.",
       "suite": "e2e/qa-integrity.ad",
       "source": "apps/example/app/e2e-integrity.tsx",
       "statusSource": "apps/example/app/e2e-integrity.tsx",
       "trigger": "screen-load",
       "statusId": "e2e-integrity-summary",
-      "expectedText": "finished:fail=0:skip=0",
-      "assertion": "finished:fail=${report.fail}:skip=${report.skip}",
-      "claimLimit": "The summary reports zero recorded failures and skips; it does not replace the individual case assertions."
+      "expectedText": "finished:fail=0:pass=18",
+      "assertion": "finished:fail=${report.fail}:pass=${report.pass}",
+      "claimLimit": "The summary reports zero recorded failures and the exact required case count; it does not replace the individual case assertions."
     },
     {
       "id": "integrity.native-backends",

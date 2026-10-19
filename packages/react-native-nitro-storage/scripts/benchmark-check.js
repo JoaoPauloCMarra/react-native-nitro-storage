@@ -273,40 +273,21 @@ console.log(
 );
 
 const failures = [];
-if (setMetric.opsPerSecond < thresholds.memorySetOpsPerSecond) {
-  failures.push(
-    `memory:set dropped below ${thresholds.memorySetOpsPerSecond.toLocaleString()} ops/s`,
-  );
-}
-if (getMetric.opsPerSecond < thresholds.memoryGetOpsPerSecond) {
-  failures.push(
-    `memory:get dropped below ${thresholds.memoryGetOpsPerSecond.toLocaleString()} ops/s`,
-  );
-}
-if (batchMetric.opsPerSecond < thresholds.memoryBatchOpsPerSecond) {
-  failures.push(
-    `memory:batch dropped below ${thresholds.memoryBatchOpsPerSecond.toLocaleString()} ops/s`,
-  );
-}
-if (diskSetMetric.opsPerSecond < thresholds.diskSetOpsPerSecond) {
-  failures.push(
-    `disk:set dropped below ${thresholds.diskSetOpsPerSecond.toLocaleString()} ops/s`,
-  );
-}
-if (diskGetMetric.opsPerSecond < thresholds.diskGetOpsPerSecond) {
-  failures.push(
-    `disk:get dropped below ${thresholds.diskGetOpsPerSecond.toLocaleString()} ops/s`,
-  );
-}
-if (secureSetMetric.opsPerSecond < thresholds.secureSetOpsPerSecond) {
-  failures.push(
-    `secure:set dropped below ${thresholds.secureSetOpsPerSecond.toLocaleString()} ops/s`,
-  );
-}
-if (secureGetMetric.opsPerSecond < thresholds.secureGetOpsPerSecond) {
-  failures.push(
-    `secure:get dropped below ${thresholds.secureGetOpsPerSecond.toLocaleString()} ops/s`,
-  );
+const thresholdChecks = [
+  ["memory:set", setMetric, thresholds.memorySetOpsPerSecond],
+  ["memory:get", getMetric, thresholds.memoryGetOpsPerSecond],
+  ["memory:batch", batchMetric, thresholds.memoryBatchOpsPerSecond],
+  ["disk:set", diskSetMetric, thresholds.diskSetOpsPerSecond],
+  ["disk:get", diskGetMetric, thresholds.diskGetOpsPerSecond],
+  ["secure:set", secureSetMetric, thresholds.secureSetOpsPerSecond],
+  ["secure:get", secureGetMetric, thresholds.secureGetOpsPerSecond],
+];
+for (const [label, metric, threshold] of thresholdChecks) {
+  if (metric.opsPerSecond < threshold) {
+    failures.push(
+      `${label} dropped below ${threshold.toLocaleString()} ops/s`,
+    );
+  }
 }
 
 storage.clearAll();

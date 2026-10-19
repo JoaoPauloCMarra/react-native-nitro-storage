@@ -41,7 +41,6 @@ public:
     std::vector<std::string> getKeysByPrefix(const std::string& prefix);
     size_t size();
     void clear();
-    void migrateIfAbsent(const std::vector<std::pair<std::string, std::string>>& entries);
     bool hasMigrationMarker(const std::string& name);
     void migrateOnce(
         const std::string& name,
@@ -57,9 +56,8 @@ private:
     void ensureOpenLocked();
     void closeLocked();
     void execLocked(const char* sql);
-    void beginLocked();
-    void commitLocked();
-    void rollbackLocked();
+    template <typename Fn>
+    void inTransactionLocked(Fn&& fn);
     void setLocked(const std::string& key, const std::string& value);
     std::optional<std::string> getLocked(const std::string& key);
     void removeLocked(const std::string& key);

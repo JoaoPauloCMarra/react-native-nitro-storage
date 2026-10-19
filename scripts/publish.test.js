@@ -8,6 +8,7 @@ const { test } = require("node:test");
 const {
   REGISTRY_RETRY_DELAYS_SECONDS,
   findSecurityPolicyFailure,
+  isPackageVersionPublished,
   isRegistryNotFound,
   parsePublishArgs,
   validateNpmTag,
@@ -122,6 +123,34 @@ test("rejects dist tags that the publish workflow rejects", () => {
     assert.equal(result.status, 1, tag);
     assert.match(result.stdout, /Invalid npm dist tag/);
   }
+});
+
+test("x, X, x.x are rejected", () => {
+  for (const tag of ["x", "X", "x.x", "vx", "X.X.X"]) {
+    const result = validateTagInChild(tag);
+    assert.equal(result.status, 1, tag);
+    assert.match(result.stdout, /Invalid npm dist tag/);
+  }
+  assert.equal(validateTagInChild("next").status, 0);
+});
+
+test("registry outage is an error, not \"not published\"", () => {
+  assert.equal(
+    isPackageVersionPublished("pkg", "1.2.3", () => notFound),
+    false,
+  );
+  assert.equal(
+    isPackageVersionPublished("pkg", "1.2.3", () => found("1.2.3", "abc")),
+    true,
+  );
+  assert.throws(
+    () =>
+      isPackageVersionPublished("pkg", "1.2.3", () => ({
+        ok: false,
+        output: "npm error code ECONNRESET",
+      })),
+    /ECONNRESET/,
+  );
 });
 
 test("security policy must list the released minor line as supported", () => {

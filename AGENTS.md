@@ -22,7 +22,7 @@ React Native Nitro Storage — synchronous storage for React Native via JSI.
 - For `apps/example`, prefer extending shared UI primitives/tokens in `apps/example/components/shared.tsx` instead of adding repeated inline styling per screen.
 - `apps/example/ios` and `apps/example/android` are generated (gitignored); CI must run `CI=1 bunx expo prebuild --platform <ios|android>` before Pod/Gradle steps.
 - Do not re-add the removed `./plugins/with-fmt-ios-compat` plugin unless a current SDK 56+ iOS build proves the `fmt` pod patch is required again.
-- Keep the Expo example on SDK 57's supported pair: `react@19.2.3`, `react-dom@19.2.3`, `react-native@0.86.3`. Do not override that React Native version with 0.87. Keep `typecheck:rn087` as the packed-declaration compatibility check against React Native 0.87.
+- Keep the Expo example on SDK 58's supported set: `react@19.3.0`, `react-dom@19.3.0`, `react-native@0.88.0`. Do not override that React Native version. Keep `typecheck:rn087` as the packed-declaration compatibility check against React Native 0.87.
 - Android `packages/react-native-nitro-storage/android/CMakeLists.txt` must exclude `*Test.cpp` from the shared library source list to avoid duplicate `main` linker errors.
 - In `src/storage-core.ts` and the entrypoints, avoid `any` for internal item casts; use the typed helper guards (`isUpdater`, typed key iteration, `asInternal`).
 - If `src/Storage.nitro.ts` changes, run `bun run codegen` and ensure `cpp/bindings/HybridStorage.*` overrides stay aligned with generated `HybridStorageSpec`.

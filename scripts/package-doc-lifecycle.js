@@ -855,9 +855,9 @@ function createPackageDocLifecycle({
     return owner;
   }
 
-  function getProcessStartIdentity(pid) {
+  function psField(pid, field) {
     if (!Number.isInteger(pid) || pid <= 0) return null;
-    const result = spawnSync("ps", ["-p", String(pid), "-o", "lstart="], {
+    const result = spawnSync("ps", ["-p", String(pid), "-o", `${field}=`], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     });
@@ -866,27 +866,9 @@ function createPackageDocLifecycle({
     return identity || null;
   }
 
-  function getProcessCommandIdentity(pid) {
-    if (!Number.isInteger(pid) || pid <= 0) return null;
-    const result = spawnSync("ps", ["-p", String(pid), "-o", "command="], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    if (result.status !== 0) return null;
-    const identity = result.stdout.trim();
-    return identity || null;
-  }
-
-  function getProcessStateIdentity(pid) {
-    if (!Number.isInteger(pid) || pid <= 0) return null;
-    const result = spawnSync("ps", ["-p", String(pid), "-o", "stat="], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    if (result.status !== 0) return null;
-    const identity = result.stdout.trim();
-    return identity || null;
-  }
+  const getProcessStartIdentity = (pid) => psField(pid, "lstart");
+  const getProcessCommandIdentity = (pid) => psField(pid, "command");
+  const getProcessStateIdentity = (pid) => psField(pid, "stat");
 
   function processIsAlive(pid, expectedStart, expectedCommand) {
     if (!Number.isInteger(pid) || pid <= 0) return false;

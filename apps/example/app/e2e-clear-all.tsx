@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
-import { View } from "react-native";
 import { storage, StorageScope } from "react-native-nitro-storage";
 import {
-  Page,
+  LabScreen,
   ResultsProbe,
   StatusRow,
   describeStorageError,
@@ -45,23 +44,19 @@ export default function ClearAllScreen() {
   }, []);
 
   return (
-    <View
+    <LabScreen
       testID="e2e-clear-all-screen"
-      style={{ flex: 1 }}
-      accessibilityLabel="Clear all lab"
+      label="Clear all lab"
+      title="Clear all lab"
+      subtitle="Deep link nitrostorage://e2e-clear-all"
     >
-      <Page
-        title="Clear all lab"
-        subtitle="Deep link nitrostorage://e2e-clear-all"
-      >
-        <ResultsProbe testID="e2e-clear-all-results" label={result ?? ""} />
-        <StatusRow
-          testID="e2e-clear-all-finished"
-          label="run"
-          value={result ? "finished" : "running"}
-        />
-        <StatusRow label="result" value={result ?? "running"} />
-      </Page>
-    </View>
+      <ResultsProbe testID="e2e-clear-all-results" label={result ?? ""} />
+      <StatusRow
+        testID="e2e-clear-all-finished"
+        label="run"
+        value={result ? "finished" : "running"}
+      />
+      <StatusRow label="result" value={result ?? "running"} />
+    </LabScreen>
   );
 }

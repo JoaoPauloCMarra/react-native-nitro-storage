@@ -816,6 +816,24 @@ void testWritesDuringFirstEnumerationAreNotLostFromTheCache() {
     require(deleting.getAllKeysSecure().empty(), "a delete racing the first enumeration stays removed");
 }
 
+void testClearSecureInvalidatesTheKeyCacheWhenTheBiometricDeleteFails() {
+    resetKeychain();
+    IOSStorageAdapterCpp adapter;
+    adapter.setSecure("plain", "p");
+    adapter.setSecureBiometricWithLevel("bio", "b", 2);
+    require(adapter.sizeSecure() == 2, "both keys are cached before the clear");
+    script(keychain().deleteScript, {kRunFake, errSecNotAvailable});
+
+    const std::string message = failureMessage([&] { adapter.clearSecure(); });
+
+    require(!message.empty(), "the biometric delete failure surfaces");
+    require(!stored(kPlainService, "plain"), "the plain delete already happened");
+    require(
+        adapter.getAllKeysSecure() == std::vector<std::string>{"bio"},
+        "the key cache must be rebuilt after a partial clear"
+    );
+}
+
 } // namespace
 
 int main() {
@@ -830,6 +848,7 @@ int main() {
         testLockedRewriteKeepsTheExistingItemUntouched();
         testBiometricPromotionCompensatesOnFailure();
         testConcurrentSecureAccess();
+        testClearSecureInvalidatesTheKeyCacheWhenTheBiometricDeleteFails();
         testWritesDuringFirstEnumerationAreNotLostFromTheCache();
         testBiometricMetadataAndOverwriteNeedNoUserInterface();
         std::cout << "IOSStorageAdapterCpp keychain tests passed." << std::endl;

@@ -1,5 +1,5 @@
-import { StorageScope } from "../Storage.types";
-import { createTestCore } from "./core-test-backend";
+import { BiometricLevel, StorageScope } from "../Storage.types";
+import { createTestBackend, createTestCore } from "./core-test-backend";
 
 describe("Memory raw writes on a TTL key", () => {
   let now = 1_000;
@@ -68,5 +68,64 @@ describe("Memory raw writes on a TTL key", () => {
     expect(ttlItem.get()).toBe("batched");
     expect(onExpired).not.toHaveBeenCalled();
     expect(storage.getString("ttl", StorageScope.Memory)).toBe("batched");
+  });
+});
+
+describe("item.has() on a TTL key", () => {
+  let now = 1_000;
+
+  beforeEach(() => {
+    now = 1_000;
+    jest.spyOn(Date, "now").mockImplementation(() => now);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it.each([StorageScope.Memory, StorageScope.Disk])(
+    "has() is false once the TTL lapses, before any get() (scope %s)",
+    (scope) => {
+      const { createStorageItem, storage } = createTestCore();
+      const onExpired = jest.fn();
+      const item = createStorageItem({
+        key: "ttl",
+        scope,
+        defaultValue: "def",
+        expiration: { ttlMs: 1_000 },
+        onExpired,
+      });
+      item.set("value");
+      expect(item.has()).toBe(true);
+      expect(storage.has("ttl", scope)).toBe(true);
+
+      now += 5_000;
+
+      expect(item.has()).toBe(false);
+      expect(onExpired).toHaveBeenCalledTimes(1);
+      expect(storage.has("ttl", scope)).toBe(false);
+      expect(item.get()).toBe("def");
+    },
+  );
+
+  it("has() on a biometric Secure item with a TTL never reads the value", () => {
+    const backend = createTestBackend();
+    const getSecureBiometric = jest.spyOn(backend, "getSecureBiometric");
+    const hasSecureBiometric = jest.spyOn(backend, "hasSecureBiometric");
+    const { createStorageItem } = createTestCore(backend);
+    const item = createStorageItem({
+      key: "bio-ttl",
+      scope: StorageScope.Secure,
+      defaultValue: "def",
+      biometricLevel: BiometricLevel.BiometryOnly,
+      expiration: { ttlMs: 1_000 },
+    });
+    item.set("value");
+    getSecureBiometric.mockClear();
+    hasSecureBiometric.mockClear();
+
+    expect(item.has()).toBe(true);
+    expect(hasSecureBiometric).toHaveBeenCalledTimes(1);
+    expect(getSecureBiometric).not.toHaveBeenCalled();
   });
 });

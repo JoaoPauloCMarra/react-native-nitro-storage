@@ -144,7 +144,7 @@ int main() {
         const auto prefix = store.getKeysByPrefix("session:");
         assert(prefix.size() == 2);
 
-        store.migrateIfAbsent({{"theme", "light"}, {"imported", "yes"}});
+        store.migrateOnce("legacy_v1", {{"theme", "light"}, {"imported", "yes"}});
         assert(store.get("theme").value() == "dark");
         assert(store.get("imported").value() == "yes");
 

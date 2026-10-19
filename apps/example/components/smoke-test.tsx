@@ -35,7 +35,7 @@ import {
   getStorageErrorCode as getTestingStorageErrorCode,
   isStorageError as isTestingStorageError,
 } from "react-native-nitro-storage/testing";
-import { Button, Colors, ResultsProbe } from "./shared";
+import { Button, Colors, ResultsProbe, describeStorageError } from "./shared";
 
 type LogEntry = {
   id?: string;
@@ -1147,7 +1147,7 @@ export function SmokeTestRunner() {
           detail: detail ?? undefined,
         });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = describeStorageError(err);
         results.push({
           id: test.id,
           label: test.label,

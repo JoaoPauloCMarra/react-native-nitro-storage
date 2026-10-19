@@ -393,3 +393,50 @@ describe("clearBiometric native echoes", () => {
     mockHybridObject.getAllKeys.mockReturnValue([]);
   });
 });
+
+describe("clear(Disk) native echo", () => {
+  it("external change after clear(Disk) is delivered", () => {
+    const key = uniqueKey("clear-disk-ext");
+    let nativeChange:
+      ((changedKey: string, value: string | undefined) => void) | undefined;
+    mockHybridObject.addOnChange.mockImplementation(((
+      _scope: StorageScope,
+      callback: (changedKey: string, value: string | undefined) => void,
+    ) => {
+      nativeChange = callback;
+      return () => {};
+    }) as never);
+    mockHybridObject.clear.mockImplementation(() => {
+      nativeChange?.("", undefined);
+    });
+    mockHybridObject.getAllKeys.mockReturnValue([key]);
+    mockHybridObject.getBatch.mockImplementation(((keys: string[]) =>
+      keys.map(() => "old")) as never);
+    mockHybridObject.get.mockReturnValue("old");
+    const events: StorageChangeEvent[] = [];
+    const unsubscribe = storage.subscribe(StorageScope.Disk, (event) => {
+      events.push(event);
+    });
+    expect(nativeChange).toBeDefined();
+
+    storage.clear(StorageScope.Disk);
+    events.length = 0;
+    mockHybridObject.get.mockReturnValue("EXT");
+    nativeChange?.(key, "EXT");
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "key",
+      key,
+      operation: "external",
+      newValue: "EXT",
+    });
+    expect(storage.getString(key, StorageScope.Disk)).toBe("EXT");
+    unsubscribe();
+    mockHybridObject.addOnChange.mockImplementation(() => () => {});
+    mockHybridObject.clear.mockReset();
+    mockHybridObject.get.mockReset();
+    mockHybridObject.getAllKeys.mockReturnValue([]);
+    mockHybridObject.getBatch.mockReturnValue([]);
+  });
+});

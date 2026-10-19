@@ -184,22 +184,29 @@ export async function createIndexedDBBackend(
   queuedChannelEvents.splice(0).forEach(applyChannelEvent);
 
   function trackWrite(tx: IDBTransaction, keys: string[] | null): void {
+    let reported = false;
     const pending = new Promise<void>((resolve) => {
       tx.oncomplete = () => {
         resolve();
       };
       tx.onerror = () => {
-        handleAsyncError(
-          keys,
-          tx.error ?? new Error("Failed to persist IndexedDB transaction."),
-        );
+        if (!reported) {
+          reported = true;
+          handleAsyncError(
+            keys,
+            tx.error ?? new Error("Failed to persist IndexedDB transaction."),
+          );
+        }
         resolve();
       };
       tx.onabort = () => {
-        handleAsyncError(
-          keys,
-          tx.error ?? new Error("IndexedDB transaction was aborted."),
-        );
+        if (!reported) {
+          reported = true;
+          handleAsyncError(
+            keys,
+            tx.error ?? new Error("IndexedDB transaction was aborted."),
+          );
+        }
         resolve();
       };
     });

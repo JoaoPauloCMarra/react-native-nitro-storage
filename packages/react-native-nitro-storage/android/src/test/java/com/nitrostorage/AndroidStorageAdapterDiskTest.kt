@@ -476,4 +476,64 @@ class AndroidStorageAdapterDiskTest {
         assertTrue(message != null)
         assertEquals(listOf("putString:secret", "remove:secret"), recording.operations)
     }
+
+    private fun unreadablePreferences(): SharedPreferences {
+        val failure = SecurityException("decrypt", AEADBadTagException("bad tag"))
+        return Proxy.newProxyInstance(
+            SharedPreferences::class.java.classLoader,
+            arrayOf(SharedPreferences::class.java),
+        ) { _, method, _ ->
+            when (method.name) {
+                "getAll", "contains", "getString" -> throw failure
+                else -> null
+            }
+        } as SharedPreferences
+    }
+
+    @Test
+    fun everySecureReadEntryPointSurfacesTheTaggedCorruptionError() {
+        AndroidStorageAdapter.init(context)
+        installEncryptedPreferences(unreadablePreferences())
+
+        val entryPoints = mapOf<String, () -> Unit>(
+            "hasSecure" to { AndroidStorageAdapter.hasSecure("k") },
+            "getAllKeysSecure" to { AndroidStorageAdapter.getAllKeysSecure() },
+            "getKeysByPrefixSecure" to { AndroidStorageAdapter.getKeysByPrefixSecure("k") },
+            "sizeSecure" to { AndroidStorageAdapter.sizeSecure() },
+        )
+        for ((name, call) in entryPoints) {
+            val message = failureMessage(call)
+            assertTrue(
+                "$name must tag the failure, got: $message",
+                message != null && message.startsWith("[nitro-error:storage_corruption] "),
+            )
+        }
+    }
+
+    @Test
+    fun biometricKeysListComesFromTheBiometricStoresWithoutInternalKeys() {
+        AndroidStorageAdapter.init(context)
+        val stored = mapOf<String, Any?>(
+            "token" to "x",
+            "__androidx_security_crypto_encrypted_prefs_key_keyset__" to "y",
+        )
+        val preferences = Proxy.newProxyInstance(
+            SharedPreferences::class.java.classLoader,
+            arrayOf(SharedPreferences::class.java),
+        ) { _, method, _ ->
+            when (method.name) {
+                "getAll" -> stored
+                else -> null
+            }
+        } as SharedPreferences
+        val instance = currentInstance()!!
+        val delegate = AndroidStorageAdapter::class.java.getDeclaredField("biometricOnlyPreferences\$delegate")
+        delegate.isAccessible = true
+        delegate.set(instance, lazyOf(preferences))
+        val initialized = AndroidStorageAdapter::class.java.getDeclaredField("biometricOnlyInitialized")
+        initialized.isAccessible = true
+        initialized.set(instance, true)
+
+        assertArrayEquals(arrayOf("token"), AndroidStorageAdapter.getBiometricKeysSecure())
+    }
 }

@@ -421,11 +421,6 @@ void testDiskFullOnEveryWritePathIsTaggedAtomicAndRecoverable() {
             });
             require(startsWith(batchRemove, kFullPrefix), "removeBatch must be tagged: " + batchRemove);
 
-            const std::string migrate = failureMessage([&] {
-                store.migrateIfAbsent({{"legacy-1", "1"}, {"legacy-2", "2"}});
-            });
-            require(startsWith(migrate, kFullPrefix), "migrateIfAbsent must be tagged: " + migrate);
-
             const std::string migrateOnce = failureMessage([&] {
                 store.migrateOnce("suite_v1", {{"suite-1", "1"}, {"suite-2", "2"}});
             });
@@ -438,7 +433,6 @@ void testDiskFullOnEveryWritePathIsTaggedAtomicAndRecoverable() {
             require(!store.has("batch-1") && !store.has("batch-2"), "failed setBatch must be atomic");
             require(store.get("kept-b").value() == "b", "failed setBatch must not overwrite");
             require(store.has("kept-a") && store.has("kept-b"), "failed removeBatch must be atomic");
-            require(!store.has("legacy-1") && !store.has("legacy-2"), "failed migration must be atomic");
             require(!store.has("suite-1"), "failed migrateOnce must not import entries");
             require(!store.hasMigrationMarker("suite_v1"), "failed migrateOnce must not write marker");
         }
@@ -589,8 +583,8 @@ void testOversizedKeysAndValuesFailAtBindAndRollBack() {
     );
     require(!store.has("a") && !store.hasMigrationMarker("m"), "failed migration must be atomic");
     require(
-        failureMessage([&] { store.migrateIfAbsent({{"a", "1"}, {oversized, "2"}}); }) == expected,
-        "oversized key inside migrateIfAbsent"
+        failureMessage([&] { store.migrateOnce("m", {{"a", "1"}, {oversized, "2"}}); }) == expected,
+        "oversized key inside a migration"
     );
 
     store.setBatch({"a", "b"}, {"1", std::string(500, 'y')});
@@ -926,7 +920,6 @@ void testCorruptionFoundMidSessionIsTaggedOnEveryOperation() {
         {"setBatch", [&] { store.setBatch({"a"}, {"x"}); }},
         {"removeBatch", [&] { store.removeBatch({"a"}); }},
         {"clear", [&] { store.clear(); }},
-        {"migrateIfAbsent", [&] { store.migrateIfAbsent({{"a", "x"}}); }},
         {"migrateOnce", [&] { store.migrateOnce("other_v1", {{"a", "x"}}); }},
     };
     for (const auto& [name, operation] : operations) {
@@ -1324,10 +1317,6 @@ void testPageLimitFailureInsideTransactionIsRolledBack() {
         store.migrateOnce("suite_v1", {{"import-small", "1"}, {"import-big", oversized}});
     });
     require(startsWith(migrate, kFullPrefix + "migrate failed: "), "page limit migrateOnce must be tagged: " + migrate);
-    const std::string absent = failureMessage([&] {
-        store.migrateIfAbsent({{"import-small", "1"}, {"import-big", oversized}});
-    });
-    require(startsWith(absent, kFullPrefix + "migrate failed: "), "page limit migrateIfAbsent must be tagged: " + absent);
 
     require(!store.has("small") && !store.has("import-small"), "statements before the failure must be rolled back");
     require(!store.hasMigrationMarker("suite_v1"), "failed migration must not write its marker");

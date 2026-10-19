@@ -27,6 +27,10 @@ export type DurabilityCoordinator = {
   hasPendingSecureWrite(key: string): boolean;
   getPendingDiskWrite(key: string): PendingDiskWrite | undefined;
   getPendingSecureWrite(key: string): PendingSecureWrite | undefined;
+  getPendingWrite(
+    scope: StorageScope | null,
+    key: string,
+  ): PendingDiskWrite | PendingSecureWrite | undefined;
   clearPendingDiskWrite(key: string): void;
   clearPendingSecureWrite(key: string): void;
   clearPendingDiskWriteIf(write: PendingDiskWrite): void;
@@ -280,6 +284,11 @@ export function createDurabilityCoordinator(options: {
     hasPendingSecureWrite: (key) => pendingSecureWrites.has(key),
     getPendingDiskWrite: (key) => pendingDiskWrites.get(key),
     getPendingSecureWrite: (key) => pendingSecureWrites.get(key),
+    getPendingWrite: (scope, key) => {
+      if (scope === StorageScope.Disk) return pendingDiskWrites.get(key);
+      if (scope === StorageScope.Secure) return pendingSecureWrites.get(key);
+      return undefined;
+    },
     clearPendingDiskWrite: (key) => {
       pendingDiskWrites.delete(key);
     },
