@@ -4,8 +4,8 @@
 [![npm downloads](https://img.shields.io/npm/dm/react-native-nitro-storage?color=22c55e&label=downloads)](https://www.npmjs.com/package/react-native-nitro-storage)
 [![CI](https://github.com/JoaoPauloCMarra/react-native-nitro-storage/actions/workflows/ci.yml/badge.svg)](https://github.com/JoaoPauloCMarra/react-native-nitro-storage/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/react-native-nitro-storage?color=007ec6)](https://github.com/JoaoPauloCMarra/react-native-nitro-storage/blob/main/LICENSE)
-[![React Native](https://img.shields.io/badge/react--native-0.88.0-61dafb)](https://reactnative.dev/docs/0.88/getting-started-without-a-framework)
-[![Expo](https://img.shields.io/badge/expo-SDK%2058%20%28RN%200.88.0%29-000020)](https://docs.expo.dev/versions/v58.0.0/)
+[![React Native](https://img.shields.io/badge/react--native-0.88.1-61dafb)](https://reactnative.dev/docs/0.88/getting-started-without-a-framework)
+[![Expo](https://img.shields.io/badge/expo-SDK%2058%20%28RN%200.88.1%29-000020)](https://docs.expo.dev/versions/v58.0.0/)
 [![Nitro Modules](https://img.shields.io/badge/nitro--modules-%3E%3D0.37.0%20%3C0.38.0-black)](https://nitro.margelo.com/)
 [![TypeScript](https://img.shields.io/badge/typescript-6.0-3178c6)](https://www.typescriptlang.org/)
 
@@ -70,22 +70,22 @@ Nitro peer requirement: `react-native-nitro-modules >=0.37.0 <0.38.0`.
 
 | Tested on                                  | Supported floor                     |
 | ------------------------------------------ | ----------------------------------- |
-| React Native `0.88.0` / Expo SDK `58.0.16` | React Native `0.77` / Expo SDK `53` |
+| React Native `0.88.1` / Expo SDK `58.0.23` | React Native `0.77` / Expo SDK `53` |
 
 Nitro Storage supports React Native 0.77 or newer and Expo SDK 53 or newer,
 which is the minimum for Nitro Modules 0.37: its Android package does not
-compile against React Native 0.76. It is tested on React Native 0.88.0 and Expo
+compile against React Native 0.76. It is tested on React Native 0.88.1 and Expo
 SDK 58.
 
 The `react-native-nitro-storage/testing` and
 `react-native-nitro-storage/indexeddb-backend` subpaths also resolve when Metro
 package exports are disabled (the default before React Native 0.79).
 
-The package gate uses React Native `0.88.0` and the Strict TypeScript API.
+The package gate uses React Native `0.88.1` and the Strict TypeScript API.
 `check:ci` also compiles the public source against React Native `0.87.0`'s
 Strict TypeScript API; this does not change the runtime baseline. The Expo
-example uses Expo SDK `58.0.16`, React Native
-`0.88.0`, React `19.3.0`, and Nitro Modules `0.37.1`, which is the React Native
+example uses Expo SDK `58.0.23`, React Native
+`0.88.1`, React `19.3.0`, and Nitro Modules `0.37.2`, which is the React Native
 version supported by that Expo SDK. Do not override Expo's React Native version.
 
 When upgrading from 0.8.x or 0.9.x, upgrade Nitro Modules to the 0.37.x range
@@ -93,7 +93,7 @@ before installing this package, then rebuild the native app so the generated
 Nitro bindings and native runtime use the same major-minor version:
 
 ```sh
-bun add react-native-nitro-modules@0.37.1 react-native-nitro-storage@0.17.0
+bun add react-native-nitro-modules@0.37.2 react-native-nitro-storage@0.17.1
 bunx expo prebuild
 ```
 

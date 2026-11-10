@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes are always listed first in each release section.
 
+## [0.17.1] - 2026-11-10
+
+### Breaking changes
+
+- None.
+
+### Changed
+
+- Updated the development and example dependency baseline within the current majors: Expo SDK 58 (`expo` 58.0.23), React Native 0.88.1, Nitro Modules and Nitrogen 0.37.2, plus the matching Expo packages, `@react-native/babel-preset`, `@react-native/jest-preset`, `react-native-safe-area-context`, `react-native-screens`, `@swc/core` and `rimraf`.
+- Regenerated the Nitro bindings with Nitrogen 0.37.2. Only the header comment URL changed; the generated code is otherwise identical.
+- Peer dependency ranges are unchanged.
+
+### Compatibility
+
+- Tested with Expo SDK 58 (React Native 0.88.1, React 19.3.0, Nitro Modules 0.37.2).
+
 ## [0.17.0] - 2026-10-15
 
 ### Breaking changes
