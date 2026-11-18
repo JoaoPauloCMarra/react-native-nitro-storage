@@ -48,7 +48,7 @@ expectValue(
 expectValue(
   "example Expo",
   dependencyValue(example, "dependencies", "expo"),
-  "~58.0.23",
+  "~58.0.26",
 );
 expectValue(
   "example React Native",
@@ -73,12 +73,12 @@ expectValue(
 expectValue(
   "root overrides.expo",
   dependencyValue(root, "overrides", "expo"),
-  "~58.0.23",
+  "~58.0.26",
 );
 expectValue(
   "package Expo",
   developmentDependency(packageManifest, "expo"),
-  "~58.0.23",
+  "~58.0.26",
 );
 expectValue(
   "example Nitro Modules",

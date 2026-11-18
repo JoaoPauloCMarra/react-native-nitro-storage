@@ -574,19 +574,19 @@ describe("Web Storage", () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
-  it("supports useStorage and useSetStorage hooks", () => {
+  it("supports useStorage and useSetStorage hooks", async () => {
     const item = createStorageItem({
       key: "hook-key",
       scope: StorageScope.Disk,
       defaultValue: 0,
     });
 
-    const storageHook = renderHook(() => useStorage(item));
-    const setOnlyHook = renderHook(() => useSetStorage(item));
+    const storageHook = await renderHook(() => useStorage(item));
+    const setOnlyHook = await renderHook(() => useSetStorage(item));
 
     expect(storageHook.result.current[0]).toBe(0);
 
-    act(() => {
+    await act(() => {
       storageHook.result.current[1]((prev) => prev + 1);
       setOnlyHook.result.current((prev) => prev + 1);
     });
@@ -595,7 +595,7 @@ describe("Web Storage", () => {
     expect(item.get()).toBe(2);
   });
 
-  it("supports useStorageSelector and comparator-based rerender control", () => {
+  it("supports useStorageSelector and comparator-based rerender control", async () => {
     const item = createStorageItem({
       key: "web-selector",
       scope: StorageScope.Memory,
@@ -603,7 +603,7 @@ describe("Web Storage", () => {
     });
 
     let renderCount = 0;
-    const { result } = renderHook(() => {
+    const { result } = await renderHook(() => {
       renderCount += 1;
       return useStorageSelector(
         item,
@@ -615,13 +615,13 @@ describe("Web Storage", () => {
     expect(result.current[0]).toEqual({ count: 0 });
     expect(renderCount).toBe(1);
 
-    act(() => {
+    await act(() => {
       item.set((prev) => ({ ...prev, label: "b" }));
     });
     expect(result.current[0]).toEqual({ count: 0 });
     expect(renderCount).toBe(1);
 
-    act(() => {
+    await act(() => {
       item.set((prev) => ({ ...prev, count: 1 }));
     });
     expect(result.current[0]).toEqual({ count: 1 });

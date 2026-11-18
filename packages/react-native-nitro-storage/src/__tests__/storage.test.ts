@@ -714,7 +714,7 @@ describe("useStorage", () => {
     storage.clearAll();
   });
 
-  it("returns current value and setter", () => {
+  it("returns current value and setter", async () => {
     const item = createStorageItem({
       key: "test-key",
       scope: StorageScope.Disk,
@@ -725,13 +725,13 @@ describe("useStorage", () => {
       serializeWithPrimitiveFastPath("initial"),
     );
 
-    const { result } = renderHook(() => useStorage(item));
+    const { result } = await renderHook(() => useStorage(item));
 
     expect(result.current[0]).toBe("initial");
     expect(typeof result.current[1]).toBe("function");
   });
 
-  it("updates when value changes", () => {
+  it("updates when value changes", async () => {
     const item = createStorageItem({
       key: "test-key",
       scope: StorageScope.Disk,
@@ -741,13 +741,13 @@ describe("useStorage", () => {
     mockHybridObject.get.mockReturnValue(
       serializeWithPrimitiveFastPath("initial"),
     );
-    const { result } = renderHook(() => useStorage(item));
+    const { result } = await renderHook(() => useStorage(item));
     expect(result.current[0]).toBe("initial");
 
     mockHybridObject.get.mockReturnValue(
       serializeWithPrimitiveFastPath("updated"),
     );
-    act(() => {
+    await act(() => {
       (
         item as unknown as { _triggerListeners: () => void }
       )._triggerListeners();
@@ -808,7 +808,7 @@ describe("useStorage", () => {
     expect(listener2).not.toHaveBeenCalled();
   });
 
-  it("calls setter correctly", () => {
+  it("calls setter correctly", async () => {
     const item = createStorageItem({
       key: "test-key",
       scope: StorageScope.Disk,
@@ -819,9 +819,9 @@ describe("useStorage", () => {
       serializeWithPrimitiveFastPath("initial"),
     );
 
-    const { result } = renderHook(() => useStorage(item));
+    const { result } = await renderHook(() => useStorage(item));
 
-    act(() => {
+    await act(() => {
       result.current[1]("new-value");
     });
 
@@ -832,7 +832,7 @@ describe("useStorage", () => {
     );
   });
 
-  it("supports selectors and skips rerenders when selected value is unchanged", () => {
+  it("supports selectors and skips rerenders when selected value is unchanged", async () => {
     const item = createStorageItem({
       key: "selector-test",
       scope: StorageScope.Memory,
@@ -840,7 +840,7 @@ describe("useStorage", () => {
     });
 
     let renderCount = 0;
-    const { result } = renderHook(() => {
+    const { result } = await renderHook(() => {
       renderCount += 1;
       return useStorageSelector(
         item,
@@ -852,13 +852,13 @@ describe("useStorage", () => {
     expect(result.current[0]).toEqual({ count: 0 });
     expect(renderCount).toBe(1);
 
-    act(() => {
+    await act(() => {
       item.set((prev) => ({ ...prev, label: "b" }));
     });
     expect(result.current[0]).toEqual({ count: 0 });
     expect(renderCount).toBe(1);
 
-    act(() => {
+    await act(() => {
       item.set((prev) => ({ ...prev, count: 1 }));
     });
     expect(result.current[0]).toEqual({ count: 1 });
@@ -920,7 +920,7 @@ describe("useStorage", () => {
     expect(mockHybridObject.get).toHaveBeenCalledTimes(2);
   });
 
-  it("dispatches memory listeners by key and fan-outs on clear", () => {
+  it("dispatches memory listeners by key and fan-outs on clear", async () => {
     const itemA = createStorageItem({
       key: "shared-a",
       scope: StorageScope.Memory,
@@ -937,13 +937,13 @@ describe("useStorage", () => {
     const unsubA = itemA.subscribe(listenerA);
     const unsubB = itemB.subscribe(listenerB);
 
-    act(() => {
+    await act(() => {
       itemA.set("next-a");
     });
     expect(listenerA).toHaveBeenCalledTimes(1);
     expect(listenerB).toHaveBeenCalledTimes(0);
 
-    act(() => {
+    await act(() => {
       storage.clear(StorageScope.Memory);
     });
     expect(listenerA).toHaveBeenCalledTimes(2);

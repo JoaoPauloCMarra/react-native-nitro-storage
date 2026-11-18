@@ -70,7 +70,7 @@ Nitro peer requirement: `react-native-nitro-modules >=0.37.0 <0.38.0`.
 
 | Tested on                                  | Supported floor                     |
 | ------------------------------------------ | ----------------------------------- |
-| React Native `0.88.1` / Expo SDK `58.0.23` | React Native `0.77` / Expo SDK `53` |
+| React Native `0.88.1` / Expo SDK `58.0.26` | React Native `0.77` / Expo SDK `53` |
 
 Nitro Storage supports React Native 0.77 or newer and Expo SDK 53 or newer,
 which is the minimum for Nitro Modules 0.37: its Android package does not
@@ -84,7 +84,7 @@ package exports are disabled (the default before React Native 0.79).
 The package gate uses React Native `0.88.1` and the Strict TypeScript API.
 `check:ci` also compiles the public source against React Native `0.87.0`'s
 Strict TypeScript API; this does not change the runtime baseline. The Expo
-example uses Expo SDK `58.0.23`, React Native
+example uses Expo SDK `58.0.26`, React Native
 `0.88.1`, React `19.3.0`, and Nitro Modules `0.37.2`, which is the React Native
 version supported by that Expo SDK. Do not override Expo's React Native version.
 
@@ -93,7 +93,7 @@ before installing this package, then rebuild the native app so the generated
 Nitro bindings and native runtime use the same major-minor version:
 
 ```sh
-bun add react-native-nitro-modules@0.37.2 react-native-nitro-storage@0.17.1
+bun add react-native-nitro-modules@0.37.2 react-native-nitro-storage@0.17.2
 bunx expo prebuild
 ```
 
@@ -191,6 +191,16 @@ error before it reaches native storage. On web, the default Disk backend shares
 one `localStorage` namespace with the default Secure backend, so Disk keys that
 start with `__secure_` or `__bio_` also throw `invalid_key`. Custom web
 backends are not affected.
+
+On web, the default Disk backend covers every non-secure `localStorage` key of
+the origin, including keys that other libraries or the host app wrote. Native
+Disk is a private store. `clear(Disk)`, `clearAll()`, `getAll`, `export`,
+`getAllKeys` and `size(Disk)` on web reach all of those keys. To limit Disk to
+keys that this library wrote, install a prefixed backend with
+`setWebDiskStorageBackend`; see
+[Scope the web Disk backend](docs/web-backends.md#scope-the-web-disk-backend).
+Data stored under unprefixed keys is not visible to a prefixed backend, so
+migrate existing keys first.
 
 ## Auth Tokens
 
@@ -331,6 +341,16 @@ storage.clear(StorageScope.Disk, {
   except: [apiEnvironmentItem, "onboardingComplete"],
 });
 ```
+
+`clear(Disk, { except })` always keeps the internal migration version marker, so
+`migrateToLatest()` does not rerun completed migrations. A plain `clear(Disk)`
+removes the marker with everything else.
+
+Warning: on web, the default Disk backend covers every non-secure
+`localStorage` key of the origin. `storage.clear(StorageScope.Disk)` and
+`storage.clearAll()` also delete keys that other libraries or the host app wrote.
+Install a prefixed backend with `setWebDiskStorageBackend` to avoid this; see
+[Scope the web Disk backend](docs/web-backends.md#scope-the-web-disk-backend).
 
 ## Legacy Key Migration And Secure Resilience
 

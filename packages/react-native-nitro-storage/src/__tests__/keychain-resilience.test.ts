@@ -15,7 +15,7 @@ jest.mock("react-native-nitro-modules", () => ({
   },
 }));
 
-import { createStorageItem, StorageScope, storage } from "../index";
+import { createStorageItem, getBatch, StorageScope, storage } from "../index";
 
 const KEYCHAIN_LOCKED = new Error(
   "[nitro-error:keychain_locked] NitroStorage: Keychain is locked",
@@ -23,6 +23,9 @@ const KEYCHAIN_LOCKED = new Error(
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockHybridObject.get.mockReset();
+  mockHybridObject.getBatch.mockReset();
+  mockHybridObject.getBatch.mockReturnValue([]);
   mockHybridObject.getAllKeys.mockReturnValue([]);
   mockHybridObject.hasSecureBiometric.mockReturnValue(false);
 });
@@ -69,6 +72,73 @@ describe("fallbackToCacheOnReadError", () => {
     });
 
     expect(() => item.get()).toThrow(/keychain_locked/);
+  });
+});
+
+describe("getBatch read error options", () => {
+  function lockKeychain(): void {
+    mockHybridObject.get.mockImplementation(() => {
+      throw KEYCHAIN_LOCKED;
+    });
+    mockHybridObject.getBatch.mockImplementation(() => {
+      throw KEYCHAIN_LOCKED;
+    });
+  }
+
+  it("honours fallbackToCacheOnReadError and onReadError like get()", () => {
+    const onReadError = jest.fn();
+    mockHybridObject.get.mockReturnValue("cached-secret");
+    const item = createStorageItem<string>({
+      key: "batch-tok",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      serialize: (v) => v,
+      deserialize: (v) => v,
+      fallbackToCacheOnReadError: true,
+      onReadError,
+    });
+    expect(item.get()).toBe("cached-secret");
+    lockKeychain();
+    (item as unknown as { _triggerListeners: () => void })._triggerListeners();
+
+    expect(getBatch([item], StorageScope.Secure)).toEqual(["cached-secret"]);
+    expect(onReadError).toHaveBeenCalledTimes(1);
+    expect(onReadError).toHaveBeenCalledWith(KEYCHAIN_LOCKED);
+  });
+
+  it("calls onReadError and rethrows for an item with only onReadError", () => {
+    const onReadError = jest.fn();
+    const item = createStorageItem<string>({
+      key: "batch-observed",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      serialize: (v) => v,
+      deserialize: (v) => v,
+      onReadError,
+    });
+    lockKeychain();
+
+    expect(() => getBatch([item], StorageScope.Secure)).toThrow(
+      /keychain_locked/,
+    );
+    expect(onReadError).toHaveBeenCalledTimes(1);
+  });
+
+  it("still throws for an item without the options in one bridge call", () => {
+    const item = createStorageItem<string>({
+      key: "batch-plain",
+      scope: StorageScope.Secure,
+      defaultValue: "",
+      serialize: (v) => v,
+      deserialize: (v) => v,
+    });
+    lockKeychain();
+
+    expect(() => getBatch([item], StorageScope.Secure)).toThrow(
+      /keychain_locked/,
+    );
+    expect(mockHybridObject.getBatch).toHaveBeenCalledTimes(1);
+    expect(mockHybridObject.get).not.toHaveBeenCalled();
   });
 });
 

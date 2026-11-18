@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes are always listed first in each release section.
 
+## [0.17.2] - 2026-11-18
+
+### Breaking changes
+
+- None.
+
+### Fixed
+
+- `storage.clear(scope, { except })` no longer removes the internal migration version marker, so `migrateToLatest()` does not rerun completed migrations after a partial clear. A plain `clear(scope)` still resets everything.
+- `getBatch` honours `fallbackToCacheOnReadError` and `onReadError`. A batch that contains such an item reads each item through `get()`, so a locked keychain returns the cached value and calls `onReadError` once, as a single read does. Items without these options keep the single bridge call and still throw.
+- Coalesced or asynchronous writes no longer swallow the next real native change for a key. N writes to one key that flush as one batch now leave one native-echo mark, so a later change from outside the app fires an `external` event and updates the cache.
+- A Disk `setBatch`, `storage.import` or `removeBatch` that throws midway (for example a web backend that hits its quota after the first key) no longer leaves `readCache` items returning the old value. The cache for the batch keys is dropped before the backend call, so the next read matches what the backend stored.
+
+### Changed
+
+- `has()` on an item with `expiration` answers from its single value read and reuses the parsed expiry, so it no longer makes a second bridge call or parses the stored value again.
+- Tested with Expo SDK 58.0.26 (React Native 0.88.1, React 19.3.0). Development tooling moved to `react-native-builder-bob` 0.44, `eslint-config-expo-magic` 5.5 with ESLint 10, `@testing-library/react-native` 14 and Bun 1.4.4. Peer dependency ranges are unchanged.
+
+### Documentation
+
+- Documented that on web the default Disk backend covers every non-secure `localStorage` key of the origin, so `clear(Disk)`, `clearAll()`, `getAll`, `export`, `getAllKeys` and `size(Disk)` reach keys this library did not write. Added a prefixed `setWebDiskStorageBackend` example that limits Disk to your own keys.
+
 ## [0.17.1] - 2026-11-10
 
 ### Breaking changes
