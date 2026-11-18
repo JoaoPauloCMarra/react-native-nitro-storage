@@ -80,6 +80,36 @@ test("rejects a missing pre-publish commit check", () => {
   assert.equal(result.status, 1, result.stdout);
 });
 
+test("rejects a publish job that saves a dependency cache", () => {
+  const fixture = Bun.YAML.parse(workflow);
+  const restore = fixture.jobs.publish.steps.find((step) =>
+    step.uses?.startsWith("actions/cache/restore@"),
+  );
+  assert.ok(restore, "publish must restore the dependency cache");
+  restore.uses = "actions/cache@v6";
+  const result = checkFixture(Bun.YAML.stringify(fixture));
+  assert.equal(result.status, 1, result.stdout);
+});
+
+test("rejects a validate job without the dependency cache", () => {
+  const fixture = Bun.YAML.parse(workflow);
+  fixture.jobs.validate.steps = fixture.jobs.validate.steps.filter(
+    (step) => !step.uses?.startsWith("actions/cache@"),
+  );
+  const result = checkFixture(Bun.YAML.stringify(fixture));
+  assert.equal(result.status, 1, result.stdout);
+});
+
+test("rejects a dependency cache key that ignores the lockfile", () => {
+  const fixture = Bun.YAML.parse(workflow);
+  const cache = fixture.jobs.validate.steps.find((step) =>
+    step.uses?.startsWith("actions/cache@"),
+  );
+  cache.with.key = "${{ runner.os }}-bun";
+  const result = checkFixture(Bun.YAML.stringify(fixture));
+  assert.equal(result.status, 1, result.stdout);
+});
+
 for (const [name, releaseCommit, checkedOutCommit, expectedStatus] of [
   ["accepts the validated commit", "a".repeat(40), "a".repeat(40), 0],
   ["rejects a changed checkout", "a".repeat(40), "b".repeat(40), 1],

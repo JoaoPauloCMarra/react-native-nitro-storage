@@ -55,6 +55,56 @@ setWebDiskStorageBackend(backend);
 storage.setString("theme", "dark", StorageScope.Disk);
 ```
 
+### Scope the web Disk backend
+
+The default web Disk backend covers every non-secure `localStorage` key of the origin, not only keys this library wrote. Native Disk is a private SQLite store, so web behaves differently:
+
+- `storage.clear(StorageScope.Disk)` and `storage.clearAll()` delete keys written by other libraries or the host app.
+- `getAll`, `export`, `getAllKeys` and `size(Disk)` include those keys.
+
+The default stays unscoped so data you already stored remains readable. To limit Disk to keys that belong to your app, install a prefixed backend with `setWebDiskStorageBackend`:
+
+```ts
+import {
+  setWebDiskStorageBackend,
+  type WebStorageBackend,
+} from "react-native-nitro-storage";
+
+function createPrefixedLocalStorageBackend(prefix: string): WebStorageBackend {
+  const ownedKeys = (): string[] => {
+    const keys: string[] = [];
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (key !== null && key.startsWith(prefix)) {
+        keys.push(key.slice(prefix.length));
+      }
+    }
+    return keys;
+  };
+
+  return {
+    name: "prefixed-localStorage",
+    getItem: (key) => localStorage.getItem(prefix + key),
+    setItem: (key, value) => {
+      localStorage.setItem(prefix + key, value);
+    },
+    removeItem: (key) => {
+      localStorage.removeItem(prefix + key);
+    },
+    clear: () => {
+      ownedKeys().forEach((key) => {
+        localStorage.removeItem(prefix + key);
+      });
+    },
+    getAllKeys: ownedKeys,
+  };
+}
+
+setWebDiskStorageBackend(createPrefixedLocalStorageBackend("myapp:"));
+```
+
+Install the backend before the first Disk read or write. Values stored under unprefixed keys are not visible to the prefixed backend, so copy them to the prefixed keys first. Call `setWebDiskStorageBackend()` with no argument to return to the default backend.
+
 ## Secure Backend
 
 ```ts

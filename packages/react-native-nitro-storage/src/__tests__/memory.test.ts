@@ -160,18 +160,18 @@ describe("Pure JS Memory Storage", () => {
     expect(listener).toHaveBeenCalled();
   });
 
-  it("useStorage hook works with memory", () => {
+  it("useStorage hook works with memory", async () => {
     const item = createStorageItem({
       key: "hook-test",
       scope: StorageScope.Memory,
       defaultValue: "init",
     });
 
-    const { result } = renderHook(() => useStorage(item));
+    const { result } = await renderHook(() => useStorage(item));
 
     expect(result.current[0]).toBe("init");
 
-    act(() => {
+    await act(() => {
       // Functional update via hook
       result.current[1]((prev) => prev + "-updated");
     });
@@ -180,17 +180,17 @@ describe("Pure JS Memory Storage", () => {
     expect(item.get()).toBe("init-updated");
   });
 
-  it("useSetStorage returns setter only", () => {
+  it("useSetStorage returns setter only", async () => {
     const item = createStorageItem({
       key: "setter-test",
       scope: StorageScope.Memory,
       defaultValue: 0,
     });
 
-    const { result } = renderHook(() => useSetStorage(item));
+    const { result } = await renderHook(() => useSetStorage(item));
     const setStorage = result.current;
 
-    act(() => {
+    await act(() => {
       setStorage(100);
     });
 

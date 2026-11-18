@@ -19,15 +19,15 @@
     "ios:build": "cd ios && pod install && xcodebuild -workspace NitroStorage.xcworkspace -scheme NitroStorage -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' build"
   },
   "dependencies": {
-    "@babel/runtime": "^7.29.13",
-    "expo": "~58.0.23",
-    "expo-asset": "~58.0.20",
+    "@babel/runtime": "^7.29.14",
+    "expo": "~58.0.26",
+    "expo-asset": "~58.0.21",
     "expo-build-properties": "~58.0.12",
-    "expo-constants": "~58.0.15",
-    "expo-font": "~58.0.11",
-    "expo-linking": "~58.0.16",
-    "expo-router": "~58.0.30",
-    "expo-status-bar": "~58.0.4",
+    "expo-constants": "~58.0.16",
+    "expo-font": "~58.0.12",
+    "expo-linking": "~58.0.17",
+    "expo-router": "~58.0.32",
+    "expo-status-bar": "~58.0.5",
     "expo-system-ui": "~58.0.7",
     "react": "19.3.0",
     "react-dom": "19.3.0",
@@ -44,6 +44,6 @@
   "devDependencies": {
     "@babel/core": "^7.29.13",
     "@types/react": "~19.3.0",
-    "babel-preset-expo": "~58.0.24"
+    "babel-preset-expo": "~58.0.26"
   }
 }

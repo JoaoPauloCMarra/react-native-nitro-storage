@@ -336,3 +336,47 @@ describe("testing entrypoint", () => {
     expect(item.get()).toBe("secret");
   });
 });
+
+describe("clear with except keeps the migration marker", () => {
+  it.each([StorageScope.Disk, StorageScope.Secure, StorageScope.Memory])(
+    "does not rerun migrations after clear(%s, { except })",
+    (scope) => {
+      const mock = createNitroStorageMock();
+      const ran = jest.fn();
+      mock.registerMigration(1, ({ setRaw }) => {
+        ran();
+        setRaw("migrated", "1");
+      });
+      mock.storage.setString("kept", "value", scope);
+
+      expect(mock.migrateToLatest(scope)).toBe(1);
+      const events: unknown[] = [];
+      const unsubscribe = mock.storage.subscribe(scope, (event) => {
+        events.push(event);
+      });
+      mock.storage.clear(scope, { except: ["kept"] });
+      unsubscribe();
+
+      expect(mock.migrateToLatest(scope)).toBe(1);
+      expect(ran).toHaveBeenCalledTimes(1);
+      expect(
+        mock.storage.getString("__nitro_storage_migration_version__", scope),
+      ).toBe("1");
+      expect(JSON.stringify(events)).not.toContain(
+        "__nitro_storage_migration_version__",
+      );
+    },
+  );
+
+  it("still resets migrations on a plain clear", () => {
+    const mock = createNitroStorageMock();
+    const ran = jest.fn();
+    mock.registerMigration(1, () => {
+      ran();
+    });
+    mock.migrateToLatest(StorageScope.Disk);
+    mock.storage.clear(StorageScope.Disk);
+    mock.migrateToLatest(StorageScope.Disk);
+    expect(ran).toHaveBeenCalledTimes(2);
+  });
+});

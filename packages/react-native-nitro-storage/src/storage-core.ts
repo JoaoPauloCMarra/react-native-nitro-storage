@@ -167,6 +167,7 @@ type StorageItemInternal<T> = StorageItem<T> & {
   _setRenameMigrationState: (migrated: boolean) => void;
   _readCacheEnabled: boolean;
   _fillsRawCache: boolean;
+  _hasReadErrorHandling: boolean;
   _isBiometric: boolean;
   _biometricLevel: BiometricLevel;
   _defaultValue: T;
@@ -183,6 +184,7 @@ export type BatchReadItem<T> = Pick<
   _hasRenameFrom?: boolean;
   _readCacheEnabled?: boolean;
   _fillsRawCache?: boolean;
+  _hasReadErrorHandling?: boolean;
   _isBiometric?: boolean;
   _defaultValue?: unknown;
   _secureAccessControl?: AccessControl;
@@ -419,9 +421,11 @@ export function createStorageCore(
     backend: {
       setBatch: (keys, values, scope) => {
         adapter.backend.setBatch(keys, values, scope);
+        adapter.onWillEmitChanges(scope, keys, "set", adapter.changeSource);
       },
       removeBatch: (keys, scope) => {
         adapter.backend.removeBatch(keys, scope);
+        adapter.onWillEmitChanges(scope, keys, "remove", adapter.changeSource);
       },
       setSecureAccessControl: (level) => {
         adapter.backend.setSecureAccessControl(level);
@@ -473,6 +477,15 @@ export function createStorageCore(
 
   function invalidateRawCache(scope: NonMemoryScope, key: string): void {
     getScopeRawCache(scope).delete(key);
+  }
+
+  function invalidateRawCaches(
+    scope: NonMemoryScope,
+    keys: readonly string[],
+  ): void {
+    keys.forEach((key) => {
+      invalidateRawCache(scope, key);
+    });
   }
 
   function clearScopeRawCache(scope: NonMemoryScope): void {
@@ -619,7 +632,9 @@ export function createStorageCore(
     operation: StorageChangeOperation,
     source: StorageChangeSource,
   ): void {
-    adapter.onWillEmitChanges(scope, [key], operation, source);
+    if (durability.getPendingWrite(scope, key) === undefined) {
+      adapter.onWillEmitChanges(scope, [key], operation, source);
+    }
     const event = createKeyChange(
       scope,
       key,
@@ -895,6 +910,7 @@ export function createStorageCore(
     measureOperation("storage:clearExcept", scope, () => {
       assertValidScope(scope);
       const keep = new Set(exceptRefs.map(resolveKeyRef));
+      keep.add(MIGRATION_VERSION_KEY);
 
       if (scope === StorageScope.Memory) {
         const removeKeys = Array.from(memoryStore.keys()).filter(
@@ -1627,13 +1643,11 @@ export function createStorageCore(
           if (scope === StorageScope.Secure) {
             flushSecureWrites();
             adapter.backend.setSecureAccessControl(secureDefaultAccessControl);
-            keys.forEach((key) => {
-              invalidateRawCache(scope, key);
-            });
           }
           if (scope === StorageScope.Disk) {
             flushDiskWrites();
           }
+          invalidateRawCaches(scope, keys);
 
           adapter.backend.setBatch(keys, storedValues, scope);
           keys.forEach((key, index) => {
@@ -2770,22 +2784,32 @@ export function createStorageCore(
       set(value);
     };
 
-    const expireLapsedStoredValue = (): void => {
+    const expireLapsedStoredValue = (): boolean => {
       if (isMemory) {
         readStoredRaw();
-        return;
+        return true;
       }
       const raw = readStoredRaw();
       if (typeof raw !== "string") {
-        return;
+        return false;
       }
-      try {
-        const parsed = JSON.parse(raw) as unknown;
-        if (!isStoredEnvelope(parsed) || parsed.expiresAt > Date.now()) {
-          return;
+      let expiresAt: number | undefined;
+      if (
+        raw === lastRaw &&
+        hasLastValue &&
+        typeof lastExpiresAt === "number"
+      ) {
+        expiresAt = lastExpiresAt;
+      } else {
+        try {
+          const parsed = JSON.parse(raw) as unknown;
+          expiresAt = isStoredEnvelope(parsed) ? parsed.expiresAt : undefined;
+        } catch {
+          expiresAt = undefined;
         }
-      } catch {
-        return;
+      }
+      if (expiresAt === undefined || expiresAt > Date.now()) {
+        return true;
       }
       runAtomicItemMutation(() => {
         removeStoredRaw("expire");
@@ -2795,13 +2819,15 @@ export function createStorageCore(
       listeners.forEach((cb) => {
         cb();
       });
+      return false;
     };
 
     const hasItem = (): boolean =>
       measureOperation("item:has", config.scope, () => {
         // Biometric reads prompt the user, so has() keeps the existence-only check for them.
         if (expiration && !isBiometric) {
-          expireLapsedStoredValue();
+          const present = expireLapsedStoredValue();
+          if (!isMemory) return present;
         }
         if (isMemory) return memoryStore.has(storageKey);
         if (isBiometric) return adapter.backend.hasSecureBiometric(storageKey);
@@ -2888,6 +2914,8 @@ export function createStorageCore(
       },
       _readCacheEnabled: readCache,
       _fillsRawCache: readCache || fallbackToCacheOnReadError,
+      _hasReadErrorHandling:
+        fallbackToCacheOnReadError || onReadError !== undefined,
       _isBiometric: isBiometric,
       _biometricLevel: resolvedBiometricLevel,
       _defaultValue: defaultValue,
@@ -2940,10 +2968,12 @@ export function createStorageCore(
           return items.map((item) => item.get());
         }
 
-        const useRawBatchPath = items.every((item) =>
-          scope === StorageScope.Secure
-            ? canUseSecureRawBatchPath(item)
-            : canUseRawBatchPath(item),
+        const useRawBatchPath = items.every(
+          (item) =>
+            item._hasReadErrorHandling !== true &&
+            (scope === StorageScope.Secure
+              ? canUseSecureRawBatchPath(item)
+              : canUseRawBatchPath(item)),
         );
         if (!useRawBatchPath) {
           return items.map((item) => item.get());
@@ -3165,6 +3195,7 @@ export function createStorageCore(
               )
           : [];
 
+        invalidateRawCaches(scope, keys);
         adapter.backend.setBatch(keys, values, scope);
         keys.forEach((key, index) => {
           cacheRawValue(scope, key, values[index]);
@@ -3282,11 +3313,7 @@ export function createStorageCore(
               });
             })()
           : [];
-        if (scope === StorageScope.Secure) {
-          keys.forEach((key) => {
-            invalidateRawCache(scope, key);
-          });
-        }
+        invalidateRawCaches(scope, keys);
         adapter.backend.removeBatch(keys, scope);
         keys.forEach((key) => {
           cacheRawValue(scope, key, undefined);

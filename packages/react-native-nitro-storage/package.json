@@ -1,6 +1,6 @@
 {
   "name": "react-native-nitro-storage",
-  "version": "0.17.1",
+  "version": "0.17.2",
   "description": "Synchronous React Native storage powered by Nitro Modules and JSI: typed Memory, Disk, Keychain/Android Keystore secure storage, biometric auth, MMKV migration, Expo, Zustand/Jotai persistence, and web IndexedDB support.",
   "main": "lib/commonjs/index.js",
   "module": "lib/module/index.js",
@@ -128,9 +128,10 @@
   },
   "devDependencies": {
     "@react-native/babel-preset": "^0.88.1",
-    "@testing-library/react-native": "^13.3.3",
+    "@testing-library/react-native": "^14.1.0",
+    "test-renderer": "^1.3.1",
     "@types/react": "~19.3.0",
-    "expo": "~58.0.23"
+    "expo": "~58.0.26"
   },
   "peerDependencies": {
     "react": ">=18.2.0",

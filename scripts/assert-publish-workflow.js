@@ -67,6 +67,27 @@ assert.ok(
   "source verification must finish before publication",
 );
 
+const bunCacheKey = "${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}";
+for (const jobName of ["validate", "publish"]) {
+  const steps = workflow.jobs[jobName].steps;
+  const installIndex = steps.findIndex((step) =>
+    step.run?.startsWith("bun install --frozen-lockfile"),
+  );
+  assert.ok(installIndex > 0, `${jobName} must install with a frozen lockfile`);
+  const cacheStep = steps[installIndex - 1];
+  assert.match(
+    cacheStep.uses ?? "",
+    /^actions\/cache(\/restore)?@v\d+$/,
+    `${jobName} must restore the Bun dependency cache right before install`,
+  );
+  assert.equal(cacheStep.with?.path, "~/.bun/install/cache");
+  assert.equal(cacheStep.with?.key, bunCacheKey);
+}
+assert.ok(
+  publishSteps.every((step) => !step.uses?.startsWith("actions/cache@")),
+  "publish must only restore caches; it holds the OIDC token",
+);
+
 console.log(
   "Publish workflow validates source identity and publishes only on GitHub Release events.",
 );
