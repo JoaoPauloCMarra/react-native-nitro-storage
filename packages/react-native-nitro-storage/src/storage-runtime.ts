@@ -71,22 +71,33 @@ const STORAGE_ERROR_CODES = new Set<StorageErrorCode>([
   "invalid_key",
 ]);
 
+const MAX_ERROR_CAUSE_DEPTH = 5;
+
+function getTaggedStorageErrorCode(err: Error): StorageErrorCode | undefined {
+  const taggedCode = err.message.match(STORAGE_ERROR_TAG_PATTERN)?.[1];
+  return taggedCode !== undefined &&
+    STORAGE_ERROR_CODES.has(taggedCode as StorageErrorCode)
+    ? (taggedCode as StorageErrorCode)
+    : undefined;
+}
+
 export function getStorageErrorCode(
   err: unknown,
 ): StorageErrorCode | undefined {
-  if (!(err instanceof Error)) {
-    return undefined;
-  }
-
-  const taggedCode = err.message.match(STORAGE_ERROR_TAG_PATTERN)?.[1];
-
-  if (
-    taggedCode !== undefined &&
-    STORAGE_ERROR_CODES.has(taggedCode as StorageErrorCode)
+  const seen = new Set<Error>();
+  let current = err;
+  while (
+    current instanceof Error &&
+    !seen.has(current) &&
+    seen.size <= MAX_ERROR_CAUSE_DEPTH
   ) {
-    return taggedCode as StorageErrorCode;
+    const code = getTaggedStorageErrorCode(current);
+    if (code !== undefined) {
+      return code;
+    }
+    seen.add(current);
+    current = (current as Error & { cause?: unknown }).cause;
   }
-
   return undefined;
 }
 
