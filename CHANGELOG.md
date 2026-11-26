@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Breaking changes are always listed first in each release section.
 
+## [0.17.3] - 2026-11-26
+
+### Breaking changes
+
+- None.
+
+### Changed
+
+- `getStorageErrorCode` and `isStorageError` also read the code from
+  `error.cause`, up to five levels deep. An app that wraps a storage error in
+  its own error no longer needs its own cause walk or message matching to
+  classify it. The outer error's tag wins when both carry one, and a cause
+  cycle ends the search.
+
 ## [0.17.2] - 2026-11-18
 
 ### Breaking changes

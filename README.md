@@ -93,7 +93,7 @@ before installing this package, then rebuild the native app so the generated
 Nitro bindings and native runtime use the same major-minor version:
 
 ```sh
-bun add react-native-nitro-modules@0.37.2 react-native-nitro-storage@0.17.2
+bun add react-native-nitro-modules@0.37.2 react-native-nitro-storage@0.17.3
 bunx expo prebuild
 ```
 
@@ -1023,6 +1023,24 @@ Native and web adapters tag classified failures with stable error codes. Use
 `getStorageErrorCode(error)` or `isStorageError(error, code)` to branch on them.
 Errors never swallow the underlying cause silently: the original platform
 message is preserved on the error for diagnostics.
+
+Both helpers also look through `error.cause` (up to five levels), so an app
+can wrap a storage error in its own error and still classify it:
+
+```ts
+import {
+  isStorageError,
+  storage,
+  StorageScope,
+} from "react-native-nitro-storage";
+
+try {
+  storage.setString("draft", text, StorageScope.Disk);
+} catch (error) {
+  const failure = new Error("Could not save the draft", { cause: error });
+  if (isStorageError(failure, "storage_full")) showFreeSpaceHint();
+}
+```
 
 | Code                          | Meaning                                                                                                                                             |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
